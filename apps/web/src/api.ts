@@ -1,7 +1,7 @@
 // 后端 API 封装 + POST SSE 流解析
 import type {
-  ArchivedView, ModelInfoDto, PrefsDto, ProjectBaselineDto, ProjectDto, SessionInfoDto, SessionSummaryDto, SettingsDto,
-  StatsFrameDto, LibraryAssetDto,
+  ArchivedView, FeaturesDto, ModelInfoDto, PrefsDto, ProjectBaselineDto, ProjectDto,
+  SessionInfoDto, SessionSummaryDto, SettingsDto, StatsFrameDto, LibraryAssetDto,
 } from './types.js'
 
 export interface SseFrame {
@@ -15,8 +15,32 @@ async function jfetch<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/**
+ * 上传用的 content-type：服务端只把这些 MIME 注册成原始字节解析器。
+ * 不能直接用 File.type（.json/.md 会命中 Fastify 的文本/JSON 解析器，body 就不是 Buffer 了）。
+ */
+function bufferMime(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  if (ext === 'png') return 'image/png'
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg'
+  if (ext === 'webp') return 'image/webp'
+  if (ext === 'jar') return 'application/java-archive'
+  if (ext === 'zip') return 'application/zip'
+  return 'application/octet-stream'
+}
+
+function uploadBytes(url: string, file: File): Promise<{ asset: LibraryAssetDto }> {
+  return jfetch<{ asset: LibraryAssetDto }>(url, {
+    method: 'POST',
+    headers: { 'content-type': bufferMime(file.name) },
+    body: file,
+  })
+}
+
 export const api = {
   health: () => jfetch<{ ok: boolean; mock: boolean; plugins: string[] }>('/api/health'),
+  /** 功能开关 + 当前可用角色 + 插件加载情况（画布/MC/素材库入口按它隐藏） */
+  features: () => jfetch<FeaturesDto>('/api/features'),
   models: () => jfetch<{ models: ModelInfoDto[]; defaultModelId: string }>('/api/models'),
   settings: () => jfetch<{ settings: SettingsDto }>('/api/settings'),
   /** providers / bridge / prefs 都是可选的：按分区保存不会互相覆盖 */
@@ -195,8 +219,28 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId }),
     }),
-  // ---- 文档素材库（画布快照归档） ----
+  // ---- 文档素材库（多文件资产） ----
   library: () => jfetch<{ assets: LibraryAssetDto[] }>('/api/library'),
+  /** 上传一个文件新建素材（多选时其余文件走 appendLibraryFile） */
+  uploadLibrary: (file: File, opts?: { title?: string; sessionId?: string }) => {
+    const q = new URLSearchParams({ name: file.name })
+    if (opts?.title) q.set('title', opts.title)
+    if (opts?.sessionId) q.set('sessionId', opts.sessionId)
+    return uploadBytes(`/api/library/upload?${q.toString()}`, file)
+  },
+  /** 给已有素材追加文件 */
+  appendLibraryFile: (id: string, file: File) =>
+    uploadBytes(`/api/library/${id}/files?name=${encodeURIComponent(file.name)}`, file),
+  /** 从会话工作目录导入（paths 相对 cwd） */
+  importLibraryFromCwd: (sessionId: string, paths: string[], name?: string) =>
+    jfetch<{ asset: LibraryAssetDto }>('/api/library/import', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, paths, ...(name ? { name } : {}) }),
+    }),
+  /** 素材内文件地址：图片/文本默认内联，jar 等强制下载加 download=1 */
+  libraryFileUrl: (id: string, fileId: string, download = false) =>
+    `/api/library/${id}/files/${fileId}${download ? '?download=1' : ''}`,
   captureLibrary: (sessionId: string, name?: string) =>
     jfetch<{ asset: LibraryAssetDto }>('/api/library/capture', {
       method: 'POST',

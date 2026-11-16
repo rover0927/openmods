@@ -81,6 +81,8 @@ export interface PrefsConfig {
   inlineSubagents: boolean
   /** mod-output：jar 导出保存目录（构建产物一键复制到这里；空 = 未配置，走浏览器下载） */
   modOutput: string
+  /** 功能开关：canvas / mc / library（改动需重启，服务启动时按它决定加载哪些插件） */
+  features: Record<string, boolean>
 }
 
 export const DEFAULT_PREFS: PrefsConfig = {
@@ -92,6 +94,7 @@ export const DEFAULT_PREFS: PrefsConfig = {
   canvasAutoWake: true,
   inlineSubagents: true,
   modOutput: '',
+  features: {},
 }
 
 export interface SettingsDoc {
@@ -117,6 +120,15 @@ export function normalizePrefs(raw: any): PrefsConfig {
     canvasAutoWake: typeof p.canvasAutoWake === 'boolean' ? p.canvasAutoWake : DEFAULT_PREFS.canvasAutoWake,
     inlineSubagents: typeof p.inlineSubagents === 'boolean' ? p.inlineSubagents : DEFAULT_PREFS.inlineSubagents,
     modOutput: typeof p.modOutput === 'string' ? p.modOutput.trim().slice(0, 500) : DEFAULT_PREFS.modOutput,
+    features: (() => {
+      const raw = p.features && typeof p.features === 'object' ? p.features : {}
+      const out: Record<string, boolean> = {}
+      // 只保留布尔值；未知键也留着（插件可按需声明自己的开关）
+      for (const [k, v] of Object.entries(raw)) {
+        if (typeof v === 'boolean' && /^[a-z][a-z0-9_-]{0,31}$/.test(k)) out[k] = v
+      }
+      return out
+    })(),
   }
 }
 

@@ -7,6 +7,17 @@ export interface ToolParameterSchema {
   required?: string[]
 }
 
+/**
+ * 通用工作台工具名（fs-tools / shell-tools / interaction-tools 注册）。
+ * 角色白名单直接引用这里：功能插件（mcdev / bb-tools）注册角色时也用它，
+ * 避免各处手抄一份工具名清单后跟实际注册脱节。
+ */
+export const WORKSPACE_TOOL_NAMES = [
+  'read', 'write', 'edit', 'list_dir', 'glob', 'grep',
+  'bash', 'terminal_open', 'terminal_list', 'terminal_read', 'terminal_send', 'terminal_kill',
+  'ask_user_question', 'todo_write', 'exit_plan_mode',
+]
+
 export interface ToolDef {
   name: string
   description: string
@@ -224,9 +235,66 @@ export interface SystemSectionContext {
   session: SessionRuntimeLike
 }
 
+// ---- HTTP 路由端口 ----
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+
+/** 插件路由的请求视图（只读字段；插件不依赖具体 HTTP 框架） */
+export interface HttpRequestLike {
+  params: Record<string, string>
+  query: Record<string, any>
+  body: any
+}
+
+/** 插件路由的响应视图（最小面：状态码、响应头、发送） */
+export interface HttpReplyLike {
+  code(status: number): HttpReplyLike
+  header(name: string, value: string): HttpReplyLike
+  send(payload?: any): HttpReplyLike
+}
+
+export interface HttpRouteOptions {
+  /** 请求体上限（字节）；缺省沿用宿主全局上限 */
+  bodyLimit?: number
+}
+
+/**
+ * 路由端口：功能相关的 HTTP 接口由插件在自己的 apply 里挂载。
+ * 插件被 `requires` 跳过时路由根本不会注册——功能开关不再需要靠 URL 前缀拦截。
+ */
+export interface HttpPort {
+  route(
+    method: HttpMethod,
+    path: string,
+    handler: (req: HttpRequestLike, reply: HttpReplyLike) => any,
+    opts?: HttpRouteOptions,
+  ): void
+}
+
+/** 会话只读端口：插件按 sessionId 解析工作目录，不接触会话存储实现 */
+export interface SessionPort {
+  exists(id: string): boolean
+  /** 会话绑定的工作目录（realpath 后的绝对路径）；会话不存在或目录无效返回 null */
+  cwdOf(id: string): string | null
+}
+
+/** 偏好只读端口（设置 → 通用）；写偏好仍走宿主接口 */
+export interface PrefsPort {
+  get(): Record<string, any>
+}
+
 export interface PluginContext {
   tools: { register(def: ToolDef): void }
   skills: { registerProvider(p: SkillProvider): void }
+  /** 角色注册面：功能插件在这里注册自己的代理角色（mcmod / modeling …） */
+  profiles: { register(p: ProfileDecl): void }
+  /** 功能面：声明开关、查询某个开关在本次启动是否开启 */
+  features: { declare(f: FeatureDecl): void; enabled(id: string): boolean }
+  /** 路由面：插件自己的 HTTP 接口（插件未 apply 时不存在） */
+  http: HttpPort
+  /** 会话只读面：按 sessionId 取工作目录 */
+  sessions: SessionPort
+  /** 偏好只读面（mod-output 等运行配置） */
+  prefs: PrefsPort
   /** 人机交互端口（问用户 / 方案评审）；与 dsh ctx.userQuestions 同位置 */
   interaction: InteractionPort
   /** 终端端口（拉起/读取/终止会话终端） */
@@ -256,10 +324,46 @@ export interface PluginContext {
   env: Record<string, string | undefined>
 }
 
+/**
+ * 功能声明：插件可以自带开关（canvas / mc / …），由服务端汇总后暴露给前端。
+ * `requires` 不满足（开关被关掉）时插件的 `apply` 根本不会执行——
+ * 对应工具、系统提示、角色一起消失，而不是"加载了但藏起来"。
+ */
+export interface FeatureDecl {
+  id: string
+  name: string
+  description?: string
+  /** 缺省是否开启（不填 = 开启） */
+  default?: boolean
+}
+
+/**
+ * 角色声明：代理角色的提示词、工具白名单与技能都归插件自己。
+ * server 只保留 lead / coding 这类与具体功能无关的内置角色。
+ */
+export interface ProfileDecl {
+  id: string
+  name: string
+  prompt: string
+  toolFilter?: string[]
+  toolExclude?: string[]
+  skills?: string[]
+  /** 依赖的功能 id（任一被关闭则不注册该角色） */
+  requires?: string[]
+  /** 内部角色：不出现在前端的角色选择里（子代理专用） */
+  internal?: boolean
+}
+
 export interface Plugin {
   name: string
   /** 可选 schemastery 风格配置默认值（简化为普通对象） */
   config?: Record<string, any>
+  /** 本插件声明的功能开关 */
+  features?: FeatureDecl[]
+  /** 依赖的功能（任一处于关闭态就不加载本插件） */
+  requires?: string[]
+  /** 本插件提供的技能名（插件被跳过时这些技能也会从列表/提示里隐藏） */
+  skills?: string[]
   apply(ctx: PluginContext, config: Record<string, any>): void | Promise<void>
 }
 
@@ -270,23 +374,72 @@ export interface LoadedPlugin {
   config: Record<string, any>
 }
 
+export interface PluginLoadOptions {
+  /** 启动态功能开关：插件 requires 里任一为 false 就不 apply */
+  featureStates?: Record<string, boolean>
+}
+
+export interface SkippedPlugin {
+  name: string
+  dir: string
+  /** 命中的关闭项（requires 的子集） */
+  requires: string[]
+  /** 插件声明的技能：被跳过时这些技能也要从列表/提示里隐藏 */
+  skills: string[]
+  reason: string
+}
+
 /**
- * 扫描 plugins 目录，每个子目录的 index.ts 是一个插件。
- * 与 dsh 不同：不做 peerDependencies 兼容门禁，加载失败仅记录并跳过。
+ * 插件加载失败（import 抛错 / 缺 name·apply / apply 抛错）。
+ * 以前只打 console：前端只能看到"少了个插件"，不知道是加载失败还是被开关跳过。
  */
-export async function loadPlugins(pluginsDir: string, pluginCtx: PluginContext, configs?: Record<string, any>): Promise<LoadedPlugin[]> {
+export interface PluginFailure {
+  /** import 失败时拿不到插件名，用目录名代替 */
+  name: string
+  dir: string
+  phase: 'import' | 'apply'
+  error: string
+}
+
+/** 发现阶段的产物：只有元数据，尚未 apply */
+export interface PluginDiscovery {
+  plugins: { dir: string; full: string; plugin: Plugin }[]
+  /** 所有插件声明过的功能（含之后会被跳过的） */
+  features: FeatureDecl[]
+  failed: PluginFailure[]
+}
+
+export interface PluginLoadResult {
+  loaded: LoadedPlugin[]
+  skipped: SkippedPlugin[]
+  /** 所有插件声明过的功能（含被跳过的，前端设置页要能开关回来） */
+  features: FeatureDecl[]
+  /** 加载失败（import/apply 抛错），前端设置页要能直接看到 */
+  failed: PluginFailure[]
+}
+
+/**
+ * 第一段：扫描 plugins 目录、import 全部插件并收集 features/requires。
+ *
+ * 单独暴露的原因：功能声明必须先于「功能开关解析」——插件自带的开关 id
+ * 只有进了启动态，`requires` 才可能被关掉；否则插件声明的开关只是界面上一个无效开关。
+ */
+export async function discoverPlugins(pluginsDir: string): Promise<PluginDiscovery> {
   const { readdirSync } = await import('node:fs')
   const { pathToFileURL } = await import('node:url')
   const path = await import('node:path')
-  const loaded: LoadedPlugin[] = []
+  const plugins: PluginDiscovery['plugins'] = []
+  const features: FeatureDecl[] = []
+  const failed: PluginFailure[] = []
   let dirs: string[] = []
   try {
     dirs = readdirSync(pluginsDir, { withFileTypes: true })
       .filter(d => d.isDirectory() && !d.name.startsWith('.'))
       .map(d => d.name)
   } catch {
-    return loaded
+    return { plugins, features, failed }
   }
+
   for (const dir of dirs.sort()) {
     const full = path.join(pluginsDir, dir)
     try {
@@ -294,15 +447,63 @@ export async function loadPlugins(pluginsDir: string, pluginCtx: PluginContext, 
       const plugin: Plugin = mod.default ?? mod
       if (!plugin?.name || typeof plugin.apply !== 'function') {
         console.warn(`[plugins] 跳过 ${dir}: 缺少 name/apply`)
+        failed.push({ name: dir, dir: full, phase: 'import', error: '缺少 name/apply' })
         continue
       }
+      plugins.push({ dir, full, plugin })
+      for (const f of plugin.features ?? []) {
+        if (f?.id && !features.some(x => x.id === f.id)) features.push(f)
+      }
+    } catch (err: any) {
+      console.error(`[plugins] 加载 ${dir} 失败:`, err.message)
+      failed.push({ name: dir, dir: full, phase: 'import', error: err?.message ?? String(err) })
+    }
+  }
+  return { plugins, features, failed }
+}
+
+/**
+ * 第二段：按 requires 决定是否 apply。
+ * 这样"关掉 mc"时 mcdev 的工具/角色/系统提示根本不会注册，而不是加载后隐藏。
+ * 与 dsh 不同：不做 peerDependencies 兼容门禁，加载失败记录进 failed 并继续。
+ */
+export async function applyPlugins(
+  discovery: PluginDiscovery,
+  pluginCtx: PluginContext,
+  configs?: Record<string, any>,
+  opts?: PluginLoadOptions,
+): Promise<PluginLoadResult> {
+  const loaded: LoadedPlugin[] = []
+  const skipped: SkippedPlugin[] = []
+  const failed: PluginFailure[] = [...discovery.failed]
+
+  for (const { full, plugin } of discovery.plugins) {
+    const requires = plugin.requires ?? []
+    const blocked = requires.filter(id => opts?.featureStates?.[id] === false)
+    if (blocked.length) {
+      skipped.push({ name: plugin.name, dir: full, requires: blocked, skills: plugin.skills ?? [], reason: `功能已关闭：${blocked.join(', ')}` })
+      console.log(`[plugins] 跳过 ${plugin.name}: ${blocked.join(', ')} 已关闭`)
+      continue
+    }
+    try {
       const config = { ...(plugin.config ?? {}), ...(configs?.[plugin.name] ?? {}) }
       await plugin.apply(pluginCtx, config)
       loaded.push({ name: plugin.name, dir: full, plugin, config })
       console.log(`[plugins] 已加载: ${plugin.name}`)
     } catch (err: any) {
-      console.error(`[plugins] 加载 ${dir} 失败:`, err.message)
+      console.error(`[plugins] 加载 ${plugin.name} 失败:`, err.message)
+      failed.push({ name: plugin.name, dir: full, phase: 'apply', error: err?.message ?? String(err) })
     }
   }
-  return loaded
+  return { loaded, skipped, features: discovery.features, failed }
+}
+
+/** 兼容入口：发现 + 应用一次完成（不需要先解析功能开关的调用方用） */
+export async function loadPlugins(
+  pluginsDir: string,
+  pluginCtx: PluginContext,
+  configs?: Record<string, any>,
+  opts?: PluginLoadOptions,
+): Promise<PluginLoadResult> {
+  return applyPlugins(await discoverPlugins(pluginsDir), pluginCtx, configs, opts)
 }

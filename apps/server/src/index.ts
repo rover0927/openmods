@@ -6,11 +6,13 @@ import { EventEmitter } from 'node:events'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import type { LoadedPlugin, PluginContext, SessionRuntimeLike, SkillProvider, ToolDef, ToolResult } from '@openmods/plugin-kit'
-import { loadPlugins } from '@openmods/plugin-kit'
+import type { FeatureDecl, HttpMethod, HttpRouteOptions, LoadedPlugin, PluginContext, SessionRuntimeLike, SkillProvider, ToolDef, ToolResult } from '@openmods/plugin-kit'
+import { applyPlugins, discoverPlugins, WORKSPACE_TOOL_NAMES } from '@openmods/plugin-kit'
 import { createSessionRuntime, createHttpLlm, createMockLlm, registerSurfaceTransform, SessionLog, type SessionRuntime, type LlmAdapter, LlmError } from '@openmods/agent-core'
-import { DirSkillProvider } from './skills.js'
+import { DirSkillProvider, FilteredSkillProvider } from './skills.js'
 import { SettingsStore } from './settings.js'
+import { FEATURE_DEFS, resolveFeatureStates, type FeatureStates } from './features.js'
+import { createProfileRegistry, registerBuiltinProfiles } from './profiles.js'
 import { SessionStore, isValidSessionId, summarize, type SessionSummary, type SubagentStatus } from './session-store.js'
 import { CanvasService } from './canvas.js'
 import { ProjectStore, ProjectActiveSessionError, type SessionActivity } from './project-store.js'
@@ -101,6 +103,7 @@ const terminals = createTerminalManager({
 
 // ---- 设置存储（providers + credentials 持久化，模型目录动态化） ----
 const settingsStore = new SettingsStore(join(ROOT, 'data'), env)
+// 启动态功能开关在插件发现之后解析（要合并插件自带的声明），见下方「插件发现」。
 
 // ---- LLM 适配器：MOCK 或 per-request 解析供应商（下一轮生效） ----
 // MOCK 仅由显式 MOCK=1 开启；供应商的 key 来自设置系统（credentials.json），无需 .env 的 LLM_API_KEY
@@ -179,102 +182,47 @@ tools.push({
 })
 
 // 工作台工具（fs-tools / shell-tools / interaction-tools 三个插件注册）：
-// 主代理与 mcmod 都有完整一套——读写文件、搜索、执行命令、管终端、问用户、计划模式。
-// 建模子代理是"画布上的手"，不进城也不问人，所以不放进它的白名单。
-const WORKSPACE_TOOLS = [
-  'read', 'write', 'edit', 'list_dir', 'glob', 'grep',
-  'bash', 'terminal_open', 'terminal_list', 'terminal_read', 'terminal_send', 'terminal_kill',
-  'ask_user_question', 'todo_write', 'exit_plan_mode',
-]
+// 白名单常量由 plugin-kit 提供，功能插件注册角色时用同一份，避免手抄脱节。
+const WORKSPACE_TOOLS = WORKSPACE_TOOL_NAMES
 
-// 各角色的默认技能分配（设置 → 代理与技能 可改，覆盖写进 data/agent-skills.json）。
-// mcmod 只吃 Forge 技能；modeling 只吃画布三件套；lead 全量。
-const PROFILE_SKILLS: Record<string, string[]> = {
-  lead: ['blockbench-modeling', 'blockbench-texturing', 'blockbench-use', 'minecraft-forge-1.20.1'],
-  mcmod: ['minecraft-forge-1.20.1'],
-  modeling: ['blockbench-modeling', 'blockbench-texturing', 'blockbench-use'],
+// ---- 插件发现（只 import，不 apply） ----
+// 顺序很关键：功能声明必须先于开关解析。插件自带的开关（不只是内置 canvas/mc/library）
+// 要进 bootFeatures，requires 才可能被关掉；先解析再发现会让插件开关永远无效。
+const pluginDiscovery = await discoverPlugins(PLUGINS_DIR)
+
+/** 启动时收集到的功能声明（内置 + 插件），供 /api/features 与设置页展示 */
+const declaredFeatures: FeatureDecl[] = [...FEATURE_DEFS]
+for (const f of pluginDiscovery.features) {
+  if (f?.id && !declaredFeatures.some(x => x.id === f.id)) declaredFeatures.push(f)
 }
+
+/** 启动态功能开关：按合并后的声明表解析（改动需重启才重新加载插件） */
+const bootFeatures: FeatureStates = resolveFeatureStates(settingsStore.getPrefs().features, declaredFeatures)
+
+// 角色注册表：内置 lead / coding 在这里，mcmod / modeling 由插件启动时注册
+// （插件 requires 依赖的开关被关掉时，对应角色根本不会出现）。
+const profileRegistry = createProfileRegistry()
+registerBuiltinProfiles(profileRegistry, bootFeatures)
+
+// 各角色的技能覆盖（设置 → 代理与技能 可改，覆盖写进 data/agent-skills.json）。
+// 默认技能归角色注册者所有：内置角色在 profiles.ts，mcmod/modeling 在各自插件里。
 const SKILLS_OVERRIDES_PATH = join(ROOT, 'data', 'agent-skills.json')
 let profileSkillsOverrides: Record<string, string[]> = {}
 try {
   profileSkillsOverrides = JSON.parse(readFileSync(SKILLS_OVERRIDES_PATH, 'utf8'))
 } catch { /* 首次运行没有覆盖文件 */ }
-/** 生效的技能分配：持久化覆盖 > 代码内默认 */
+/** 生效的技能分配：持久化覆盖 > 角色声明 */
 function effectiveSkills(profileId: string): string[] {
-  return profileSkillsOverrides[profileId] ?? PROFILE_SKILLS[profileId] ?? []
+  return profileSkillsOverrides[profileId] ?? profileRegistry.get(profileId)?.skills ?? []
 }
 function saveSkillsOverrides() {
   mkdirSync(dirname(SKILLS_OVERRIDES_PATH), { recursive: true })
   writeFileSync(SKILLS_OVERRIDES_PATH, JSON.stringify(profileSkillsOverrides, null, 2))
 }
 
-// 代理角色档案（复刻 dsh agentPreset 的简化版）：lead=主代理，modeling=建模子代理
-const AGENT_PROFILES: Record<string, import('@openmods/agent-core').AgentProfile> = {
-  lead: {
-    id: 'lead',
-    name: '主代理（lead）',
-    prompt: '你是 openmods 的主代理（lead）：既直接和用户干活，也可以把建模/动画派发给子代理。'
-      + '你有完整工作台能力：read/write/edit/list_dir/glob/grep 读写会话工作目录、bash 执行命令、terminal_open/terminal_kill 拉起与结束终端、'
-      + 'ask_user_question 问用户、todo_write 维护任务清单、exit_plan_mode 提交计划。动手前先看清现状（read/grep/list_dir），不要凭记忆改文件；'
-      + '写工作目录外的文件、执行命令、开关终端都会请求用户授权，被拒绝时不要原样重试。\n'
-      + '建模/动画任务一律派发给建模子代理（spawn_modeling_subagent），你不亲自建模。子代理属于当前会话：它们在同一个工作上下文里并行工作，'
-      + '**共用用户正在看的这块画布**，改动实时出现在画布上，不会另开画布或新会话。派发完就结束这一轮，不要轮询、不要反复调 list_subagents 等结果：'
-      + '主会话会进入等待态（这期间用户不能插话），最后一只子代理结算时系统会自动开一轮汇总回合，把各子代理的收尾汇报交给你。'
-      + '到了汇总回合，你必须先核对画布（list_outline / list_animations）、修补缺口或冲突，修补完**用 ask_user_question 请用户验收画布成果**（选项至少含：验收通过继续 / 要改哪里 / 重做某部分）。'
-      + '用户明确通过之前，不要开始下一阶段（导出模型、写代码、构建都不行）——用户正看着画布，只有他能判断"像不像"。不能只说"已完成"。\n'
-      + '不确定、没把握的事：先做一次小成本验证（读一次文件/试一次工具）；同一件事连续失败两次就停下来 ask_user_question 问用户，把你试过什么、看到什么报错讲清楚，让用户拍板——'
-      + '不要连续盲试烧掉大半个回合，更不要在没把握的方向上重做已完成的成果（重头再来的代价比问一句大得多）。\n'
-      + '画布数据落地：验收通过后用 canvas_export 把完整画布工程一次导出成 JSON（分组骨骼/pivot/方块 UV/贴图/动画全在内），再用脚本解析生成代码。'
-      + '**严禁**派子代理"抄写"画布（读几十上百个方块再吐出来必然截断失真）、严禁让子代理把几何坐标当文字汇报——那是用整个回合换一份有损数据。',
-    toolFilter: ['load_skill', 'spawn_modeling_subagent', 'list_subagents', 'canvas_export', ...WORKSPACE_TOOLS],
-    skills: PROFILE_SKILLS.lead,
-  },
-  // 1.20.1 Forge 模组开发主代理：工程面工具（mcdev 插件）+ 完整工作台 + 建模委派。
-  // 只做 Java + 1.20.1：越界的需求要在第一轮就说清不适用，不要自己改平台。
-  mcmod: {
-    id: 'mcmod',
-    name: 'Minecraft 1.20.1 模组开发（mcmod）',
-    prompt: '你是 Minecraft 1.20.1 Forge 模组开发主代理（mcmod）。只做 **Java + Minecraft 1.20.1 + Forge 47.x**；'
-      + '用户要 Fabric / NeoForge / 1.20.2+ / Kotlin / 网易版时，明确说明本代理不覆盖，不要硬改工程。\n'
-      + '你有完整工作台：read/write/edit/glob/grep 读写工程、bash 跑命令、terminal_open/terminal_kill 拉起/结束长任务终端、'
-      + 'ask_user_question 问用户、todo_write 记步骤、exit_plan_mode 提交计划。工作目录就是当前工程目录，相对路径都以它为根。\n'
-      + '工作流固定：\n'
-      + '1) 先 load_skill("minecraft-forge-1.20.1") 拿到工具链与 API 约束；写代码前需要精确签名就读 skills/minecraft-forge-1.20.1/references/forge-1.20.1-api.md，不要凭记忆写。\n'
-      + '2) 核对需求：modid、Java 包名、要加的东西（物品/方块/实体/命令/玩法）。信息不足时用 ask_user_question 一次问全，别反复问。\n'
-      + '3) 建工程：先看会话目录里是否已有工程（存在 build.gradle 就直接沿用，不要重复 scaffold）。目录为空才用 mc_scaffold：'
-      + 'name 只传目录名或绝对路径，目标必须是空目录，建完不要再手工 mv 文件。做龙/实体/方块等有现成示例时，'
-      + '用 mc_scaffold 的 from=参考工程（可用项见工具说明）复制骨架，再改包名/modid，不要从零手搓框架。\n'
-      + '   然后用 read/edit/write（或 mc_list/mc_read/mc_write）改 Java 与资源。\n'
-      + '4) 构建失败先分流：出现 Connection refused / SSL / Could not resolve / Read timed out 是镜像或网络问题——'
-      + '告知用户或换网络/源，不要改代码，也不要动 build.gradle、settings.gradle、gradle wrapper 或平台版本；'
-      + '只有编译错误才按报错改代码。本机已有预热 Gradle 缓存，不要建议用户重新下载依赖。\n'
-      + '5) 造型（物品/方块/生物外观）派给 spawn_modeling_subagent；派发完结束这一轮，等系统汇总回合。汇总回合先请用户验收画布模型（ask_user_question：通过 / 要改哪里 / 重做），用户通过后用 canvas_export 把完整画布工程导出成 JSON（分组骨骼/pivot/UV/贴图/动画全在内），再用脚本解析生成 Java 模型类与贴图——这是唯一不失真的落地路径。mc_export_model 只产原版 item 模型（无骨骼无动画），仅限导出简单物品外观。不要自己手搓几何，更不要派子代理抄画布。\n'
-      + '   若 canvas_export 产物解析后发现与画布不符（不太可能），先核对解析代码再考虑其它路径；仍不行就 ask_user_question 问用户怎么落地（比如让用户从 Blockbench 手动保存 .bbmodel），不要反复盲试、更不要据此重做模型。\n'
-      + '6) 构建用 mc_gradle task=build；要验证能否进游戏就用 mc_gradle task=runClient background=true，'
-      + '   然后 mc_log 读启动标记（Sound engine started / Forge mod loading），失败先看崩溃报告再改。\n'
-      + '7) 收尾汇报：改了哪些文件、build 是否通过、客户端是否真的起来了、还有哪些没验证。\n'
-      + '工具名以本清单为准，只能调用实际注册的工具；没有 mc_export、mc_edit、mc_canvas_outline、mc_list_outline、export_model、save_model 这些工具——'
-      + '画布工程整体导出叫 canvas_export（含骨骼/贴图/动画），导出原版 item 模型才叫 mc_export_model，改工程文件用 edit/write。拿不准就先看函数目录（工具定义），不要凭名字猜。\n'
-      + '铁律：不改 MC 版本、不换加载器、不动 gradle.properties 里的 minecraft_version/forge_version；'
-      + '资源路径全小写；每次写完 Java 都要重新 build，不能只靠肉眼检查。',
-    toolFilter: [
-      'load_skill', 'mc_scaffold', 'mc_list', 'mc_read', 'mc_write', 'mc_gradle', 'mc_log', 'mc_export_model', 'canvas_export',
-      'spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOLS,
-    ],
-    skills: PROFILE_SKILLS.mcmod,
-  },
-  modeling: {
-    id: 'modeling',
-    name: '建模子代理（modeling）',
-    prompt: '你是建模子代理（modeling）：执行主代理派发的建模/动画任务。你工作在**当前会话的画布**上（与主代理、其它子代理共用同一份工程），你的每次修改都会实时显示给用户，因此要只做自己负责的部分、增量追加，不要清空或重建整个工程。动手前先 list_outline 看清已有分组与部件：已有同名骨骼（如 head、body）就直接往里加，用 place_cubes 的 group 参数指定父分组；确实需要新骨骼时才 add_group。除非主代理明确要求重做，否则不要调用 create_model（它会清空共享画布）。收尾一次简短总结（你新增/修改了什么、部件数、画布现状），不与用户寒暄，不派发任务。总结最后一行固定写「验收点：……」——列出你最没把握、最需要用户亲自确认的部位/动画/比例，供主代理在向用户请求验收时转述；自己拿不准的设计决定不要硬猜，在总结里写成待确认项。',
-    // 子代理是无人值守的画布工作者：不给它终端/授权/提问/计划，避免等待一个不会有人回答的弹窗
-    toolExclude: [
-      'spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOLS,
-    ],
-    skills: PROFILE_SKILLS.modeling,
-  },
-}
+// 代理角色由注册表提供：lead/coding 内置（profiles.ts），mcmod/modeling 由插件注册。
 
+if (bootFeatures.canvas !== false) {
 tools.push({
   name: 'spawn_modeling_subagent',
   description: '在当前会话里派发一个建模/动画任务（后台并行，共享当前画布）。可连续调用多次，同时派出多个子代理并行工作；它们的改动会实时出现在同一块画布上。立即返回子代理名，随后你就该结束这一轮——主会话进入等待态（用户不能插话），全部子代理结算后系统会自动开一轮汇总回合，把它们的收尾汇报交给你。不要轮询 list_subagents 等结果。description 为 3-5 字任务简述（面板展示），prompt 为完整任务描述（外形/配色/细节/动画；多子代理时写明各自负责的部件，避免抢同一块）。',
@@ -318,11 +266,40 @@ tools.push({
     return { forModel: lines.join('\n') }
   },
 })
+}
 
-// ---- 插件加载 ----
+// ---- 插件加载（按 requires 应用；发现阶段已在前面完成） ----
+/**
+ * 插件声明的 HTTP 路由：apply 阶段先收集，Fastify 实例创建后统一挂载。
+ * 插件因 requires 被跳过时这里不会有它的路由——功能关闭即接口不存在，
+ * 不需要再在 onRequest 里按 URL 前缀拦。
+ */
+const pluginHttpRoutes: { method: HttpMethod; path: string; handler: (req: any, reply: any) => any; opts?: HttpRouteOptions }[] = []
+
 const pluginCtx: PluginContext = {
   tools: { register: d => tools.push(d) },
   skills: { registerProvider: p => skillProviders.push(p) },
+  // 功能插件在这里注册自己的角色（mcmod / modeling），关掉对应开关时不会被调用
+  profiles: { register: p => profileRegistry.register(p) },
+  http: {
+    route: (method, path, handler, opts) => { pluginHttpRoutes.push({ method, path, handler, opts }) },
+  },
+  sessions: {
+    exists: id => sessionStore.exists(id),
+    cwdOf: id => {
+      if (!sessionStore.exists(id)) return null
+      const cwd = sessionStore.readMeta(id).cwd
+      const root = typeof cwd === 'string' && cwd.trim() ? cwd : DEFAULT_CWD
+      try { return realpathSync(root) } catch { return null }
+    },
+  },
+  prefs: { get: () => settingsStore.getPrefs() as unknown as Record<string, any> },
+  features: {
+    declare: f => {
+      if (f?.id && !declaredFeatures.some(x => x.id === f.id)) declaredFeatures.push(f)
+    },
+    enabled: id => bootFeatures[id] !== false,
+  },
   interaction: interactionHub.port,
   // 终端端口带归属校验：插件只能碰自己会话的进程
   terminals: {
@@ -353,7 +330,18 @@ const pluginCtx: PluginContext = {
   },
   env,
 }
-const loadedPlugins: LoadedPlugin[] = await loadPlugins(PLUGINS_DIR, pluginCtx)
+const pluginLoad = await applyPlugins(pluginDiscovery, pluginCtx, undefined, { featureStates: bootFeatures })
+const loadedPlugins: LoadedPlugin[] = pluginLoad.loaded
+const skippedPlugins = pluginLoad.skipped
+/** import/apply 失败的插件：/api/features 与设置页直接展示，不再只打 console */
+const failedPlugins = pluginLoad.failed
+// 被跳过的功能插件，其技能也要一起隐藏（系统提示 / load_skill / /api/skills 同步）
+const hiddenSkills = new Set(skippedPlugins.flatMap(s => s.skills))
+if (hiddenSkills.size) {
+  for (let i = 0; i < skillProviders.length; i++) {
+    skillProviders[i] = new FilteredSkillProvider(skillProviders[i], hiddenSkills)
+  }
+}
 
 // ---- 会话管理 ----
 /** 会话级协作状态：计划模式 / 待办 / 授权策略（durable：写 meta，计划与待办同时进日志） */
@@ -613,7 +601,7 @@ function createSession(id = randomUUID().slice(0, 8), opts: CreateSessionOptions
         bus.emit(topic, data)
       },
     },
-    { tools, skillProviders, systemSections, profiles: AGENT_PROFILES, beforeStepHooks, overflowHooks },
+    { tools, skillProviders, systemSections, profiles: profileRegistry.records, beforeStepHooks, overflowHooks },
   )
 
   // 恢复会话级模型选择：meta 优先，其次创建参数（子代理继承父模型），失效则回落默认
@@ -638,7 +626,11 @@ function createSession(id = randomUUID().slice(0, 8), opts: CreateSessionOptions
     cwd,
     agentName,
     description,
-    profile: meta.profile ?? (mode === 'root' ? 'lead' : 'modeling'),
+    profile: (() => {
+      // 角色可能已被功能开关禁用（如 mcmod/modeling）：会话恢复时回落 lead
+      const wanted = meta.profile ?? (mode === 'root' ? 'lead' : 'modeling')
+      return profileRegistry.has(wanted) ? wanted : 'lead'
+    })(),
     status: meta.lastStatus ?? 'idle',
     lastError: meta.lastError,
     lastText: meta.lastText,
@@ -972,6 +964,8 @@ function startSubagent(parent: SessionEntry, input: { description: string; promp
   if (parent.mode === 'subagent') throw new Error('子代理不能再派发子代理（深度上限 1）')
   if (isArchivedLineage(parent.id)) throw new Error('会话已归档，不能再派发子代理')
   if (!input.prompt.trim()) throw new Error('prompt 不能为空')
+  // 控件已经随 canvas 开关隐藏，这里再兜一层：别让旧客户端/模型把不存在的角色跑起来
+  if (!profileRegistry.has('modeling')) throw new Error('建模功能已关闭（设置 → 功能），不能派发建模子代理')
   if (liveSubagentCount(parent.id) >= maxActiveSubagents()) {
     throw new Error(`同时运行的子代理已达上限 ${maxActiveSubagents()} 个，等一个完成后再派发`)
   }
@@ -1154,20 +1148,76 @@ bus.on('compaction/done', (data: any) => {
 // ---- Fastify ----
 const app = Fastify({ logger: false, bodyLimit: 15 * 1024 * 1024 })
 
+// 素材上传走原始字节（不引入 multipart）：前端 fetch body=File，content-type 按扩展名
+app.addContentTypeParser(
+  ['application/octet-stream', 'application/java-archive', 'application/zip', 'image/png', 'image/jpeg', 'image/webp'],
+  { parseAs: 'buffer' },
+  (_req, body, done) => done(null, body),
+)
+
+// ---- 插件路由挂载（apply 阶段收集，此时 Fastify 才存在） ----
+for (const r of pluginHttpRoutes) {
+  app.route({
+    method: r.method,
+    url: r.path,
+    ...(r.opts?.bodyLimit ? { bodyLimit: r.opts.bodyLimit } : {}),
+    handler: async (req, reply) => {
+      // 插件 handler 与宿主路由同一语义：返回值直接回给客户端，显式 reply.send 也算
+      const out = await r.handler(req, reply)
+      // 已经 send 过（含流式下载）就不要再把 Reply 当 payload 回传
+      if (out === undefined || out === reply) return reply.sent ? undefined : null
+      return out
+    },
+  })
+}
+
 app.get('/api/health', async () => ({ ok: true, mock: MOCK, plugins: loadedPlugins.map(p => p.name) }))
 
-// 可选代理角色（dsh agentPreset 的简化版）：modeling 是内部子代理角色，不出现在这里
+// 功能关闭时相关接口统一 404（前端入口也会按 /api/features 隐藏；
+// 服务端也要拦，避免首屏 features 还没回来时前端把入口/按钮渲染出来）。
+// 插件自带路由（如 /api/mc）不需要前缀拦截：插件未 apply 时路由根本没注册。
+app.addHook('onRequest', async (req, reply) => {
+  if (bootFeatures.library === false && req.url.startsWith('/api/library')) {
+    return reply.code(404).send({ error: '素材库已关闭（设置 → 功能）' })
+  }
+})
+
+// 可选代理角色：只列当前功能开关下可用的（内部子代理角色 + requires 不满足的角色都不出现）
 app.get('/api/profiles', async () => ({
-  profiles: Object.values(AGENT_PROFILES)
-    .filter(p => p.id !== 'modeling')
-    .map(p => ({ id: p.id, name: p.name })),
+  profiles: profileRegistry.visible(bootFeatures).map(p => ({ id: p.id, name: p.name })),
 }))
+
+/**
+ * 功能开关（单一事实源）：
+ * enabled = 本次进程启动时实际加载的状态；pendingRestart = settings 已改但还没重启。
+ * 前端据此隐藏画布/MC/素材库入口，设置页据此渲染开关。
+ */
+app.get('/api/features', async () => {
+  // 与启动态同一套声明表，插件自带的开关才能正确计算 enabled / pendingRestart
+  const desired = resolveFeatureStates(settingsStore.getPrefs().features, declaredFeatures)
+  return {
+    features: declaredFeatures.map(f => ({
+      id: f.id,
+      name: f.name,
+      description: f.description ?? '',
+      enabled: bootFeatures[f.id] !== false,
+      default: f.default !== false,
+      pendingRestart: (desired[f.id] !== false) !== (bootFeatures[f.id] !== false),
+    })),
+    profiles: profileRegistry.visible(bootFeatures).map(p => ({ id: p.id, name: p.name })),
+    plugins: {
+      loaded: loadedPlugins.map(p => p.name),
+      skipped: skippedPlugins.map(s => ({ name: s.name, reason: s.reason })),
+      failed: failedPlugins.map(f => ({ name: f.name, phase: f.phase, error: f.error })),
+    },
+  }
+})
 
 // ---- 设置 → 代理与技能 ----
 
 /** 按角色解析生效工具（与 runtime 的 selectTools 同一语义：白名单 ∩ 非排除） */
 function resolveProfileTools(profileId: string): { name: string; description: string }[] {
-  const p = AGENT_PROFILES[profileId]
+  const p = profileRegistry.get(profileId)
   if (!p) return []
   let list = tools
   if (p.toolFilter) list = list.filter(t => p.toolFilter!.includes(t.name))
@@ -1177,7 +1227,7 @@ function resolveProfileTools(profileId: string): { name: string; description: st
 
 /** 设置页看全三个角色（含 modeling 子代理）：工具清单 + 技能分配 */
 app.get('/api/agents/detail', async () => ({
-  agents: Object.values(AGENT_PROFILES).map(p => ({
+  agents: profileRegistry.list().map(p => ({
     id: p.id,
     name: p.name,
     prompt: p.prompt,
@@ -1190,7 +1240,7 @@ app.get('/api/agents/detail', async () => ({
 /** 改某角色的技能分配（持久化覆盖默认值） */
 app.patch('/api/agents/:id/skills', async (req, reply) => {
   const { id } = req.params as { id: string }
-  if (!AGENT_PROFILES[id]) return reply.code(404).send({ error: `角色不存在: ${id}` })
+  if (!profileRegistry.has(id)) return reply.code(404).send({ error: `角色不存在: ${id}` })
   const { skills } = req.body as { skills?: unknown }
   if (!Array.isArray(skills) || skills.some(s => typeof s !== 'string')) {
     return reply.code(400).send({ error: 'skills 必须是字符串数组' })
@@ -1261,7 +1311,7 @@ app.delete('/api/skills/:name', async (req, reply) => {
   }
   rmSync(dir, { recursive: true, force: true })
   writeCustomSkills(readCustomSkills().filter(n => n !== name))
-  for (const id of Object.keys(AGENT_PROFILES)) {
+  for (const id of Object.keys(profileRegistry.records)) {
     if (profileSkillsOverrides[id]) {
       profileSkillsOverrides[id] = profileSkillsOverrides[id].filter(s => s !== name)
     }
@@ -1650,89 +1700,6 @@ app.post('/api/fs/pick-dir', async (req, reply) => {
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
   }
-})
-
-const mcdevUi = await import('../../../plugins/mcdev/index.js')
-
-/** 会话工作目录（durable），未绑定回落 DEFAULT_CWD；不存在时回落 MC_ROOT 同款解析 */
-function sessionRoot(sessionId: string): string | null {
-  if (!sessionStore.exists(sessionId)) return null
-  const cwd = sessionStore.readMeta(sessionId).cwd
-  const root = typeof cwd === 'string' && cwd.trim() ? cwd : DEFAULT_CWD
-  try { return realpathSync(root) } catch { return null }
-}
-
-/** 会话 cwd 下的 MC 工程状态：构建结果 / runClient 运行中 / jar 产物 */
-app.get('/api/mc/state', async (req, reply) => {
-  const sid = String((req.query as any).sessionId ?? '')
-  const root = sessionRoot(sid)
-  if (!root) return reply.code(404).send({ error: '会话不存在或目录无效' })
-  const projects = await mcdevUi.listMcProjects(root)
-  return { root, projects }
-})
-
-/** jar 导出：把工程的最新构建产物复制到设置里的 mod-output 目录（prefs.modOutput） */
-app.post('/api/mc/export', async (req, reply) => {
-  const sid = String((req.body as any)?.sessionId ?? '')
-  const project = String((req.body as any)?.project ?? '')
-  const root = sessionRoot(sid)
-  if (!root) return reply.code(404).send({ error: '会话不存在或目录无效' })
-  const dest = settingsStore.getPrefs().modOutput
-  if (!dest) return reply.code(400).send({ error: '尚未配置 mod-output：请到 设置 → 通用 → Mod 构建里填写 jar 导出目录' })
-  const resolved = resolveDir(dest)
-  if (!resolved) return reply.code(400).send({ error: `mod-output 目录不存在：${dest}` })
-  const projects = await mcdevUi.listMcProjects(root)
-  const p = projects.find(x => x.name === project) ?? projects[0]
-  if (!p?.jars?.length) return reply.code(404).send({ error: '该工程还没有构建产物 jar（先跑 gradlew build）' })
-  const jar = p.jars[0]
-  try {
-    const out = join(resolved, jar.name)
-    await import('node:fs/promises').then(fs => fs.copyFile(jar.path, out))
-    return { ok: true, name: jar.name, dest: out, size: jar.size }
-  } catch (e: any) {
-    return reply.code(500).send({ error: `复制失败：${e.message}` })
-  }
-})
-
-/** 启动 runClient（等价 mc_gradle task=runClient background=true，同一套状态登记） */
-app.post('/api/mc/run', async (req, reply) => {
-  const body = (req.body ?? {}) as { sessionId?: string; project?: string }
-  const root = sessionRoot(String(body.sessionId ?? ''))
-  if (!root) return reply.code(404).send({ error: '会话不存在或目录无效' })
-  const raw = String(body.project ?? '').trim()
-  if (!raw) return reply.code(400).send({ error: 'project 不能为空' })
-  const dir = raw.includes('\\') || raw.includes('/') ? resolve(raw) : resolve(root, raw)
-  try { if (!statSync(dir).isDirectory() || !existsSync(join(dir, 'build.gradle'))) throw new Error() } catch {
-    return reply.code(400).send({ error: `不是有效的 MC 工程：${raw}` })
-  }
-  try {
-    const r = await mcdevUi.startRunClient(dir, root)
-    return { ok: true, ...r }
-  } catch (e: any) {
-    return reply.code(500).send({ error: e.message })
-  }
-})
-
-/** 停掉工程的 runClient */
-app.post('/api/mc/stop', async (req, reply) => {
-  const body = (req.body ?? {}) as { sessionId?: string; project?: string }
-  const root = sessionRoot(String(body.sessionId ?? ''))
-  if (!root) return reply.code(404).send({ error: '会话不存在' })
-  const dir = resolve(root, String(body.project ?? '').replace(/^[/\\]+/, ''))
-  try { if (!statSync(dir).isDirectory()) throw new Error() } catch { return reply.code(400).send({ error: '工程目录不存在' }) }
-  return { ok: true, stopped: mcdevUi.stopRunClient(dir) }
-})
-
-/** 下载构建出的 mod jar（必须是 .jar 且真实存在） */
-app.get('/api/mc/jar', async (req, reply) => {
-  const raw = String((req.query as any).path ?? '')
-  if (!raw.endsWith('.jar')) return reply.code(400).send({ error: '只允许下载 .jar' })
-  const abs = resolve(raw)
-  try { if (!statSync(abs).isFile()) throw new Error() } catch { return reply.code(404).send({ error: '文件不存在' }) }
-  const stream = (await import('node:fs')).createReadStream(abs)
-  return reply.header('content-type', 'application/java-archive')
-    .header('content-disposition', `attachment; filename="${encodeURIComponent(abs.split(/[\\/]/).pop() ?? 'mod.jar')}"`)
-    .send(stream)
 })
 
 app.post('/api/projects', async (req, reply) => {
@@ -2157,7 +2124,7 @@ app.post('/api/sessions/:id/chat', async (req, reply) => {
   }
   if (!body.text?.trim()) return reply.code(400).send({ error: 'text 不能为空' })
   // 代理角色：未知 id 直接回落当前角色（不 400——老客户端不会带这个字段）
-  const wantedProfile = typeof body.profile === 'string' && AGENT_PROFILES[body.profile] ? body.profile : undefined
+  const wantedProfile = typeof body.profile === 'string' && profileRegistry.has(body.profile) ? body.profile : undefined
   if (wantedProfile && wantedProfile !== s.profile) {
     s.profile = wantedProfile
     persistMeta(s)
@@ -2277,9 +2244,12 @@ function inheritFromAsset(asset: LibraryAsset, fallbackSessionId?: string) {
   const srcId = asset.sessionId && sessionStore.exists(asset.sessionId) ? asset.sessionId : fallbackSessionId
   const live = srcId ? sessions.get(srcId) : undefined
   const meta = srcId ? sessionStore.readMeta(srcId) : {}
+  const profile = live?.profile ?? meta.profile
   return {
     cwd: live?.cwd ?? meta.cwd ?? DEFAULT_CWD,
-    profile: live?.profile ?? meta.profile,
+    // 素材可能来自子代理（modeling）或已关闭功能的角色（mc 关闭后的 mcmod）：
+    // 未注册的角色不能继承，否则新开的编辑会话会拿到一个不存在的角色（运行时只会静默回落）。
+    profile: profile && profileRegistry.has(profile) ? profile : undefined,
     modelId: live?.runtime.currentModelId ?? meta.modelId,
   }
 }
@@ -2300,6 +2270,87 @@ function seedCanvas(sessionId: string, snap: LibraryDoc, libId?: string) {
 }
 
 app.get('/api/library', async () => ({ assets: library.list() }))
+
+// 上传一个文件（原始字节体）：首个文件建资产，多选/拖拽的其余文件走 /:id/files 追加
+app.post('/api/library/upload', { bodyLimit: 64 * 1024 * 1024 }, async (req, reply) => {
+  const q = (req.query ?? {}) as { name?: string; title?: string; sessionId?: string }
+  const fileName = String(q.name ?? '').trim()
+  if (!fileName) return reply.code(400).send({ error: '缺少文件名（?name=）' })
+  const data = req.body
+  if (!Buffer.isBuffer(data) || data.length === 0) return reply.code(400).send({ error: '请求体为空（请传文件字节）' })
+  try {
+    const asset = library.create({
+      name: String(q.title ?? '').trim(),
+      fileName,
+      data,
+      sessionId: String(q.sessionId ?? '').trim() || undefined,
+      provider: 'upload',
+    })
+    return { asset: library.get(asset.id) ?? asset }
+  } catch (e: any) {
+    return reply.code(400).send({ error: e.message })
+  }
+})
+
+// 给已有资产追加文件（同一请求一个文件）
+app.post('/api/library/:id/files', { bodyLimit: 64 * 1024 * 1024 }, async (req, reply) => {
+  const id = String((req.params as any).id)
+  const q = (req.query ?? {}) as { name?: string }
+  const fileName = String(q.name ?? '').trim()
+  if (!fileName) return reply.code(400).send({ error: '缺少文件名（?name=）' })
+  const data = req.body
+  if (!Buffer.isBuffer(data) || data.length === 0) return reply.code(400).send({ error: '请求体为空（请传文件字节）' })
+  try {
+    const asset = library.addFile(id, { fileName, data })
+    return { asset }
+  } catch (e: any) {
+    return reply.code(400).send({ error: e.message })
+  }
+})
+
+// 从会话工作目录导入（填相对 cwd 的路径；服务端校验 realpath 不越界）
+app.post('/api/library/import', async (req, reply) => {
+  const body = (req.body ?? {}) as { sessionId?: string; paths?: string[]; name?: string }
+  const sessionId = String(body.sessionId ?? '').trim()
+  if (!sessionId) return reply.code(400).send({ error: 'sessionId 不能为空' })
+  // 会话不存在时不能回落到应用根目录导入（否则「工作目录导入」会悄悄变成「仓库根导入」）
+  if (!sessionStore.exists(sessionId)) return reply.code(400).send({ error: '会话不存在' })
+  const cwd = sessionStore.readMeta(sessionId).cwd ?? DEFAULT_CWD
+  try {
+    const asset = library.importFiles({
+      root: cwd,
+      paths: Array.isArray(body.paths) ? body.paths.map(String) : [],
+      name: String(body.name ?? '').trim() || undefined,
+      sessionId,
+    })
+    return { asset }
+  } catch (e: any) {
+    return reply.code(400).send({ error: e.message })
+  }
+})
+
+// 资产内文件：图片与文本可内联预览，jar/压缩包/HTML 一律下载
+app.get('/api/library/:id/files/:fileId', async (req, reply) => {
+  const { id, fileId } = req.params as { id: string; fileId: string }
+  const found = library.readFile(id, fileId)
+  if (!found) return reply.code(404).send({ error: '文件不存在' })
+  const { file, data } = found
+  const ascii = file.name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '')
+  const disposition = `${(req.query as any)?.download ? 'attachment' : 'inline'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(file.name)}`
+  reply.header('content-disposition', disposition)
+  reply.header('cache-control', 'private, max-age=3600')
+  if (file.kind === 'image') return reply.header('content-type', file.mime).send(data)
+  if (file.kind === 'text' && !(req.query as any)?.download) {
+    const ext = file.name.split('.').pop()?.toLowerCase()
+    // HTML/SVG 能执行脚本：只允许下载，不做内联
+    if (ext !== 'html' && ext !== 'svg') {
+      return reply
+        .header('content-type', 'text/plain; charset=utf-8')
+        .send(data.subarray(0, 512 * 1024))
+    }
+  }
+  return reply.header('content-type', 'application/octet-stream').send(data)
+})
 
 app.post('/api/library/capture', async (req, reply) => {
   const body = (req.body ?? {}) as { sessionId?: string; name?: string }
@@ -2498,6 +2549,8 @@ canvas.onChange(change => {
     return
   }
   // 自动入库：普通会话的画布模型只要非空就 upsert 进素材库（编辑会话走上面的回写，不重复入）
+  // 素材库功能关闭时不入库：否则会持续产生用户在界面上看不到、也无法删除的资产。
+  if (bootFeatures.library === false) return
   if ((change.elements ?? 0) <= 0) return
   const prevAuto = autoLibTimers.get(change.canvasId)
   if (prevAuto) clearTimeout(prevAuto)
@@ -2635,7 +2688,7 @@ app.listen({ port: PORT, host: '127.0.0.1' }).then(() => {
   pruneEmptySessions()
   console.log(`[openmods] server ready → http://127.0.0.1:${PORT}`)
   console.log(`[openmods] 插件: ${loadedPlugins.map(p => p.name).join(', ') || '无'}`)
-  console.log(`[openmods] 技能: ${dirProvider.list().map(s => s.name).join(', ') || '无'}`)
+  console.log(`[openmods] 技能: ${skillProviders.flatMap(p => p.list().map(s => s.name)).join(', ') || '无'}`)
   console.log(`[openmods] 模型目录: ${Object.keys(settingsStore.modelDirectory()).join(', ')}`)
   console.log(`[openmods] 终端 shell: ${terminals.shellLabel}`)
 })

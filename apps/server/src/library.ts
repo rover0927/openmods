@@ -1,23 +1,45 @@
-// 文档素材库：把建模画布的快照（几何 + 贴图 + 分组 + 动画）归档下来，供以后复用。
+// 素材库 v2：统一「多文件资产」。
+//
+// 一个素材 = 若干文件（模型快照 / 缩略图 / jar 构建产物 / 贴图 / bbmodel / 其它）
+// + 派生出来的模型统计与构建产物索引。旧的「一个素材只能是一份画布快照 + 一个 jar」
+// 结构在首次访问时懒迁移到新目录布局，旧文件保留回退读取。
 //
 // 存法（data/library/）：
-//   <id>.meta.json  列表用的元信息（小，列表只读它）
-//   <id>.doc.json   完整快照 { name, resolution, elements, outliner, textures, animations, view }
-//   <id>.png        缩略图（第一张 PNG 贴图；没有贴图时不产生）
+//   <id>/meta.json          列表只读它（含 files 索引与派生字段）
+//   <id>/files/f_xxx_原名    真实文件（rel 相对素材目录，路径一律由 meta 反查）
+//   <id>/thumbs/t_xxx.png   模型缩略图（第一张 PNG 贴图）
 //
 // 素材有两种"改"法：
 //   - 引用到新会话：读快照种到新会话的画布，素材本身不动（副本迭代）；
-//   - 就地改：素材绑定一个「编辑会话」（meta.editingSessionId），该会话的画布改动
-//     由服务端防抖回写到这里（updateDoc），版本号递增，始终只有一份素材。
+//   - 就地改：素材绑定一个「编辑会话」，该会话的画布改动由服务端防抖回写（updateDoc）。
 //
 // 素材只做"归档/取回"，不参与画布同步：截取时从 canvas.read 拷一份，
 // 送进画布时走 canvas.commit（服务仍是唯一写入口）。
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import {
+  copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync,
+  rmSync, statSync, unlinkSync, writeFileSync,
+} from 'node:fs'
+import { basename, extname, join, resolve, sep } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+
+export type AssetFileKind = 'model' | 'image' | 'jar' | 'archive' | 'text' | 'other'
+
+/** 资产里的一个真实文件（rel 相对素材目录，绝不使用客户端传进来的路径拼接） */
+export interface AssetFile {
+  id: string
+  name: string
+  rel: string
+  size: number
+  mime: string
+  kind: AssetFileKind
+  sha256: string
+  createdAt: number
+}
 
 export interface LibraryAsset {
+  /** 2 = 多文件资产结构；旧数据缺省按 legacy 读取并懒迁移 */
+  schema?: number
   id: string
   name: string
   createdAt: number
@@ -32,18 +54,27 @@ export interface LibraryAsset {
   editingSessionId?: string
   /** 自动入库的素材：会话画布模型由服务端自动 upsert（保证用户做的模型永不丢） */
   auto?: boolean
-  /** 截取时归档的构建产物（工程 build/libs 下最新的 jar；没有构建产物时不写这个字段） */
-  jar?: { name: string; size: number }
+  /** 资产来源 */
+  source: { provider: 'canvas' | 'auto' | 'upload' | 'cwd' | 'legacy'; sessionId?: string; path?: string }
+  /** 资产里的全部文件 */
+  files: AssetFile[]
+  /** 模型类资产（画布快照，或上传的 bbmodel/文档） */
+  model?: {
+    docFileId: string
+    elementCount: number
+    textureCount: number
+    resolution: { width: number; height: number }
+    palette?: string[]
+    /** thumbs/ 下的文件名 */
+    thumbFileId?: string
+  }
+  /** 构建产物（jar / zip 归档） */
+  jar?: { fileId?: string; name: string; size: number }
+  // —— 以下为兼容旧前端的派生字段（由 model 计算，不单独维护） ——
   elementCount: number
   textureCount: number
   resolution: { width: number; height: number }
-  /** 主贴图的 dataURL 前 64 字符做指纹，前端不需要 */
   hasThumb: boolean
-  /**
-   * 调色板（最多 8 个 #RRGGBB，不带 #）。
-   * bb-tools 的贴图是「一个材质一张纯色图」（名字就是 mat_<hex>），首张贴图往往只是底色，
-   * 拿它当缩略图会是一块空白 —— 卡片改用调色板方块拼图，至少能区分不同模型。
-   */
   palette?: string[]
 }
 
@@ -59,6 +90,89 @@ export interface LibraryDoc {
 }
 
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
+
+const MAX_FILES_PER_ASSET = 40
+const MAX_IMPORT_FILES = 20
+const MAX_TEXT_INLINE = 512 * 1024
+
+/** 允许入库的扩展名（上传/从工作目录导入都走这里） */
+const ALLOWED_EXT = new Set([
+  'png', 'jpg', 'jpeg', 'webp', 'gif',
+  'jar', 'zip',
+  'json', 'bbmodel',
+  'md', 'txt', 'java', 'kt', 'gradle', 'properties', 'yml', 'yaml', 'toml',
+  'ts', 'tsx', 'js', 'jsx', 'css', 'html',
+])
+
+const EXT_MIME: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif',
+  jar: 'application/java-archive', zip: 'application/zip',
+  json: 'application/json', bbmodel: 'application/json',
+  md: 'text/markdown', txt: 'text/plain', html: 'text/html', css: 'text/css',
+  java: 'text/plain', kt: 'text/plain', gradle: 'text/plain', properties: 'text/plain',
+  yml: 'text/plain', yaml: 'text/plain', toml: 'text/plain',
+  ts: 'text/plain', tsx: 'text/plain', js: 'text/plain', jsx: 'text/plain',
+}
+
+const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif'])
+const TEXT_EXT = new Set(['json', 'bbmodel', 'md', 'txt', 'java', 'kt', 'gradle', 'properties', 'yml', 'yaml', 'toml', 'ts', 'tsx', 'js', 'jsx', 'css', 'html'])
+
+const WIN_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
+
+function extOf(name: string): string {
+  return extname(String(name ?? '')).toLowerCase().replace(/^\./, '')
+}
+
+function mimeOf(name: string): string {
+  return EXT_MIME[extOf(name)] ?? 'application/octet-stream'
+}
+
+/** 文件名净化：去目录、去危险字符、Windows 保留名、限制长度（扩展名保留） */
+export function sanitizeFileName(input: string): string {
+  // 统一分隔符后只取最后一段，避免 `..\..\x` 这类客户端路径
+  let name = basename(String(input ?? '').replace(/\\/g, '/'))
+  name = name.replace(/[\u0000-\u001f\u007f<>:"/\\|?*]/g, '_').replace(/\s+/g, ' ').trim()
+  name = name.replace(/^\.+/, '').replace(/[. ]+$/, '')
+  if (!name) name = 'file'
+  const ext = extname(name)
+  let stem = ext ? name.slice(0, -ext.length) : name
+  if (WIN_RESERVED.test(stem)) stem = `_${stem}`
+  if (stem.length > 100) stem = stem.slice(0, 100)
+  const safe = `${stem}${ext.slice(0, 20)}`
+  return safe || 'file'
+}
+
+/** 上传/导入前的类型与大小校验（抛出的 message 直接给前端/模型看） */
+export function assertAssetFile(name: string, size: number) {
+  const ext = extOf(name)
+  if (!ALLOWED_EXT.has(ext)) throw new Error(`不支持的文件类型：.${ext || '(无扩展名)'}`)
+  const limit = ext === 'jar' || ext === 'zip'
+    ? 64 * 1024 * 1024
+    : IMAGE_EXT.has(ext) ? 10 * 1024 * 1024 : 5 * 1024 * 1024
+  if (size > limit) throw new Error(`文件过大（${Math.round(size / 1024 / 1024)}MB，上限 ${Math.round(limit / 1024 / 1024)}MB）`)
+}
+
+/** 按扩展名 + magic 判定文件种类（只信扩展名不够） */
+function detectKind(name: string, data?: Buffer): AssetFileKind {
+  const ext = extOf(name)
+  if (ext === 'jar') return 'jar'
+  if (IMAGE_EXT.has(ext)) return 'image'
+  if (ext === 'zip') return 'archive'
+  if (data && data.length >= 4 && data[0] === 0x50 && data[1] === 0x4b) return 'archive'
+  if (TEXT_EXT.has(ext)) return 'text'
+  return 'other'
+}
+
+/** JSON 是否是画布模型文档（上传的 bbmodel / 文档快照） */
+function looksLikeModelDoc(data: Buffer): any | undefined {
+  if (data.length === 0 || data.length > 32 * 1024 * 1024) return undefined
+  try {
+    const parsed = JSON.parse(data.toString('utf8'))
+    return Array.isArray(parsed?.elements) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
 
 function resOf(doc: any): { width: number; height: number } {
   const res = doc?.resolution ?? {}
@@ -96,6 +210,12 @@ function paletteOf(textures: any[]): string[] {
   return out
 }
 
+function firstPng(textures: any[]): Buffer | undefined {
+  const t = textures.find(x => typeof x?.source === 'string' && x.source.startsWith('data:image/png;base64,'))
+  if (!t) return undefined
+  try { return Buffer.from(t.source.split(',')[1], 'base64') } catch { return undefined }
+}
+
 /** 扫描太大目录没意义：工程根、build 产物以外的源码/依赖目录不进去 */
 const JAR_SCAN_SKIP = new Set(['node_modules', '.git', '.gradle', 'build', 'out', 'run', 'bin', 'obj', 'src', 'logs'])
 
@@ -128,50 +248,256 @@ function findLatestJar(root: string): { path: string; name: string; size: number
   return best ? { path: best.path, name: best.name, size: best.size } : undefined
 }
 
+/** 把文件移进素材目录，跨盘/占用时退化成复制 + 删除 */
+function moveFile(from: string, to: string) {
+  try { renameSync(from, to); return } catch { /* 跨盘或占用 */ }
+  copyFileSync(from, to)
+  unlinkSync(from)
+}
+
 export function createLibraryStore(root: string) {
   const dir = join(root, 'data', 'library')
   mkdirSync(dir, { recursive: true })
-  const metaPath = (id: string) => join(dir, `${id}.meta.json`)
-  const docPath = (id: string) => join(dir, `${id}.doc.json`)
-  const thumbPath = (id: string) => join(dir, `${id}.png`)
-  const jarPath = (id: string) => join(dir, `${id}.jar`)
 
+  const assetDir = (id: string) => join(dir, id)
+  const metaPath = (id: string) => join(assetDir(id), 'meta.json')
+  const filesDir = (id: string) => join(assetDir(id), 'files')
+  const thumbsDir = (id: string) => join(assetDir(id), 'thumbs')
+
+  // 旧扁平布局
+  const legacyMetaPath = (id: string) => join(dir, `${id}.meta.json`)
+  const legacyDocPath = (id: string) => join(dir, `${id}.doc.json`)
+  const legacyThumbPath = (id: string) => join(dir, `${id}.png`)
+  const legacyJarPath = (id: string) => join(dir, `${id}.jar`)
+
+  function safeInside(id: string, rel: string): string | undefined {
+    const base = resolve(assetDir(id))
+    const full = resolve(base, rel)
+    return full === base || full.startsWith(base + sep) ? full : undefined
+  }
+
+  function writeMeta(meta: LibraryAsset) {
+    mkdirSync(assetDir(meta.id), { recursive: true })
+    const tmp = `${metaPath(meta.id)}.tmp`
+    writeFileSync(tmp, JSON.stringify(meta, null, 2))
+    try { renameSync(tmp, metaPath(meta.id)) } catch {
+      writeFileSync(metaPath(meta.id), JSON.stringify(meta, null, 2))
+      try { unlinkSync(tmp) } catch { /* 忽略 */ }
+    }
+  }
+
+  /** 把派生字段从 model 重新算一遍（旧前端只认这些顶层字段） */
+  function derive(meta: LibraryAsset): LibraryAsset {
+    meta.schema = 2
+    meta.files = Array.isArray(meta.files) ? meta.files : []
+    meta.source = meta.source ?? { provider: 'legacy' }
+    if (!meta.model) {
+      meta.elementCount = Number(meta.elementCount ?? 0) || 0
+      meta.textureCount = Number(meta.textureCount ?? 0) || 0
+      meta.resolution = meta.resolution ?? { width: 16, height: 16 }
+      meta.hasThumb = !!meta.hasThumb
+      return meta
+    }
+    meta.elementCount = meta.model.elementCount
+    meta.textureCount = meta.model.textureCount
+    meta.resolution = meta.model.resolution
+    meta.palette = meta.model.palette
+    meta.hasThumb = !!meta.model.thumbFileId
+    return meta
+  }
 
   function readMeta(id: string): LibraryAsset | undefined {
     if (!ID_RE.test(id)) return undefined
     try {
-      return JSON.parse(readFileSync(metaPath(id), 'utf8')) as LibraryAsset
+      const meta = JSON.parse(readFileSync(metaPath(id), 'utf8')) as LibraryAsset
+      return derive(meta)
+    } catch { /* 新布局不存在，试迁移 */ }
+    if (migrateLegacy(id)) {
+      try { return derive(JSON.parse(readFileSync(metaPath(id), 'utf8')) as LibraryAsset) } catch { /* 落到回退 */ }
+    }
+    return legacyMeta(id)
+  }
+
+  /** 迁移失败时的只读回退：内存里合成 v2 结构，读写仍指向旧扁平文件 */
+  function legacyMeta(id: string): LibraryAsset | undefined {
+    if (!ID_RE.test(id)) return undefined
+    try {
+      const old = JSON.parse(readFileSync(legacyMetaPath(id), 'utf8')) as any
+      const meta: LibraryAsset = {
+        schema: 2,
+        id,
+        name: String(old.name ?? id),
+        createdAt: Number(old.createdAt ?? Date.now()),
+        updatedAt: Number(old.updatedAt ?? old.createdAt ?? Date.now()),
+        version: Number(old.version ?? 1),
+        sessionId: old.sessionId,
+        canvasId: old.canvasId,
+        editingSessionId: old.editingSessionId,
+        auto: old.auto === true,
+        source: { provider: 'legacy' },
+        files: [],
+        model: {
+          docFileId: '',
+          elementCount: Number(old.elementCount ?? 0) || 0,
+          textureCount: Number(old.textureCount ?? 0) || 0,
+          resolution: resOf(old),
+          palette: old.palette,
+          thumbFileId: '',
+        },
+        jar: old.jar ? { name: String(old.jar.name ?? `${id}.jar`), size: Number(old.jar.size ?? 0) } : undefined,
+        elementCount: Number(old.elementCount ?? 0) || 0,
+        textureCount: Number(old.textureCount ?? 0) || 0,
+        resolution: resOf(old),
+        hasThumb: existsSync(legacyThumbPath(id)),
+        palette: old.palette,
+      }
+      return derive(meta)
     } catch {
       return undefined
     }
   }
 
-  function writeMeta(meta: LibraryAsset) {
-    writeFileSync(metaPath(meta.id), JSON.stringify(meta, null, 2))
+  /** 旧扁平布局 → 目录布局；成功返回 true（中途失败下次重试，旧文件最后才删） */
+  function migrateLegacy(id: string): boolean {
+    if (!ID_RE.test(id) || !existsSync(legacyMetaPath(id))) return false
+    try {
+      const old = JSON.parse(readFileSync(legacyMetaPath(id), 'utf8')) as any
+      const files: AssetFile[] = []
+      let model: LibraryAsset['model']
+      let jar: LibraryAsset['jar']
+
+      const docFile = legacyDocPath(id)
+      if (existsSync(docFile)) {
+        const data = readFileSync(docFile)
+        const entry = storeFile(id, `${sanitizeFileName(String(old.name ?? id))}.json`, data, 'model')
+        files.push(entry)
+        const snap = snapshotOf(JSON.parse(data.toString('utf8')))
+        model = {
+          docFileId: entry.id,
+          elementCount: snap.elements.length,
+          textureCount: snap.textures.length,
+          resolution: snap.resolution,
+          palette: paletteOf(snap.textures),
+        }
+      }
+
+      const thumb = legacyThumbPath(id)
+      if (model && existsSync(thumb)) {
+        model.thumbFileId = writeThumb(id, readFileSync(thumb))
+      }
+
+      const jarFile = legacyJarPath(id)
+      if (existsSync(jarFile)) {
+        const data = readFileSync(jarFile)
+        const name = String(old.jar?.name ?? `${id}.jar`)
+        const entry = storeFile(id, name, data, 'jar')
+        files.push(entry)
+        jar = { fileId: entry.id, name, size: data.length }
+      }
+
+      const meta: LibraryAsset = {
+        schema: 2,
+        id,
+        name: String(old.name ?? id),
+        createdAt: Number(old.createdAt ?? Date.now()),
+        updatedAt: Number(old.updatedAt ?? old.createdAt ?? Date.now()),
+        version: Number(old.version ?? 1),
+        sessionId: old.sessionId,
+        canvasId: old.canvasId,
+        editingSessionId: old.editingSessionId,
+        auto: old.auto === true,
+        source: { provider: 'legacy' },
+        files,
+        model,
+        jar,
+        elementCount: model?.elementCount ?? 0,
+        textureCount: model?.textureCount ?? 0,
+        resolution: model?.resolution ?? resOf(old),
+        hasThumb: !!model?.thumbFileId,
+        palette: model?.palette,
+      }
+      writeMeta(derive(meta))
+      for (const p of [legacyMetaPath(id), legacyDocPath(id), legacyThumbPath(id), legacyJarPath(id)]) {
+        try { if (existsSync(p)) unlinkSync(p) } catch { /* 忽略 */ }
+      }
+      return true
+    } catch {
+      return false
+    }
   }
 
-  /** 落盘快照 + 缩略图，返回要合并进 meta 的计数字段 */
-  function writeSnapshot(id: string, snap: LibraryDoc): Pick<LibraryAsset, 'elementCount' | 'textureCount' | 'resolution' | 'hasThumb' | 'palette'> {
-    writeFileSync(docPath(id), JSON.stringify(snap))
-    // 缩略图：取第一张 PNG 贴图原样落盘（mc 端导出时同款来源）
-    const first = snap.textures.find(t => typeof t?.source === 'string' && t.source.startsWith('data:image/png;base64,'))
-    let hasThumb = false
-    if (first) {
-      try {
-        writeFileSync(thumbPath(id), Buffer.from(first.source.split(',')[1], 'base64'))
-        hasThumb = true
-      } catch { /* 贴图坏了不影响归档 */ }
-    } else {
-      // 换成没有位图贴图的快照：旧缩略图必须删掉，否则卡片显示的是上一版
-      try { if (existsSync(thumbPath(id))) unlinkSync(thumbPath(id)) } catch { /* 忽略 */ }
-    }
+  /** 写一个文件进素材目录（文件名净化后加随机前缀，永不使用客户端路径） */
+  function storeFile(id: string, name: string, data: Buffer, kind?: AssetFileKind): AssetFile {
+    const d = filesDir(id)
+    mkdirSync(d, { recursive: true })
+    const fileId = randomUUID().slice(0, 10)
+    const safeName = sanitizeFileName(name)
+    const diskName = `${fileId}_${safeName}`
+    writeFileSync(join(d, diskName), data)
     return {
+      id: fileId,
+      name: safeName,
+      rel: `files/${diskName}`,
+      size: data.length,
+      mime: mimeOf(safeName),
+      kind: kind ?? detectKind(safeName, data),
+      sha256: createHash('sha256').update(data).digest('hex'),
+      createdAt: Date.now(),
+    }
+  }
+
+  function deleteFileEntry(id: string, entry?: AssetFile) {
+    if (!entry) return
+    const p = safeInside(id, entry.rel)
+    if (!p) return
+    try { if (existsSync(p)) unlinkSync(p) } catch { /* 忽略 */ }
+  }
+
+  function clearThumbs(id: string) {
+    try {
+      for (const f of readdirSync(thumbsDir(id))) {
+        try { unlinkSync(join(thumbsDir(id), f)) } catch { /* 忽略 */ }
+      }
+    } catch { /* 没有缩略图目录 */ }
+  }
+
+  function writeThumb(id: string, png: Buffer): string {
+    mkdirSync(thumbsDir(id), { recursive: true })
+    const name = `t_${randomUUID().slice(0, 8)}.png`
+    writeFileSync(join(thumbsDir(id), name), png)
+    return name
+  }
+
+  /**
+   * 写入/替换模型快照：删掉旧文档文件，落新快照 + 缩略图，刷新 model 与派生字段。
+   */
+  function applySnapshot(id: string, meta: LibraryAsset, snap: LibraryDoc) {
+    const prevDoc = meta.files.find(f => f.id === meta.model?.docFileId)
+    if (prevDoc) {
+      deleteFileEntry(id, prevDoc)
+      meta.files = meta.files.filter(f => f.id !== prevDoc.id)
+    }
+    const docEntry = storeFile(id, `${sanitizeFileName(meta.name)}.json`, Buffer.from(JSON.stringify(snap)), 'model')
+    meta.files.push(docEntry)
+    clearThumbs(id)
+    const thumb = firstPng(snap.textures)
+    meta.model = {
+      docFileId: docEntry.id,
       elementCount: snap.elements.length,
       textureCount: snap.textures.length,
       resolution: snap.resolution,
-      hasThumb,
       palette: paletteOf(snap.textures),
+      thumbFileId: thumb ? writeThumb(id, thumb) : undefined,
     }
+    derive(meta)
+  }
+
+  /**
+   * 上传/导入的文档也能当模型：原文件保留（素材库是归档，不能因为第一次编辑就删掉用户的源文件），
+   * 另外落一份归一化快照作为画布文档。
+   */
+  function adoptModelFile(id: string, meta: LibraryAsset, doc: any) {
+    applySnapshot(id, meta, snapshotOf(doc))
   }
 
   const store = {
@@ -182,8 +508,16 @@ export function createLibraryStore(root: string) {
       try { names = readdirSync(dir) } catch { return [] }
       const out: LibraryAsset[] = []
       for (const name of names) {
-        if (!name.endsWith('.meta.json')) continue
-        const id = name.slice(0, -'.meta.json'.length)
+        let id: string | undefined
+        let isDir = false
+        try { isDir = lstatSync(join(dir, name)).isDirectory() } catch { continue }
+        if (isDir) {
+          if (!existsSync(join(dir, name, 'meta.json'))) continue
+          id = name
+        } else if (name.endsWith('.meta.json')) {
+          id = name.slice(0, -'.meta.json'.length)
+        }
+        if (!id) continue
         const meta = readMeta(id)
         if (!meta) continue
         // 老文件没有 updatedAt/version：补齐后内存里排序，不为了排序去写盘
@@ -217,6 +551,7 @@ export function createLibraryStore(root: string) {
       const id = randomUUID().slice(0, 10)
       const now = Date.now()
       const meta: LibraryAsset = {
+        schema: 2,
         id,
         name: String(opts.name || '').trim().slice(0, 60) || `素材 ${new Date().toLocaleString('zh-CN')}`,
         createdAt: now,
@@ -224,19 +559,23 @@ export function createLibraryStore(root: string) {
         version: 1,
         sessionId: opts.sessionId,
         canvasId: opts.canvasId,
-        elementCount: snap.elements.length,
-        textureCount: snap.textures.length,
+        source: { provider: 'canvas', sessionId: opts.sessionId },
+        files: [],
+        elementCount: 0,
+        textureCount: 0,
         resolution: snap.resolution,
         hasThumb: false,
       }
-      Object.assign(meta, writeSnapshot(id, snap))
+      applySnapshot(id, meta, snap)
       // 构建产物一起归档：素材卡片可直接下载 jar；没有构建产物时不写字段
       if (opts.cwd) {
         const jar = findLatestJar(opts.cwd)
         if (jar) {
           try {
-            copyFileSync(jar.path, jarPath(id))
-            meta.jar = { name: jar.name, size: jar.size }
+            const data = readFileSync(jar.path)
+            const entry = storeFile(id, jar.name, data, 'jar')
+            meta.files.push(entry)
+            meta.jar = { fileId: entry.id, name: jar.name, size: data.length }
           } catch { /* 复制失败不影响素材归档 */ }
         }
       }
@@ -253,24 +592,20 @@ export function createLibraryStore(root: string) {
       if (!meta) return undefined
       const snap = snapshotOf(doc ?? {})
       if (snap.elements.length === 0) return meta
-      const counts = writeSnapshot(id, snap)
-      const next: LibraryAsset = {
-        ...meta,
-        ...counts,
-        version: (typeof meta.version === 'number' ? meta.version : 1) + 1,
-        updatedAt: Date.now(),
-      }
-      writeMeta(next)
-      return next
+      applySnapshot(id, meta, snap)
+      meta.version = (typeof meta.version === 'number' ? meta.version : 1) + 1
+      meta.updatedAt = Date.now()
+      writeMeta(meta)
+      return meta
     },
 
     /** 绑定编辑会话（就地改） */
     bind(id: string, editingSessionId: string): LibraryAsset | undefined {
       const meta = readMeta(id)
       if (!meta) return undefined
-      const next = { ...meta, editingSessionId }
-      writeMeta(next)
-      return next
+      meta.editingSessionId = editingSessionId
+      writeMeta(meta)
+      return meta
     },
 
     rename(id: string, name: string): LibraryAsset | undefined {
@@ -278,46 +613,162 @@ export function createLibraryStore(root: string) {
       if (!meta) return undefined
       const clean = String(name || '').trim().slice(0, 60)
       if (!clean) return meta
-      const next = { ...meta, name: clean }
-      writeMeta(next)
-      return next
+      meta.name = clean
+      writeMeta(meta)
+      return meta
     },
 
-    /** 读完整快照（送进画布 / 种到新会话用） */
-    readDoc(id: string): LibraryDoc | undefined {
-      if (!ID_RE.test(id)) return undefined
-      try {
-        return JSON.parse(readFileSync(docPath(id), 'utf8')) as LibraryDoc
-      } catch {
-        return undefined
+    /** 新建资产并放入第一个文件 */
+    create(opts: {
+      name?: string
+      fileName: string
+      data: Buffer
+      sessionId?: string
+      provider?: 'upload' | 'cwd'
+      sourcePath?: string
+    }): LibraryAsset {
+      assertAssetFile(opts.fileName, opts.data.length)
+      const id = randomUUID().slice(0, 10)
+      const now = Date.now()
+      const baseName = String(opts.name || '').trim().slice(0, 60)
+        || sanitizeFileName(opts.fileName).replace(/\.[^.]+$/, '')
+        || `素材 ${new Date(now).toLocaleString('zh-CN')}`
+      const meta: LibraryAsset = {
+        schema: 2,
+        id,
+        name: baseName,
+        createdAt: now,
+        updatedAt: now,
+        version: 1,
+        sessionId: opts.sessionId,
+        source: { provider: opts.provider ?? 'upload', sessionId: opts.sessionId, path: opts.sourcePath },
+        files: [],
+        elementCount: 0,
+        textureCount: 0,
+        resolution: { width: 16, height: 16 },
+        hasThumb: false,
       }
+      store.addFile(id, { fileName: opts.fileName, data: opts.data, meta })
+      writeMeta(meta)
+      return meta
+    },
+
+    /** 追加文件（也可用于新建后的首个文件） */
+    addFile(id: string, opts: { fileName: string; data: Buffer; meta?: LibraryAsset }): LibraryAsset {
+      const meta = opts.meta ?? readMeta(id)
+      if (!meta) throw new Error('素材不存在')
+      assertAssetFile(opts.fileName, opts.data.length)
+      if (meta.files.length >= MAX_FILES_PER_ASSET) throw new Error(`单个素材最多 ${MAX_FILES_PER_ASSET} 个文件`)
+      const entry = storeFile(id, opts.fileName, opts.data)
+      meta.files.push(entry)
+      const ext = extOf(opts.fileName)
+      if (entry.kind === 'jar' && !meta.jar) {
+        meta.jar = { fileId: entry.id, name: entry.name, size: entry.size }
+      } else if (!meta.model && (ext === 'bbmodel' || ext === 'json')) {
+        const doc = looksLikeModelDoc(opts.data)
+        if (doc) adoptModelFile(id, meta, doc)
+      }
+      meta.updatedAt = Date.now()
+      if (!opts.meta) writeMeta(meta)
+      return meta
+    },
+
+    /** 从工作目录导入：只收 cwd 内的普通文件，防目录穿越与符号链接 */
+    importFiles(opts: { root: string; paths: string[]; name?: string; sessionId?: string }): LibraryAsset {
+      const paths = (opts.paths ?? []).map(p => String(p ?? '').trim()).filter(Boolean)
+      if (!paths.length) throw new Error('没有要导入的文件')
+      if (paths.length > MAX_IMPORT_FILES) throw new Error(`一次最多导入 ${MAX_IMPORT_FILES} 个文件`)
+      const rootAbs = resolve(opts.root)
+      const first = (() => {
+        const abs = resolve(rootAbs, paths[0])
+        try {
+          const st = lstatSync(abs)
+          if (st.isSymbolicLink() || !st.isFile()) throw new Error(`不是普通文件：${paths[0]}`)
+          if (!abs.startsWith(rootAbs + sep)) throw new Error(`路径超出会话工作目录：${paths[0]}`)
+          assertAssetFile(abs, st.size)
+          return { abs, data: readFileSync(abs) }
+        } catch (e: any) {
+          throw new Error(e?.message ?? `无法读取 ${paths[0]}`)
+        }
+      })()
+      const asset = store.create({
+        name: opts.name,
+        fileName: basename(first.abs),
+        data: first.data,
+        sessionId: opts.sessionId,
+        provider: 'cwd',
+        sourcePath: first.abs,
+      })
+      for (const p of paths.slice(1)) {
+        const abs = resolve(rootAbs, p)
+        const st = lstatSync(abs)
+        if (st.isSymbolicLink() || !st.isFile()) throw new Error(`不是普通文件：${p}`)
+        if (!abs.startsWith(rootAbs + sep)) throw new Error(`路径超出会话工作目录：${p}`)
+        store.addFile(asset.id, { fileName: basename(abs), data: readFileSync(abs) })
+      }
+      return store.get(asset.id) ?? asset
+    },
+
+    /** 读资产里的某个文件（fileId 只用来在 meta 里反查 rel） */
+    readFile(id: string, fileId: string): { file: AssetFile; data: Buffer } | undefined {
+      const meta = readMeta(id)
+      const file = meta?.files.find(f => f.id === fileId)
+      if (!meta || !file) return undefined
+      const p = safeInside(id, file.rel)
+      if (!p) return undefined
+      try { return { file, data: readFileSync(p) } } catch { return undefined }
+    },
+
+    /** 读完整快照（送进画布 / 种到新会话用）；上传的 bbmodel 在这里归一化成快照 */
+    readDoc(id: string): LibraryDoc | undefined {
+      const meta = readMeta(id)
+      if (!meta?.model) {
+        // 迁移失败回退：旧扁平布局
+        try {
+          return JSON.parse(readFileSync(legacyDocPath(id), 'utf8')) as LibraryDoc
+        } catch { return undefined }
+      }
+      if (!meta.model.docFileId) {
+        try {
+          return snapshotOf(JSON.parse(readFileSync(legacyDocPath(id), 'utf8')))
+        } catch { return undefined }
+      }
+      const found = store.readFile(id, meta.model.docFileId)
+      if (!found) return undefined
+      try { return snapshotOf(JSON.parse(found.data.toString('utf8'))) } catch { return undefined }
     },
 
     readThumb(id: string): Buffer | undefined {
-      if (!ID_RE.test(id)) return undefined
-      try {
-        if (!existsSync(thumbPath(id))) return undefined
-        return readFileSync(thumbPath(id))
-      } catch {
-        return undefined
+      const meta = readMeta(id)
+      if (meta?.model?.thumbFileId) {
+        const p = safeInside(id, join('thumbs', meta.model.thumbFileId))
+        if (p) {
+          try { return readFileSync(p) } catch { /* 落到旧布局 */ }
+        }
       }
+      try { return readFileSync(legacyThumbPath(id)) } catch { return undefined }
     },
 
     /** 归档的构建产物（没有 jar 时返回 undefined） */
     readJar(id: string): Buffer | undefined {
-      if (!ID_RE.test(id)) return undefined
-      try {
-        if (!existsSync(jarPath(id))) return undefined
-        return readFileSync(jarPath(id))
-      } catch {
-        return undefined
+      const meta = readMeta(id)
+      if (meta?.jar?.fileId) {
+        const found = store.readFile(id, meta.jar.fileId)
+        if (found) return found.data
       }
+      try { return readFileSync(legacyJarPath(id)) } catch { return undefined }
     },
 
     remove(id: string): boolean {
       if (!ID_RE.test(id)) return false
       let ok = false
-      for (const p of [metaPath(id), docPath(id), thumbPath(id), jarPath(id)]) {
+      try {
+        if (existsSync(assetDir(id))) {
+          rmSync(assetDir(id), { recursive: true, force: true })
+          ok = true
+        }
+      } catch { /* 忽略 */ }
+      for (const p of [legacyMetaPath(id), legacyDocPath(id), legacyThumbPath(id), legacyJarPath(id)]) {
         try {
           if (statSync(p).isFile()) { unlinkSync(p); ok = true }
         } catch { /* 文件不存在就跳过 */ }
@@ -339,6 +790,7 @@ export function createLibraryStore(root: string) {
       const now = Date.now()
       const id = randomUUID().slice(0, 10)
       const meta: LibraryAsset = {
+        schema: 2,
         id,
         name: (snap.name && snap.name !== '未命名模型' ? snap.name : `自动存档 ${opts.canvasId.slice(0, 6)} ${new Date(now).toLocaleDateString('zh-CN')}`).slice(0, 60),
         createdAt: now,
@@ -347,8 +799,14 @@ export function createLibraryStore(root: string) {
         sessionId: opts.sessionId,
         canvasId: opts.canvasId,
         auto: true,
+        source: { provider: 'auto', sessionId: opts.sessionId },
+        files: [],
+        elementCount: 0,
+        textureCount: 0,
+        resolution: snap.resolution,
+        hasThumb: false,
       }
-      Object.assign(meta, writeSnapshot(id, snap))
+      applySnapshot(id, meta, snap)
       writeMeta(meta)
       return meta
     },
@@ -357,3 +815,6 @@ export function createLibraryStore(root: string) {
 }
 
 export type LibraryStore = ReturnType<typeof createLibraryStore>
+
+/** 文本文件按 inline 预览截断的上限（供下载接口判断） */
+export const LIBRARY_TEXT_INLINE_LIMIT = MAX_TEXT_INLINE

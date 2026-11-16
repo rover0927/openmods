@@ -33,3 +33,19 @@ export class DirSkillProvider implements SkillProvider {
     return readFileSync(join(found.dir, 'SKILL.md'), 'utf8')
   }
 }
+
+/**
+ * 技能门控包装：功能插件被跳过（如关闭 canvas/mc）时，它声明的技能从列表与 load_skill 一起消失，
+ * 避免系统提示/工具/前端看到"还在但不能用"的技能。
+ */
+export class FilteredSkillProvider implements SkillProvider {
+  constructor(private inner: SkillProvider, private hidden: Set<string>) {}
+  get id() { return this.inner.id }
+  list(): SkillMeta[] {
+    return this.inner.list().filter(s => !this.hidden.has(s.name))
+  }
+  async load(name: string): Promise<string> {
+    if (this.hidden.has(name)) throw new Error(`技能不存在: ${name}（所属功能已关闭）`)
+    return this.inner.load(name)
+  }
+}

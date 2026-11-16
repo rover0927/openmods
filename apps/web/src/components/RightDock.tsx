@@ -41,6 +41,8 @@ export function RightDock(props: {
   onResizeStart: (e: React.MouseEvent) => void
   onToggle: () => void
   tabs: DockTabId[]
+  /** 当前功能开关下可用的标签页（关闭画布后 canvas 不出现） */
+  availableTabs?: DockTabId[]
   active: DockTabId | null
   onSelect: (tab: DockTabId) => void
   onClose: (tab: DockTabId) => void
@@ -117,8 +119,9 @@ export function RightDock(props: {
     )
   }
 
+  const available = props.availableTabs ?? DOCK_TABS
   const active = props.active && props.tabs.includes(props.active) ? props.active : (props.tabs[0] ?? null)
-  const closedTabs = DOCK_TABS.filter(t => !props.tabs.includes(t))
+  const closedTabs = available.filter(t => !props.tabs.includes(t))
 
   return (
     <aside className="dock" style={{ width: props.width }}>
@@ -186,7 +189,9 @@ export function RightDock(props: {
         {!active && (
           <div className="dock-empty">
             <span>右侧拓展已全部关闭</span>
-            <button onClick={() => props.onOpen('canvas')}>重新打开建模</button>
+            {available[0] && (
+              <button onClick={() => props.onOpen(available[0])}>打开{TAB_META[available[0]].label}</button>
+            )}
           </div>
         )}
 

@@ -1505,9 +1505,60 @@ select.agent-chip option { background: var(--bg-layer-2); color: var(--label-pri
   padding: 12px 14px; border-bottom: 1px solid var(--border-l1); flex: none;
 }
 .drawer-title { font-size: 14px; color: var(--label-primary); }
-.lib-toolbar { display: flex; gap: 8px; align-items: center; padding: 10px 14px; flex: none; }
+.lib-toolbar { display: flex; gap: 8px; align-items: center; padding: 4px 14px 8px; flex: none; }
 .lib-capture { width: 100%; }
 .lib-hint { padding: 4px 14px 12px; font-size: 12px; line-height: 1.7; color: var(--label-caption); }
+
+/* 素材库顶部：搜索 + 上传 / 类型筛选 / 工作目录导入 */
+.lib-drawer { width: min(480px, 94vw); }
+.lib-searchrow { display: flex; gap: 6px; padding: 10px 14px 6px; flex: none; }
+.lib-search {
+  flex: 1; min-width: 0; height: 26px; padding: 0 8px;
+  border: 1px solid var(--border-l1); border-radius: var(--radius-xs);
+  background: var(--bg-layer-3); color: var(--label-primary); font-size: 12px;
+}
+.lib-upload { flex: none; height: 26px; padding: 0 10px; font-size: 12px; }
+.lib-filters { display: flex; gap: 4px; align-items: center; padding: 0 14px 6px; flex: none; flex-wrap: wrap; }
+.lib-chip {
+  height: 22px; padding: 0 8px; border-radius: 11px;
+  border: 1px solid var(--border-l1); font-size: 11px; color: var(--label-secondary);
+  background: transparent;
+}
+.lib-chip:hover { background: var(--interactive-hover); color: var(--label-primary); }
+.lib-chip.on {
+  background: rgba(122, 170, 255, 0.14);
+  border-color: rgba(122, 170, 255, 0.4);
+  color: var(--label-primary);
+}
+.lib-filters-gap { flex: 1; }
+.lib-importrow { display: flex; gap: 6px; align-items: flex-start; padding: 0 14px 8px; flex: none; }
+.lib-import {
+  flex: 1; min-width: 0; min-height: 46px; max-height: 110px; resize: vertical;
+  padding: 5px 8px; border: 1px solid var(--border-l1); border-radius: var(--radius-xs);
+  background: var(--bg-layer-3); color: var(--label-primary); font-size: 12px; line-height: 1.5;
+}
+/* 拖拽区：包住整个卡片网格，松手即入库 */
+.lib-drop { flex: 1; overflow: auto; padding: 0 14px 18px; position: relative; }
+.lib-drop.dragging { outline: 2px dashed rgba(122, 170, 255, 0.55); outline-offset: -8px; border-radius: var(--radius-md); }
+.lib-drop-hint {
+  position: sticky; top: 0; z-index: 2; margin-bottom: 8px;
+  padding: 8px 10px; border-radius: var(--radius-xs);
+  background: rgba(122, 170, 255, 0.16); border: 1px solid rgba(122, 170, 255, 0.4);
+  color: var(--label-primary); font-size: 12px; text-align: center;
+}
+.lib-drop .lib-grid { overflow: visible; padding: 0; flex: none; }
+/* 卡片里的文件清单 */
+.lib-files { display: flex; flex-direction: column; gap: 1px; padding: 0 8px 4px; }
+.lib-file {
+  display: flex; align-items: center; gap: 4px; min-width: 0;
+  height: 20px; padding: 0 4px; border-radius: var(--radius-xs);
+  font-size: 10px; color: var(--label-secondary); text-decoration: none;
+}
+.lib-file:hover { background: var(--interactive-hover); color: var(--label-primary); }
+.lib-file-icon { flex: none; color: var(--accent); font-size: 10px; }
+.lib-file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-file-size { flex: none; color: var(--label-caption); font-variant-numeric: tabular-nums; }
+.lib-file-more { padding: 1px 4px; font-size: 10px; color: var(--label-caption); }
 .lib-grid {
   flex: 1; overflow: auto; padding: 0 14px 18px;
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));

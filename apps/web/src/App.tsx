@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, type SseFrame } from './api.js'
 import type {
-  AgentProfileDto, AnimationMetaDto, CanvasState, ContextBreakdownDto, McProjectUiDto, ModelInfoDto, PendingInteractionDto, PrefsDto, SessionInfoDto,
+  AgentProfileDto, AnimationMetaDto, CanvasState, ContextBreakdownDto, FeaturesDto, McProjectUiDto, ModelInfoDto, PendingInteractionDto, PrefsDto, SessionInfoDto,
   SessionSummaryDto, StatsDto, SubagentNoticeDto, SubagentWaitDto, TerminalDto, TodoItemDto, TurnEntry, WakeEntry,
 } from './types.js'
 import { EMPTY_CONTEXT_STATS } from './types.js'
@@ -204,6 +204,9 @@ export default function App() {
   /** 代理角色（dsh agentPreset）：lead=主代理、mcmod=1.20.1 Forge 模组开发 */
   const [agentProfile, setAgentProfile] = useState<string>(() => localStorage.getItem('openmods.profile') ?? 'lead')
   const [profiles, setProfiles] = useState<AgentProfileDto[]>([])
+  /** 功能开关（/api/features）：画布 / MC / 素材库入口按它隐藏；未加载时默认全开 */
+  const [features, setFeatures] = useState<FeaturesDto | null>(null)
+  const featuresRef = useRef<Record<string, boolean>>({})
   const [iframeReady, setIframeReady] = useState(false)
   const [toast, setToast] = useState<{ text: string; action?: { label: string; run: () => void } } | null>(null)
   const [health, setHealth] = useState<{ mock: boolean } | null>(null)
@@ -295,10 +298,41 @@ export default function App() {
   }, [])
 
 
-  // 代理角色目录（lead / mcmod）：一次拉取，选择存 localStorage，切换会话时按服务端回显恢复
+  // 功能开关 + 代理角色目录（同一接口）：角色由插件注册，关掉功能后角色一并消失
   useEffect(() => {
-    api.profiles().then(r => setProfiles(r.profiles)).catch(() => {})
+    api.features().then(r => {
+      setFeatures(r)
+      featuresRef.current = Object.fromEntries(r.features.map(f => [f.id, f.enabled]))
+      setProfiles(r.profiles)
+    }).catch(() => { /* 服务未起时默认全开 */ })
   }, [])
+
+  /** 当前功能是否开启（未加载时默认开启，避免首屏闪动） */
+  const featureOn = useCallback((id: string) => featuresRef.current[id] !== false, [])
+
+  // 画布关闭：把画布标签从右侧拓展里摘掉（用户之前存过 canvas 也不显示）
+  useEffect(() => {
+    if (!features || featureOn('canvas')) return
+    setDockTabs(prev => {
+      const next = prev.filter(t => t !== 'canvas')
+      return next.length || prev.length === 0 ? next : ['images']
+    })
+    setDockTab(prev => (prev === 'canvas' ? 'images' : prev))
+  }, [features, featureOn])
+
+  // 素材库关闭：抽屉不能停在打开状态（接口也已 404）
+  useEffect(() => {
+    if (!features || featureOn('library')) return
+    setLibraryOpen(false)
+  }, [features, featureOn])
+
+  // 当前角色被关掉（如关闭 MC 后 mcmod 不存在）：回落到主代理
+  useEffect(() => {
+    if (!features || profiles.length === 0) return
+    if (profiles.some(p => p.id === agentProfile)) return
+    setAgentProfile('lead')
+    localStorage.setItem('openmods.profile', 'lead')
+  }, [features, profiles, agentProfile])
 
   const refreshModels = useCallback(() => {
     api.models().then(m => {
@@ -713,7 +747,8 @@ export default function App() {
       setCtxTokens(typeof res.contextTokens === 'number' ? res.contextTokens : null)
       setModelWindow(typeof res.modelWindow === 'number' ? res.modelWindow : null)
       setCtxBreakdown(res.contextBreakdown ?? null)
-      if (res.profile) setAgentProfile(res.profile)
+      // 子代理会话（如 modeling）不占用全局角色选择：它只代表那个子代理，不应把用户选好的角色顶掉
+      if (!res.parentId && res.profile) setAgentProfile(res.profile)
       setBusy(!!res.busy)
       setWaiting(res.waiting ?? [])
       // 会话级协作状态：计划模式 / 待办 / 授权 / 未答问题（刷新后也要恢复）
@@ -735,7 +770,7 @@ export default function App() {
       loadCanvas(res.canvasId ?? id)
       // MC 工程状态（dock 顶部「测试 Mod」按钮）：有会话就拉，服务端扫 cwd 下的工程
       setMcProjects([])
-      api.mcState(id).then(r => setMcProjects(r.projects ?? [])).catch(() => {})
+      if (featureOn('mc')) api.mcState(id).then(r => setMcProjects(r.projects ?? [])).catch(() => {})
       api.stats(id).then(r => {
         if (seq !== openSeqRef.current) return
         setStats(r.stats)
@@ -752,7 +787,7 @@ export default function App() {
       setSessionId('')
       setRootSessionId('')
     }
-  }, [loadCanvas, loadTerminals, refreshSubagents, showToast])
+  }, [loadCanvas, loadTerminals, refreshSubagents, showToast, featureOn])
 
   // MC 工程：标题栏的「▶ 测试 Mod」= 后台 gradlew runClient（Minecraft 客户端窗口直接弹出来）
   const mcRun = useCallback((project: string) => {
@@ -1136,6 +1171,15 @@ export default function App() {
 
   const currentModel = models.find(m => m.id === currentModelId)
   const activeIsChild = !!sessionInfo?.parentId
+  /** 当前功能开关下可用的右侧标签（关闭画布后 canvas 不出现） */
+  const dockAvailable = useMemo(
+    () => (featureOn('canvas') ? DOCK_TABS : DOCK_TABS.filter(t => t !== 'canvas')),
+    [features, featureOn],
+  )
+  const dockVisibleTabs = useMemo(
+    () => dockTabs.filter(t => dockAvailable.includes(t)),
+    [dockTabs, dockAvailable],
+  )
 
   return (
     <div
@@ -1148,6 +1192,7 @@ export default function App() {
         onOpenSession={openSession}
         onNewSession={newSession}
         onOpenLibrary={() => setLibraryOpen(true)}
+        libraryEnabled={featureOn('library')}
         onOpenSettings={() => setSettingsOpen(true)}
         onToast={showToast}
       />
@@ -1206,13 +1251,14 @@ export default function App() {
         collapsed={dockCollapsed}
         onResizeStart={dockDrag.start}
         onToggle={() => {
-          // 折叠后再展开：若标签全关了，顺手把建模打开
+          // 折叠后再展开：若标签全关了，顺手把第一个可用标签打开
           setDockCollapsed(c => {
-            if (c && dockTabs.length === 0) openDockTab('canvas')
+            if (c && dockVisibleTabs.length === 0) openDockTab(dockAvailable[0] ?? 'images')
             return !c
           })
         }}
-        tabs={dockTabs}
+        tabs={dockVisibleTabs}
+        availableTabs={dockAvailable}
         active={dockTab}
         onSelect={setDockTab}
         onClose={closeDockTab}
@@ -1278,6 +1324,7 @@ export default function App() {
         onClose={() => setLibraryOpen(false)}
         onToast={showToast}
         onOpenInCanvas={openLibModel}
+        canvasEnabled={featureOn('canvas')}
         onOpenSession={id => {
           // 素材库可能刚建了会话（引用新会话 / 接着改）：先关抽屉再切，随后刷新左栏
           setLibraryOpen(false)

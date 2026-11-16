@@ -8,11 +8,12 @@
 //   由 mc_log 轮询 run/logs/latest.log 判断是否真的起来了。
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { mkdir, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile, cp } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { copyFile, mkdir, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile, cp } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Plugin, ToolResult } from '@openmods/plugin-kit'
+import { WORKSPACE_TOOL_NAMES } from '@openmods/plugin-kit'
 import { solidPng } from '../bb-tools/png.js'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
@@ -676,9 +677,50 @@ async function readLogs(projectDir: string, lines: number): Promise<string> {
   return '还没有日志：先 mc_gradle runClient（background=true），等启动后再读。'
 }
 
+/** mcmod 角色的提示词归插件自己：关掉 mc 开关后这套工作流连角色一起消失 */
+const MCMOD_PROMPT = '你是 Minecraft 1.20.1 Forge 模组开发主代理（mcmod）。只做 **Java + Minecraft 1.20.1 + Forge 47.x**；'
+  + '用户要 Fabric / NeoForge / 1.20.2+ / Kotlin / 网易版时，明确说明本代理不覆盖，不要硬改工程。\n'
+  + '你有完整工作台：read/write/edit/glob/grep 读写工程、bash 跑命令、terminal_open/terminal_kill 拉起/结束长任务终端、'
+  + 'ask_user_question 问用户、todo_write 记步骤、exit_plan_mode 提交计划。工作目录就是当前工程目录，相对路径都以它为根。\n'
+  + '工作流固定：\n'
+  + '1) 先 load_skill("minecraft-forge-1.20.1") 拿到工具链与 API 约束；写代码前需要精确签名就读 skills/minecraft-forge-1.20.1/references/forge-1.20.1-api.md，不要凭记忆写。\n'
+  + '2) 核对需求：modid、Java 包名、要加的东西（物品/方块/实体/命令/玩法）。信息不足时用 ask_user_question 一次问全，别反复问。\n'
+  + '3) 建工程：先看会话目录里是否已有工程（存在 build.gradle 就直接沿用，不要重复 scaffold）。目录为空才用 mc_scaffold：'
+  + 'name 只传目录名或绝对路径，目标必须是空目录，建完不要再手工 mv 文件。做龙/实体/方块等有现成示例时，'
+  + '用 mc_scaffold 的 from=参考工程（可用项见工具说明）复制骨架，再改包名/modid，不要从零手搓框架。\n'
+  + '   然后用 read/edit/write（或 mc_list/mc_read/mc_write）改 Java 与资源。\n'
+  + '4) 构建失败先分流：出现 Connection refused / SSL / Could not resolve / Read timed out 是镜像或网络问题——'
+  + '告知用户或换网络/源，不要改代码，也不要动 build.gradle、settings.gradle、gradle wrapper 或平台版本；'
+  + '只有编译错误才按报错改代码。本机已有预热 Gradle 缓存，不要建议用户重新下载依赖。\n'
+  + '5) 造型（物品/方块/生物外观）派给 spawn_modeling_subagent；派发完结束这一轮，等系统汇总回合。汇总回合先请用户验收画布模型（ask_user_question：通过 / 要改哪里 / 重做），用户通过后用 canvas_export 把完整画布工程导出成 JSON（分组骨骼/pivot/UV/贴图/动画全在内），再用脚本解析生成 Java 模型类与贴图——这是唯一不失真的落地路径。mc_export_model 只产原版 item 模型（无骨骼无动画），仅限导出简单物品外观。不要自己手搓几何，更不要派子代理抄画布。\n'
+  + '   若 canvas_export 产物解析后发现与画布不符（不太可能），先核对解析代码再考虑其它路径；仍不行就 ask_user_question 问用户怎么落地（比如让用户从 Blockbench 手动保存 .bbmodel），不要反复盲试、更不要据此重做模型。\n'
+  + '6) 构建用 mc_gradle task=build；要验证能否进游戏就用 mc_gradle task=runClient background=true，'
+  + '   然后 mc_log 读启动标记（Sound engine started / Forge mod loading），失败先看崩溃报告再改。\n'
+  + '7) 收尾汇报：改了哪些文件、build 是否通过、客户端是否真的起来了、还有哪些没验证。\n'
+  + '工具名以本清单为准，只能调用实际注册的工具；没有 mc_export、mc_edit、mc_canvas_outline、mc_list_outline、export_model、save_model 这些工具——'
+  + '画布工程整体导出叫 canvas_export（含骨骼/贴图/动画），导出原版 item 模型才叫 mc_export_model，改工程文件用 edit/write。拿不准就先看函数目录（工具定义），不要凭名字猜。\n'
+  + '铁律：不改 MC 版本、不换加载器、不动 gradle.properties 里的 minecraft_version/forge_version；'
+  + '资源路径全小写；每次写完 Java 都要重新 build，不能只靠肉眼检查。'
+
+const MCMOD_TOOLS = [
+  'load_skill', 'mc_scaffold', 'mc_list', 'mc_read', 'mc_write', 'mc_gradle', 'mc_log', 'mc_export_model', 'canvas_export',
+  'spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOL_NAMES,
+]
+
 const plugin: Plugin = {
   name: 'mcdev',
+  // 关闭 mc 开关时整个插件不加载：mc_* 工具、mcmod 角色、Forge 技能一起消失
+  features: [{ id: 'mc', name: 'Minecraft 模组开发', description: 'MC 模组脚手架、Gradle 构建、日志与运行工具。', default: true }],
+  requires: ['mc'],
+  skills: ['minecraft-forge-1.20.1'],
   apply(ctx) {
+    ctx.profiles.register({
+      id: 'mcmod',
+      name: 'Minecraft 1.20.1 模组开发（mcmod）',
+      prompt: MCMOD_PROMPT,
+      toolFilter: MCMOD_TOOLS,
+      skills: ['minecraft-forge-1.20.1'],
+    })
     ctx.tools.register({
       name: 'mc_scaffold',
       mutates: true,
@@ -931,12 +973,95 @@ const plugin: Plugin = {
         } catch (e: any) { return fail(`导出失败：${e.message}`) }
       },
     })
+
+    // ---- 插件自带 HTTP 接口 ----
+    // 关闭 mc 开关时本插件整个不 apply，这些路由也就不存在（前端按 /api/features 隐藏入口）。
+    /** mod-output 必须是真实存在的目录；不存在返回 null */
+    const existingDir = async (raw: string): Promise<string | null> => {
+      const p = String(raw ?? '').trim()
+      if (!p) return null
+      try {
+        const abs = await realpath(p)
+        return (await stat(abs)).isDirectory() ? abs : null
+      } catch { return null }
+    }
+
+    /** 会话 cwd 下的 MC 工程状态：构建结果 / runClient 运行中 / jar 产物 */
+    ctx.http.route('GET', '/api/mc/state', async (req, reply) => {
+      const root = ctx.sessions.cwdOf(String(req.query.sessionId ?? ''))
+      if (!root) return reply.code(404).send({ error: '会话不存在或目录无效' })
+      return { root, projects: await listMcProjects(root) }
+    })
+
+    /** jar 导出：把工程的最新构建产物复制到设置里的 mod-output 目录（prefs.modOutput） */
+    ctx.http.route('POST', '/api/mc/export', async (req, reply) => {
+      const root = ctx.sessions.cwdOf(String(req.body?.sessionId ?? ''))
+      if (!root) return reply.code(404).send({ error: '会话不存在或目录无效' })
+      const dest = String(ctx.prefs.get().modOutput ?? '')
+      if (!dest) return reply.code(400).send({ error: '尚未配置 mod-output：请到 设置 → 通用 → Mod 构建里填写 jar 导出目录' })
+      const resolved = await existingDir(dest)
+      if (!resolved) return reply.code(400).send({ error: `mod-output 目录不存在：${dest}` })
+      const project = String(req.body?.project ?? '')
+      const projects = await listMcProjects(root)
+      const p = projects.find(x => x.name === project) ?? projects[0]
+      if (!p?.jars?.length) return reply.code(404).send({ error: '该工程还没有构建产物 jar（先跑 gradlew build）' })
+      const jar = p.jars[0]
+      try {
+        const out = join(resolved, jar.name)
+        await copyFile(jar.path, out)
+        return { ok: true, name: jar.name, dest: out, size: jar.size }
+      } catch (e: any) {
+        return reply.code(500).send({ error: `复制失败：${e.message}` })
+      }
+    })
+
+    /** 启动 runClient（等价 mc_gradle task=runClient background=true，同一套状态登记） */
+    ctx.http.route('POST', '/api/mc/run', async (req, reply) => {
+      const root = ctx.sessions.cwdOf(String(req.body?.sessionId ?? ''))
+      if (!root) return reply.code(404).send({ error: '会话不存在或目录无效' })
+      const raw = String(req.body?.project ?? '').trim()
+      if (!raw) return reply.code(400).send({ error: 'project 不能为空' })
+      // 工程名可能指向 cwd 自身（会话直接绑到 mod 目录），不能一律 join(root, name)
+      const known = (await listMcProjects(root)).find(p => p.name === raw)
+      const dir = known?.dir ?? (raw.includes('\\') || raw.includes('/') ? resolve(raw) : resolve(root, raw))
+      try { if (!statSync(dir).isDirectory() || !existsSync(join(dir, 'build.gradle'))) throw new Error() } catch {
+        return reply.code(400).send({ error: `不是有效的 MC 工程：${raw}` })
+      }
+      try {
+        const r = await startRunClient(dir, root)
+        return { ok: true, ...r }
+      } catch (e: any) {
+        return reply.code(500).send({ error: e.message })
+      }
+    })
+
+    /** 停掉工程的 runClient */
+    ctx.http.route('POST', '/api/mc/stop', async (req, reply) => {
+      const root = ctx.sessions.cwdOf(String(req.body?.sessionId ?? ''))
+      if (!root) return reply.code(404).send({ error: '会话不存在' })
+      const raw = String(req.body?.project ?? '').trim()
+      const known = (await listMcProjects(root)).find(p => p.name === raw)
+      const dir = known?.dir ?? resolve(root, raw.replace(/^[/\\]+/, ''))
+      try { if (!statSync(dir).isDirectory()) throw new Error() } catch { return reply.code(400).send({ error: '工程目录不存在' }) }
+      return { ok: true, stopped: stopRunClient(dir) }
+    })
+
+    /** 下载构建出的 mod jar（必须是 .jar 且真实存在） */
+    ctx.http.route('GET', '/api/mc/jar', async (req, reply) => {
+      const raw = String(req.query.path ?? '')
+      if (!raw.endsWith('.jar')) return reply.code(400).send({ error: '只允许下载 .jar' })
+      const abs = resolve(raw)
+      try { if (!statSync(abs).isFile()) throw new Error() } catch { return reply.code(404).send({ error: '文件不存在' }) }
+      return reply.header('content-type', 'application/java-archive')
+        .header('content-disposition', `attachment; filename="${encodeURIComponent(abs.split(/[\\/]/).pop() ?? 'mod.jar')}"`)
+        .send(createReadStream(abs))
+    })
   },
 }
 
 export default plugin
 
-// ---- 供服务端 UI 路由使用（右侧 dock 的「测试 Mod」按钮 / jar 导出） ----
+// ---- MC 工程状态（插件自己的 UI 路由数据源） ----
 
 export interface McProjectUiInfo {
   name: string
@@ -950,14 +1075,19 @@ export interface McProjectUiInfo {
   jars: { name: string; path: string; size: number; mtime: number }[]
 }
 
-/** 扫 root 一层，列出含 build.gradle 的工程与其构建产物 */
-export async function listMcProjects(root: string): Promise<McProjectUiInfo[]> {
+/** 列出 MC 工程与其构建产物：root 自身（cwd 就是工程根）以及它的一层子目录 */
+async function listMcProjects(root: string): Promise<McProjectUiInfo[]> {
   const state = readMcState()
   const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
-  const out: McProjectUiInfo[] = []
+  // 会话工作目录本身就是工程根（用户把 cwd 直接绑到 mod 目录）时，只扫一层子目录会得到 0 个工程，
+  // 标题栏的「测试 Mod」按钮就整组不渲染——把它自己也算进来。
+  const candidates: { name: string; dir: string }[] = []
+  if (existsSync(join(root, 'build.gradle'))) candidates.push({ name: basename(root) || root, dir: root })
   for (const e of entries) {
-    if (!e.isDirectory()) continue
-    const dir = join(root, e.name)
+    if (e.isDirectory()) candidates.push({ name: e.name, dir: join(root, e.name) })
+  }
+  const out: McProjectUiInfo[] = []
+  for (const { name, dir } of candidates) {
     if (!existsSync(join(dir, 'build.gradle'))) continue
     const s = state[dir] ?? {}
     const libs = join(dir, 'build', 'libs')
@@ -971,7 +1101,7 @@ export async function listMcProjects(root: string): Promise<McProjectUiInfo[]> {
     }
     jars.sort((a, b) => b.mtime - a.mtime)
     out.push({
-      name: e.name,
+      name,
       dir,
       lastBuild: s.lastBuild,
       runClientRunning: !!s.runClient && pidAlive(s.runClient.pid),
@@ -983,7 +1113,7 @@ export async function listMcProjects(root: string): Promise<McProjectUiInfo[]> {
 }
 
 /** UI「测试 Mod」按钮：与 mc_gradle background 同一套实现（镜像 seed / GRADLE_USER_HOME / 状态登记） */
-export function startRunClient(projectDir: string, root: string): Promise<{ pid: number; logPath: string }> {
+function startRunClient(projectDir: string, root: string): Promise<{ pid: number; logPath: string }> {
   return new Promise((res, rej) => {
     ;(async () => {
       try {
@@ -1026,7 +1156,7 @@ export function startRunClient(projectDir: string, root: string): Promise<{ pid:
 }
 
 /** 停掉工程正在跑的 runClient（进程树终止） */
-export function stopRunClient(projectDir: string): boolean {
+function stopRunClient(projectDir: string): boolean {
   const s = readMcState()[projectDir]?.runClient
   if (!s || !pidAlive(s.pid)) {
     const map = readMcState()

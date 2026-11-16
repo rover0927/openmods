@@ -350,6 +350,8 @@ export interface PrefsDto {
   inlineSubagents: boolean
   /** mod-output：jar 导出保存目录（空 = 未配置，jar 按钮回退浏览器下载） */
   modOutput: string
+  /** 功能开关（canvas / mc / library …）；改动需重启生效 */
+  features: Record<string, boolean>
 }
 
 export interface SettingsDto {
@@ -401,8 +403,24 @@ export const EMPTY_CONTEXT_STATS: ContextStatsDto = {
   textChars: { reasoning: 0, assistant: 0 },
 }
 
-/** 素材库条目：画布快照的元信息（缩略图走 /api/library/:id/thumb?v=updatedAt） */
+/** 素材里的一个真实文件（下载/预览地址：/api/library/:id/files/:fileId） */
+export interface LibraryFileDto {
+  id: string
+  name: string
+  size: number
+  mime: string
+  kind: 'model' | 'image' | 'jar' | 'archive' | 'text' | 'other'
+  createdAt: number
+}
+
+/**
+ * 素材库条目：统一「多文件资产」。
+ * 一个素材可以同时装模型快照、缩略图、jar 构建产物、贴图、bbmodel 或任意允许的文本文件。
+ * 缩略图走 /api/library/:id/thumb?v=updatedAt。
+ */
 export interface LibraryAssetDto {
+  /** 2 = 多文件资产；旧数据缺省（懒迁移中） */
+  schema?: number
   id: string
   name: string
   createdAt: number
@@ -414,14 +432,52 @@ export interface LibraryAssetDto {
   canvasId?: string
   /** 绑定的编辑会话（就地改）：存在即表示「这个素材正在被这个会话编辑」 */
   editingSessionId?: string
+  /** 自动入库（会话画布快照） */
+  auto?: boolean
+  /** 资产来源 */
+  source: { provider: 'canvas' | 'auto' | 'upload' | 'cwd' | 'legacy'; sessionId?: string; path?: string }
+  /** 资产内的全部文件 */
+  files: LibraryFileDto[]
+  /** 模型能力（有它才能「画布打开 / 接着改 / 引用 / 送入画布」） */
+  model?: {
+    docFileId: string
+    elementCount: number
+    textureCount: number
+    resolution: { width: number; height: number }
+    palette?: string[]
+  }
+  /** 构建产物（jar / zip），地址 /api/library/:id/jar 或 files/:fileId */
+  jar?: { fileId?: string; name: string; size: number }
+  // ---- 兼容派生字段（由 model 计算） ----
   elementCount: number
   textureCount: number
   resolution: { width: number; height: number }
   hasThumb: boolean
-  /** 已构建的 jar 产物（存在即显示「下载 jar」，地址 /api/library/:id/jar） */
-  jar?: { name: string; size: number }
   /** 调色板（#RRGGBB 不带 #）：纯色贴图模型用它拼缩略图，比首张贴图更有辨识度 */
   palette?: string[]
+}
+
+/** 功能开关（/api/features） */
+export interface FeatureDto {
+  id: string
+  name: string
+  description: string
+  /** 本次进程实际加载的状态 */
+  enabled: boolean
+  default: boolean
+  /** 设置已改但还没重启，需要提示用户 */
+  pendingRestart: boolean
+}
+
+export interface FeaturesDto {
+  features: FeatureDto[]
+  profiles: AgentProfileDto[]
+  plugins: {
+    loaded: string[]
+    skipped: { name: string; reason: string }[]
+    /** import/apply 抛错的插件（name 在 import 失败时是目录名） */
+    failed: { name: string; phase: string; error: string }[]
+  }
 }
 
 // ---- MC 工程（mcdev）状态：右侧 dock 的「测试 Mod」/ jar 导出 ----

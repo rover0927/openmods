@@ -16,6 +16,18 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: ReactNode }[] = [
     ),
   },
   {
+    id: 'features',
+    label: '功能',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+        <rect x="2" y="2.4" width="5" height="5" rx="1" />
+        <rect x="9" y="2.4" width="5" height="5" rx="1" />
+        <rect x="2" y="9" width="5" height="5" rx="1" />
+        <rect x="9" y="9" width="5" height="5" rx="1" />
+      </svg>
+    ),
+  },
+  {
     id: 'models',
     label: '模型',
     icon: (

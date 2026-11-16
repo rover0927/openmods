@@ -53,6 +53,8 @@ export function LeftSidebar(props: {
   onOpenSettings: () => void
   /** 打开文档素材库抽屉 */
   onOpenLibrary: () => void
+  /** 素材库功能关闭时不显示入口 */
+  libraryEnabled?: boolean
   onToast: (msg: string, action?: ToastAction) => void
 }) {
   const [projects, setProjects] = useState<ProjectDto[]>([])
@@ -351,7 +353,9 @@ export function LeftSidebar(props: {
       {rail ? (
         <div className="sb-rail-list">
           <button className="sb-rail-btn" title="新建分组" onClick={() => { setRail(false); setCreating(true); setNewTitle(''); setNewCwd('') }}>▣</button>
-          <button className="sb-rail-btn" title="文档素材库" onClick={props.onOpenLibrary}>▤</button>
+          {props.libraryEnabled !== false && (
+            <button className="sb-rail-btn" title="文档素材库" onClick={props.onOpenLibrary}>▤</button>
+          )}
           <button className="sb-rail-btn" title="设置" onClick={props.onOpenSettings}>⚙</button>
         </div>
       ) : (
@@ -380,10 +384,12 @@ export function LeftSidebar(props: {
             {renderGroup('ungrouped', '未分组', groups.ungrouped)}
           </div>
           <div className="sb-foot">
-            <button className="sb-row sb-settings" onClick={props.onOpenLibrary}>
-              <span className="sb-slot" aria-hidden="true">▤</span>
-              <span className="sb-title">文档素材库</span>
-            </button>
+            {props.libraryEnabled !== false && (
+              <button className="sb-row sb-settings" onClick={props.onOpenLibrary}>
+                <span className="sb-slot" aria-hidden="true">▤</span>
+                <span className="sb-title">文档素材库</span>
+              </button>
+            )}
             <button className="sb-row sb-settings" onClick={props.onOpenSettings}>
               <span className="sb-slot" aria-hidden="true">⚙</span>
               <span className="sb-title">设置</span>

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve, sep } from 'node:path'
 import type { Plugin, ToolExecContext, ToolDef, ToolResult } from '@openmods/plugin-kit'
+import { WORKSPACE_TOOL_NAMES } from '@openmods/plugin-kit'
 import { createDoc, addCube, addGroup, findGroup, docCounts, outlineText, type BbDoc, type BbAnimation, type BbAnimKeyframe } from './bbmodel.js'
 import { materialListForPrompt, resolveColor } from './materials.js'
 import { solidPngDataUrl } from './png.js'
@@ -357,9 +358,32 @@ const tools: ToolDef[] = [
   },
 ]
 
+/** modeling 子代理的提示词归画布插件：关掉 canvas 开关后画布工具与角色一起消失 */
+const MODELING_PROMPT = '你是建模子代理（modeling）：执行主代理派发的建模/动画任务。你工作在**当前会话的画布**上（与主代理、其它子代理共用同一份工程），'
+  + '你的每次修改都会实时显示给用户，因此要只做自己负责的部分、增量追加，不要清空或重建整个工程。'
+  + '动手前先 list_outline 看清已有分组与部件：已有同名骨骼（如 head、body）就直接往里加，用 place_cubes 的 group 参数指定父分组；'
+  + '确实需要新骨骼时才 add_group。除非主代理明确要求重做，否则不要调用 create_model（它会清空共享画布）。'
+  + '收尾一次简短总结（你新增/修改了什么、部件数、画布现状），不与用户寒暄，不派发任务。'
+  + '总结最后一行固定写「验收点：……」——列出你最没把握、最需要用户亲自确认的部位/动画/比例，供主代理在向用户请求验收时转述；'
+  + '自己拿不准的设计决定不要硬猜，在总结里写成待确认项。'
+
 const plugin: Plugin = {
   name: 'bb-tools',
+  // 关闭 canvas 开关时整个插件不加载：画布/动画工具、modeling 子代理角色、建模技能一起消失
+  features: [{ id: 'canvas', name: '画布与建模', description: 'Blockbench 风格画布、建模子代理与模型素材编辑。', default: true }],
+  requires: ['canvas'],
+  skills: ['blockbench-modeling', 'blockbench-texturing', 'blockbench-use'],
   apply(ctx) {
+    ctx.profiles.register({
+      id: 'modeling',
+      name: '建模子代理（modeling）',
+      prompt: MODELING_PROMPT,
+      // 子代理是无人值守的画布工作者：不给它终端/授权/提问/计划，避免等待一个不会有人回答的弹窗
+      toolExclude: ['spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOL_NAMES],
+      skills: ['blockbench-modeling', 'blockbench-texturing', 'blockbench-use'],
+      requires: ['canvas'],
+      internal: true,
+    })
     for (const t of tools) ctx.tools.register(t)
     ctx.hooks.registerSystemSection(() =>
       `# 可用材质（place_cubes 的 material 参数）\n${materialListForPrompt()}，也可直接传十六进制 #RRGGBB。`,

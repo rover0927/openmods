@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api.js'
-import type { PrefsDto, WakeEntry } from '../types.js'
+import type { FeaturesDto, PrefsDto, WakeEntry } from '../types.js'
 import { AgentsSkillsPane } from './AgentSkillsPane.js'
 
-export type SettingsSectionId = 'general' | 'models' | 'agents' | 'subagent' | 'automation'
+export type SettingsSectionId = 'general' | 'features' | 'models' | 'agents' | 'subagent' | 'automation'
 
 interface DraftModel {
   id: string
@@ -35,6 +35,7 @@ const DEFAULT_PREFS: PrefsDto = {
   canvasAutoWake: true,
   inlineSubagents: true,
   modOutput: '',
+  features: {},
 }
 
 // ---- 设置控件（dsh SettingsRow / Switch / Segmented / Stepper 的对应物） ----
@@ -129,6 +130,31 @@ export function SettingsPage(props: {
   const [discovering, setDiscovering] = useState<string | null>(null)
   /** mod-output 输入草稿：null = 沿用已保存值（失焦/回车才落盘，避免每键一次 PUT） */
   const [modOutputDraft, setModOutputDraft] = useState<string | null>(null)
+  /** 功能开关的服务端视图（enabled = 本次启动实际加载，pendingRestart = 已改待重启） */
+  const [featInfo, setFeatInfo] = useState<FeaturesDto | null>(null)
+  const [featBusy, setFeatBusy] = useState<string | null>(null)
+
+  const loadFeatures = async () => {
+    try {
+      setFeatInfo(await api.features())
+    } catch (e: any) {
+      props.onToast(`读取功能开关失败：${e.message}`)
+    }
+  }
+
+  useEffect(() => {
+    if (props.section === 'features') void loadFeatures()
+  }, [props.section]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setFeature = async (id: string, on: boolean) => {
+    setFeatBusy(id)
+    try {
+      await patchPrefs({ features: { ...(prefs.features ?? {}), [id]: on } })
+      await loadFeatures()
+    } finally {
+      setFeatBusy(null)
+    }
+  }
 
   const discover = async (route: string) => {
     const d = draft[route]
@@ -342,6 +368,67 @@ export function SettingsPage(props: {
           <div className="setting-group-title">配置</div>
           <Row label="配置文件" hint="data/settings.json（供应商与偏好同一条 revision）">
             <span className="setting-row-hint">revision {revision}</span>
+          </Row>
+        </div>
+      </div>
+    )
+  }
+
+  // ---- 功能开关 ----
+  if (props.section === 'features') {
+    const list = featInfo?.features ?? []
+    return (
+      <div className="settings-section">
+        <div className="settings-section-head">
+          <h2>功能</h2>
+          <p>
+            按需开启模块：关掉画布与 Minecraft 模组开发后，就是一个纯粹的编码代理
+            （文件、终端、命令、技能照常可用）。改动保存后需要重启服务生效。
+          </p>
+        </div>
+
+        <div className="setting-group">
+          <div className="setting-group-title">模块</div>
+          {list.length === 0 && <div className="setting-row-hint">读取中…</div>}
+          {list.map(f => {
+            const on = (prefs.features ?? {})[f.id] ?? f.enabled
+            return (
+              <Row
+                key={f.id}
+                label={f.name}
+                hint={`${f.description}${f.pendingRestart ? ' · 已修改，重启后生效' : ''}`}
+              >
+                <Switch on={on} disabled={featBusy !== null} onChange={v => void setFeature(f.id, v)} />
+              </Row>
+            )
+          })}
+        </div>
+
+        <div className="setting-group">
+          <div className="setting-group-title">插件</div>
+          <Row label="已加载" hint={(featInfo?.plugins.loaded ?? []).join('、') || '—'}>
+            <span className="setting-row-hint">{featInfo?.plugins.loaded.length ?? 0} 个</span>
+          </Row>
+          {(featInfo?.plugins.skipped ?? []).map(s => (
+            <Row key={s.name} label={`已跳过 · ${s.name}`} hint={s.reason}>
+              <span className="setting-row-hint">依赖未满足</span>
+            </Row>
+          ))}
+          {(featInfo?.plugins.failed ?? []).map(f => (
+            <Row
+              key={`${f.name}-${f.phase}`}
+              label={`加载失败 · ${f.name}`}
+              hint={`${f.phase === 'import' ? '导入失败' : 'apply 失败'}：${f.error}`}
+            >
+              <span className="setting-row-hint">能力已缺失</span>
+            </Row>
+          ))}
+        </div>
+
+        <div className="setting-group">
+          <div className="setting-group-title">角色</div>
+          <Row label="当前可用" hint="角色由插件注册：关掉对应功能，角色、工具与技能一起消失">
+            <span className="setting-row-hint">{(featInfo?.profiles ?? []).map(p => p.name).join('、') || '—'}</span>
           </Row>
         </div>
       </div>
