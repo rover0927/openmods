@@ -1,22 +1,45 @@
+<div align="center">
+
 # openmods
 
-> 本地 AI 工作台：dsh 式主界面（三栏 + 状态条）+ **并发建模子代理**（同一会话共享画布 + 对话内活动条）+ **无头 Blockbench 画布** + **Minecraft 1.20.1 模组开发闭环**（建模 → 导出 → 构建 → 一键进游戏测试 → jar 导出）+ 可插拔工具/插件 + 自定义供应商 + 省 token 压缩 + 用量看板。
->
-> 全栈 TypeScript（Fastify + React + Vite，零框架级依赖）；画布基于 Blockbench 5.2.2（GPL-3.0）。参考本地 `deepseek-harness/`（dsh）源码实现界面与交互语义。
->
-> **功能速览**
-> - 🤖 主代理全能力：权限审批、计划模式、询问用户、拉起/结束终端、文件读写、并发子代理
-> - 🎨 建模工作流：画布快照素材库（引用到新会话继续改 / 原地改 / 子代理改动自动回写）
-> - ⛏️ MC 开发：`mc_scaffold` 建工程 → 建模子代理出模型 → `mc_gradle build` → 标题栏「▶ 测试 Mod」进游戏 → 「jar ⤓」导出（Forge 1.20.1 / 国内镜像 / 离线构建包）
-> - 📊 上下文面板：分段占用、工具用量、耗时分布；设置系统复刻 dsh（providers / bridge / prefs 同一条 revision）
->
-> 详细架构与实现文档见本仓库下半部分与 [docs/](docs/)。
+**本地 AI 工作台 —— 建模子代理 · Blockbench 画布 · Minecraft 模组开发闭环**
+
+Fastify + React + Vite 全栈 TypeScript，零框架级依赖；画布基于 Blockbench 5.2.2（GPL-3.0）
+
+</div>
 
 ---
 
-## 快速开始
+**openmods 是跑在本机的 AI 工作台**：dsh 式三栏主界面 + **并发建模子代理**（同一会话共享画布 + 对话内活动条）+ **无头 Blockbench 画布** + **MC 1.20.1 模组开发闭环**（建模 → 导出 → 构建 → 一键进游戏测试 → jar 导出），外加可插拔工具/插件、自定义模型供应商、省 token 压缩与用量看板。
+
+## ✨ 功能一览
+
+| | |
+|---|---|
+| 🤖 **主代理全能力** | 权限审批、计划模式、询问用户、拉起/结束终端、文件读写、并发子代理——对标 dsh 主 agent |
+| 🎨 **建模工作流** | 画布快照素材库：引用到新会话继续改 / 原地改 / 子代理改动自动回写 |
+| ⛏️ **MC 开发闭环** | `mc_scaffold` 建工程 → 建模子代理出模型 → `mc_gradle build` → 标题栏「▶ 测试 Mod」进游戏 → 「jar ⤓」导出（Forge 1.20.1 / 国内镜像 / 离线构建包） |
+| 🧩 **代理与技能** | 三个角色（lead / mcmod / modeling）各自可见的工具与技能分配可视化；技能支持自注入（写 SKILL.md，热扫描生效），内置技能只读保护 |
+| 🌗 **深浅双主题** | 深色（dsh design-platform token）/ 浅色，设置即时切换 |
+| 📊 **上下文面板** | 分段占用、工具用量、耗时分布、token 环形图、每轮明细 |
+| 🖼 **图片输入** | Ctrl+V 粘贴直发视觉模型；纯文本模型按 dsh 语义诚实降级 |
+| 💰 **省 token** | 阈值触发八段式检查点摘要 + 工具结果免费裁剪，按模型覆盖阈值 |
+
+## 🖼 界面预览
+
+| 主会话 + 共享画布（子代理实时搭部件） | 设置 → 代理与技能（工具/技能分配，内置只读） |
+|---|---|
+| ![主会话与共享画布](docs/screenshots/shared-canvas-root.png) | ![代理与技能面板](docs/verify/agents-skills-readonly-dark.png) |
+| **浅色主题**（设置 → 通用 → 主题，即时切换） | **上下文面板**（分段占用 + 工具用量） |
+| ![浅色主题](docs/verify/theme-light-main.png) | ![上下文面板](docs/verify/stats-headline.png) |
+
+更多截图见 [docs/screenshots/](docs/screenshots/) 与 [docs/verify/](docs/verify/)。
+
+## 🚀 快速开始
 
 ```bash
+git clone https://github.com/rover0927/openmods.git
+cd openmods
 npm install
 npm run build:bbcanvas   # 从 ../blockbench 构建无头画布（开发机只需一次；仓库已带构建产物，跳过亦可）
 npm run build            # 前端产物 → apps/web/dist
@@ -30,44 +53,39 @@ npm start                # 或 npm run dev（tsx watch + vite）
 - `MOCK=0`（默认）：真实 LLM——模型来自设置系统（供应商 + key），按请求解析
 - `MOCK=1`：离线演示——脚本化假 LLM（冰晶法杖流程），无需任何 key
 
-## 离线构建包（vendor，重要）
+> **生产形态**：`npm run build` 后只需 server 一个进程——`http://127.0.0.1:8787` 同时托管前端、API、`/bb/` 画布。**vite dev 可选**（改前端热更新用）。
+
+## 📦 离线构建包（vendor，重要）
 
 `plugins/mcdev/vendor/`（约 243M：Gradle 8.8 发行版 + ForgeGradle `maven_downloader` 全量快照）**不进 git**，两种获取方式：
 
-1. **推荐**：到 [Releases](https://github.com/rover0927/openmods/releases) 下载 `openmods-vendor.zip`，解压到 `plugins/mcdev/vendor/`。解压后新机器/全新 `GRADLE_USER_HOME` 构建零下载（wrapper 免下 Gradle、FG 直连缓存免镜像）。
+1. **推荐**：到 [Releases](https://github.com/rover0927/openmods/releases) 下载 [`openmods-vendor.zip`](https://github.com/rover0927/openmods/releases/latest)，解压到 `plugins/mcdev/vendor/`。解压后新机器/全新 `GRADLE_USER_HOME` 构建零下载（wrapper 免下 Gradle、FG 直连缓存免镜像）。同页还有 [`openmods-mdk-template.zip`](https://github.com/rover0927/openmods/releases/latest)（Forge 1.20.1 MDK 模板单独打包，供取用；模板本体也在仓库 `plugins/mcdev/template/`）。
 2. **不下载也能跑**：首次构建时 `mc_gradle` 会自动走国内镜像（USTC bmclapi）补齐缓存，只是慢几分钟且需要联网。
+
+## 📚 目录
+
+- [快速开始](#-快速开始) · [离线构建包](#-离线构建包vendor重要)
+- **开发与实现文档**
+  - [1. 快速上手](#1-快速上手)
+  - [2. 目录结构](#2-目录结构)
+  - [3. Agent 架构](#3-agent-架构)（3.1 会话运行时 · 3.2 主代理工作台 · 3.3 子代理 · 3.4 LLM 适配器 · 3.5 项目分组与归档 · 3.6 思考过程与消息渲染 · 3.7 上下文占用面板 · 3.8 MC 模组开发代理）
+  - [4. 插件系统](#4-插件系统packagesplugin-kit) · [5. 图片输入](#5-图片输入) · [6. 动画](#6-动画set_animation) · [7. 无头 Blockbench 画布](#7-无头-blockbench-画布bbcanvas)
+  - [8. 设置系统](#8-设置系统) · [9. 外观](#9-外观全量照搬-dsh-design-platform-token) · [10. 右侧拓展](#10-右侧拓展多标签--可关闭--ai-自动唤醒)
+  - [11. 省 token](#11-省-tokencompaction-插件) · [12. 统计看板](#12-统计看板stats-插件)
+  - [13. API 一览](#13-api-一览) · [14. 验收状态](#14-验收状态全部通过) · [15. 已知边界](#15-已知边界与注意事项) · [16. 常见接手任务速查](#16-常见接手任务速查) · [17. 数据流图](#17-数据流图)
 
 ---
 
 # 开发与实现文档（接手文档）
 
-
-> automods.cn/hx 建模页的本地复刻：dsh 式主界面（三栏 + 状态条）+ 并发建模子代理（同一会话共享画布 + 对话内活动条）+ 无头 Blockbench 预览画布 + 可插拔技能/插件 + 自定义供应商设置 + 省 token 压缩 + 用量看板。
-> 全栈 TypeScript，参考本地 `deepseek-harness/`（dsh）与 `blockbench/`（Blockbench 5.2.2）源码实现。
->
-> **界面与设置直接照 dsh 重排**：色板/圆角/字号取自 dsh `design-platform.css` 的 dark token（§9）；设置面板复刻 dsh SettingsRoot（800×800、188px 导航、通用/模型/子代理/自动化四页，§8）；右侧拓展改为**可多开、可切换、可关闭的标签页**，并支持 **AI 自己唤醒画布**（§10）。
-
----
+> 界面与设置直接照 dsh 重排：色板/圆角/字号取自 dsh `design-platform.css`（§9）；设置面板复刻 dsh SettingsRoot（800×800、188px 导航，§8）；右侧拓展为可多开、可切换、可关闭的标签页，并支持 AI 自己唤醒画布（§10）。同级参考仓库（不在本仓库内）：`../deepseek-harness/`（dsh 源码）、`../blockbench/`（Blockbench 源码）。
 
 ## 1. 快速上手
 
-```bash
-cd F:\Project\tscode-ts\openmods
-npm install
-npm run build:bbcanvas   # 从 ../blockbench 构建 /bb/ 无头画布静态资源（只需一次）
-cp .env.example .env     # 按需修改
-npm run dev              # server :8787（tsx watch）+ web :5173（vite，仅开发用）
-```
+见文首 [🚀 快速开始](#-快速开始)（命令与模式说明同源，不再重复）。补充两点：
 
-**生产形态**：`npm run build`（web 构建到 `apps/web/dist`）后只需 server 一个进程——`http://127.0.0.1:8787` 同时托管前端、API、`/bb/` 画布。**vite dev 可选**（改前端热更新用）。
-
-访问 `http://127.0.0.1:8787` → 左栏「＋ 新会话」→ 右 dock 点建议 chip 或中央输入框发消息。
-
-**模式**：
-- `MOCK=0`（默认）：真实 LLM——模型来自设置系统（供应商 + key），按请求解析
-- `MOCK=1`：离线演示——脚本化假 LLM（冰晶法杖流程），无需任何 key
-
----
+- `npm run dev` = server :8787（tsx watch）+ web :5173（vite，仅开发用）；生产只跑 :8787 单进程。
+- 素材库 / 目录浏览器 / 代理与技能面板等界面能力都有 MOCK 模式下的 CDP 验证截图（[docs/verify/](docs/verify/)）。
 
 ## 2. 目录结构
 
@@ -85,11 +103,12 @@ openmods/
 │   │   ├── webview.ts       网页标签：嵌入性探测（XFO/CSP）+ 同源代理渲染（注入 <base>）
 │   │   └── skills.ts        目录型技能提供器（skills/<name>/SKILL.md）
 │   └── web/src/             React + Vite 前端
-│       ├── styles.css       全量 dsh dark token（§9）；--content-font 由设置写入
+│       ├── styles.css       全量 dsh token（§9，dark + light 双分支）；--content-font 由设置写入
 │       ├── markdown.tsx     零依赖 Markdown 渲染（先转义 + 标签白名单）
 │       └── components/      LeftSidebar / MainPanel / RightDock / SessionView /
 │                           SubagentActivity / StatsTab / ModelPicker / SettingsWindow /
-│                           SettingsPage / CanvasPane / DockPreview / Lightbox / ContextMeter
+│                           SettingsPage / AgentSkillsPane / CanvasPane / DockPreview /
+│                           Lightbox / ContextMeter
 ├── packages/
 │   ├── agent-core/          无 UI 的 agent 内核
 │   │   ├── runtime.ts       SessionRuntime + runTurn + buildSystemPrompt（profile 支持）
@@ -107,17 +126,13 @@ openmods/
 │   ├── fs-tools/            工作台文件读写（read/write/edit/list_dir/glob/grep，越界需授权）
 │   ├── shell-tools/         命令与终端（bash/terminal_open|list|read|send|kill，执行需授权）
 │   └── interaction-tools/   人机交互（ask_user_question/todo_write/exit_plan_mode）
-├── skills/                  可插拔技能目录（blockbench-* + minecraft-forge-1.20.1）
+├── skills/                  可插拔技能目录（blockbench-* + minecraft-forge-1.20.1；用户注入的标记为 custom）
 ├── bbcanvas/                无头 Blockbench：dist（web 构建+补丁）+ bb-bridge.js 桥接插件
 ├── data/                    运行时数据（gitignore）：sessions/*.jsonl、*.meta.json、*.bbdoc.json、projects.json、settings.json、credentials.json
 ├── scripts/build-bbcanvas.mjs  bbcanvas 构建脚本
 ├── .env                     运行配置（MOCK/PORT/LLM_*/COMPACTION_*）
 └── README.md                本文档
 ```
-
-同级参考仓库（不在 openmods 内）：`../deepseek-harness/`（dsh 源码）、`../blockbench/`（Blockbench 源码）、`../minecraft-dev/`（dsh 插件范本）。
-
----
 
 ## 3. Agent 架构
 
@@ -126,9 +141,9 @@ openmods/
 - **事件日志**：每会话一个 `data/sessions/<id>.jsonl`，append-only。事件：`turn/start|end`、`user/message`、`assistant/message`、`tool/call|result`、`llm/usage`、`step/start|end`、`compaction/start|summary|end`、`model/updated`。**回放即状态**（压缩不篡改历史，影子化由 `compaction/summary` 事件表达）。
 - **会话持久化**：`data/sessions/` 是唯一事实来源（`<id>.jsonl` 事件 / `<id>.meta.json` 模型选择+创建时间+标题 / `<id>.bbdoc.json` 画布快照）。内存 `sessions` Map 只是热缓存：`GET /api/sessions` 每次扫描目录重建列表，新会话建好即落 meta+空日志，因此刷新/重启后会话、标题、模型选择、画布都不丢。所有 JSON 落盘走 tmp+rename 原子写。标题推导按**完整行**扫描日志（首条消息带 base64 附图时可能接近 1MB），超长行会兜底从半截 JSON 里抠 `text`，不会出现"有内容的会话显示新会话"。**画布按会话树归属**：`<id>.meta.json` 里的 `canvasId` 是 durable 字段（根=自己，子代理=父会话的值），画布服务按它读写——子代理不会产生 `<childId>.bbdoc.json`，也没有合并两块画布这种运行时逻辑。
 - **runTurn 流程**：图片链路（见 §5）→ 逐 step：压缩钩子 → build surface（系统提示 + 未影子化条目，工具结果过裁剪变换）→ `llm.chat` 流式 → tool_calls 则逐个执行并落日志 → 无 tool_calls 则收尾。`MAX_STEPS=12`；`AbortController` 支持"停止"。**每个工具调用前过两道内核闸**：① 计划模式下 `def.mutates` 一律拦截（插件无需各自实现）；② `guardApproval()` 处理 `def.requiresApproval`（授权策略 `auto`/白名单放行，否则经 `approval.request` 阻塞等待用户弹窗答复）。
-- **profile（代理角色）**：`AGENT_PROFILES`（server/index.ts）定义 `lead`（主代理：完整工作台 + 委派 + 汇总，见 §3.4）、`mcmod`（Minecraft 1.20.1 模组开发主代理，工程工具 + 完整工作台 + 委派）与 `modeling`（建模子代理：建模工具全集，`toolExclude` 掉工作台与 spawn/list）。用户消息默认走 `lead`；显式 `profile` 覆盖。`toolFilter`（白名单）/`toolExclude`（排除）双机制；`WORKSPACE_TOOLS` 常量统一列出工作台工具，主代理档案直接展开它。
+- **profile（代理角色）**：`AGENT_PROFILES`（server/index.ts）定义 `lead`（主代理：完整工作台 + 委派 + 汇总，见 §3.2）、`mcmod`（Minecraft 1.20.1 模组开发主代理，工程工具 + 完整工作台 + 委派）与 `modeling`（建模子代理：建模工具全集，`toolExclude` 掉工作台与 spawn/list）。用户消息默认走 `lead`；显式 `profile` 覆盖。`toolFilter`（白名单）/`toolExclude`（排除）双机制；`WORKSPACE_TOOLS` 常量统一列出工作台工具，主代理档案直接展开它。
 
-### 3.4 主代理工作台（对标 dsh 主 agent 的全能力）
+### 3.2 主代理工作台（对标 dsh 主 agent 的全能力）
 
 对标 dsh 主 agent，主代理 `lead` / `mcmod` 拥有完整工作台能力；建模子代理 `modeling` 被排除（无人值守，不能等待弹窗）。
 
@@ -139,7 +154,7 @@ openmods/
 - **授权策略**：输入区「授权·询问 / 授权·自动」开关切换（会话级）。`ask`=写/命令/越界文件操作弹窗询问（可"总是允许"此工具），`auto`=本会话自动放行。运行时 `approval` 端口统一裁决，`guardApproval()` 落 `approval/asked|decided` 日志。
 - **实测**（MOCK 离线模式）：HTTP 能力测试 18/18 通过（计划模式开关与 durable 回读、授权切换/非法值拒绝、终端拉起/回显/输入/kill/列表、会话协作字段），CDP 截图确认输入区两个开关 + dock「终端」「计划」标签 + 终端面板空状态与新建终端输入框均正常渲染。
 
-### 3.2 子代理（复刻 dsh `ui-subagent` / `subagent` 核心语义）
+### 3.3 子代理（复刻 dsh `ui-subagent` / `subagent` 核心语义）
 
 **一句话**：子代理是**当前会话里临时启用的并行 agent**——有独立对话与上下文，但**共享主会话的画布**；并发运行。派发后主会话进入**等待态**（会话没结束，但用户不能插话），全部子代理结算后**自动开一轮汇总回合**做核对与验收。
 
@@ -179,14 +194,14 @@ openmods/
 
 **截图**（`docs/screenshots/`，MOCK 实测）：`shared-canvas-root.png` 主会话视图——两条紧凑通知 + 👥2 + 右侧共享画布（26 部件，dock 头「共享画布 · staff-2」）、`subagent-menu.png` 下拉目录（同类会话语义文案）、`subagent-session.png` 子代理对话（顶部仍是根会话 id，右侧同一块 26 部件画布，输入框提示「画布与主会话共用」）、`sessions-after-cleanup.png` 归档测试会话后的真实会话列表、`settings-model-capabilities.png` 设置页模型能力（flash 已勾视觉、窗口 1048576）。
 
-### 3.3 LLM 适配器（packages/agent-core/llm.ts）
+### 3.4 LLM 适配器（packages/agent-core/llm.ts）
 - OpenAI 兼容 `/chat/completions` 流式；解析 delta/tool_calls/usage（含 `cached_tokens`）。
 - **推理模型的思考流**：`delta.reasoning_content`（兼容 `reasoning` / `reasoning_text`）单独累积，经 `onReasoningDelta` → SSE `assistant/reasoning` → 前端「思考过程」块；**只展示、不写回下一轮 messages**（DeepSeek 明确拒绝回传）。首字延迟按"第一个 token（思考或正文）"计，避免纯思考步骤看起来没开始。
 - **重试**（复刻 dsh llm-retry）：网络层失败 / 5xx / 429 自动重试最多 3 次（800ms×attempt 退避）；流已开始后不重试。
 - **per-request 供应商解析**（复刻 llm-pi-ai）：`model` 传 `"providerRoute/llmModel"` 复合串，server 端适配器每次现查 SettingsStore 取 baseURL/key → **下一轮生效**，无 key 供应商也放行（匿名端点可用，401 由端点明确报出）。
 - 可选代理：`.env` 设 `HTTPS_PROXY` → undici ProxyAgent 全局接管。
 
-### 3.4 项目分组与归档（复刻 dsh `workspace` registry）
+### 3.5 项目分组与归档（复刻 dsh `workspace` registry）
 
 **一句话**：会话按「项目」分组，没归属的落在**未分组**（默认目录）；归档是**全局软删除**——隐藏、可筛选、可撤销，归档的会话不接受新回合，但会话记录与画布都还在。
 
@@ -206,9 +221,7 @@ openmods/
 - **分组可关联一个主机目录**（dsh Workspace 的 `path`，这里叫 `cwd`）：新建分组时绑定，该分组下**新建**的会话继承它作为工作目录；会话仍可单独改绑。详见 §12.3。
 - **与 dsh 的差异（有意放宽）**：dsh 的 Workspace **必须**指向一个已存在的主机目录（`realpath` 校验），且 attach 时会话 `cwd` **必须等于**该目录。openmods 允许分组**不关联**任何目录（画布才是主要工作产物），关联时也只作为**新建会话的默认值**——会话随后可以单独改绑到别的目录，dsh 的等值约束没有照搬。
 
----
-
-### 3.5 思考过程与消息渲染
+### 3.6 思考过程与消息渲染
 
 **问题原状**：DeepSeek 这类推理模型把"想什么"放在 `delta.reasoning_content`，把"说什么"放在 `delta.content`。适配器原来只认后者，于是**纯工具调用步骤的全部输出都被丢掉**——`dbc353ce` 这个会话里 6 个回合的 6 个工具步骤，`outputTokens` 分别是 1676 / 325 / 5988 / 992 / 1269 / 729，而落库正文全是 0 字符；界面上只剩运行横幅的「已想 0 字」一直挂着。
 
@@ -226,7 +239,7 @@ openmods/
 
 **验证**：真实端点（`api.deepseek.com` / `deepseek-flash`）实测 delta 里只有 `reasoning_content`（64 个分片、无 content），与本修复前的 0 字现象完全对应；MOCK 层现在也会先流一段思考，CDP 实测「已想 564 字」「思考过程 224 字」、展开有内容、0 page error。
 
-### 3.6 上下文占用与图形化面板（复刻 dsh `ui-conversation/ContextMeter`）
+### 3.7 上下文占用与图形化面板（复刻 dsh `ui-conversation/ContextMeter`）
 
 composer dock 里的环是**常驻**的（`.ctx-meter`，不因占用为 0 而消失）：分子取 `estimateContextTokens()`（`llm/usage.promptTokens` 作锚点 + 锚点之后新增 surface 的启发式，压缩后锚点失效回落全量估算），分母取当前模型的 `contextWindow`。点一下环弹出 264px 面板：
 
@@ -246,7 +259,7 @@ composer dock 里的环是**常驻**的（`.ctx-meter`，不因占用为 0 而�
 前端 `ctxBreakdown` 状态透传 `MainPanel → SessionView → ComposerDock → ContextMeter`。
 Esc 或面板外 `pointerdown` 关闭；`aria-haspopup="dialog"` / `aria-expanded` 齐全。
 
-### 3.7 Minecraft 1.20.1 模组开发代理（mcmod + plugins/mcdev）
+### 3.8 Minecraft 1.20.1 模组开发代理（mcmod + plugins/mcdev）
 
 composer 的模型 chip 左边多了一个**代理角色**下拉（`GET /api/profiles`，选择存 `localStorage openmods.profile`，
 并随会话 meta 持久化）。两个角色：
@@ -389,9 +402,9 @@ interface PluginContext {
 
   | 分区 | 内容 |
   |---|---|
-  | 通用 `general` | 主题（深色 / 浅色暂禁用）、字号（小 13 / 标准 14 / 大 15）、发送键（Enter 发送 / ⌘Ctrl+Enter 发送）、Mod 构建输出目录、revision + 打开配置文件 |
+  | 通用 `general` | 主题（深色 / 浅色，即时切换）、字号（小 13 / 标准 14 / 大 15）、发送键（Enter 发送 / ⌘Ctrl+Enter 发送）、Mod 构建输出目录、revision + 打开配置文件 |
   | 模型 `models` | 供应商卡片（显示名 / Base URL / key write-only / 模型行编辑器）+ ⟳ 自动获取 + 桥接模型；保存按钮只在本页 |
-  | 代理与技能 `agents` | 三个角色（lead / mcmod / modeling）的可调用工具 chips 与技能勾选分配（`PATCH /api/agents/:id/skills`，覆盖写 `data/agent-skills.json`）；技能库列表 + **自注入**（新建/编辑/删除 SKILL.md，热扫描下个会话生效） |
+  | 代理与技能 `agents` | 三个角色（lead / mcmod / modeling）的可调用工具 chips 与技能勾选分配（`PATCH /api/agents/:id/skills`，覆盖写 `data/agent-skills.json`）；技能库列表 + **自注入**（新建/编辑/删除 SKILL.md，热扫描下个会话生效）。**内置技能只读**：仅可查看，编辑/删除仅限自注入技能（服务端 PUT/DELETE 同步拦截） |
   | 子代理 `subagent` | 并发上限 Stepper（1–8）、结算后自动唤醒、对话里显示运行状态 |
   | 自动化 `automation` | 画布自动唤醒开关 + **最近的唤醒**列表（时刻 + 原因，数据来自 §10 的 `wakeLog`） |
 
@@ -400,6 +413,7 @@ interface PluginContext {
 
   | 字段 | 默认 | 作用 |
   |---|---|---|
+  | `theme` | `dark` | 主题（写 `documentElement[data-theme]`，styles.css 双 token 分支切换；画布与终端保持深色） |
   | `fontSize` | 14 | 写 `--content-font`，正文与输入框字号（12–18 夹取） |
   | `enterToSend` | true | 发送键语义：Enter 直发，或 ⌘/Ctrl+Enter 才发 |
   | `maxActiveSubagents` | 4（`.env MAX_ACTIVE_SUBAGENTS` 兜底） | 同一会话并发子代理上限 |
@@ -409,7 +423,7 @@ interface PluginContext {
   | `modOutput` | '' | **mod-output：jar 导出保存目录**。标题栏「jar ⤓」把最新构建产物复制到这里（`POST /api/mc/export`，`resolveDir` 校验目录存在）；留空时按钮回退为浏览器下载 |
 
 - **即时保存**：设置面板除模型页外没有「保存」按钮——开关一动就 `PUT /api/settings {prefs, expectedRevision}`；成功回填 `res.prefs`，409/失败则**回滚到改动前的值**并 toast。服务端 `normalizePrefs()` 做容错 + 区间夹取，老 settings.json（还没有 prefs 字段）在构造时补默认，不需要迁移脚本。
-- **API**：`GET /api/settings`（redacted：key 只回 `{set}` 槽位，含 `prefs`）、`PUT /api/settings`（`{providers?, bridge?, prefs?, expectedRevision}`——三者任选、共用一次 revision 递增，`saveProviders()` 是它的薄包装）、`PUT /api/settings/credentials/:route`；代理与技能：`GET /api/agents/detail`、`PATCH /api/agents/:id/skills`、`GET/PUT/DELETE /api/skills(/:name)`（PUT = 自注入，写 `skills/<name>/SKILL.md`，custom 标记存 `data/custom-skills.json`）。
+- **API**：`GET /api/settings`（redacted：key 只回 `{set}` 槽位，含 `prefs`）、`PUT /api/settings`（`{providers?, bridge?, prefs?, expectedRevision}`——三者任选、共用一次 revision 递增，`saveProviders()` 是它的薄包装）、`PUT /api/settings/credentials/:route`；代理与技能：`GET /api/agents/detail`、`PATCH /api/agents/:id/skills`、`GET/PUT/DELETE /api/skills(/:name)`（PUT = 自注入，写 `skills/<name>/SKILL.md`，custom 标记存 `data/custom-skills.json`；内置技能 PUT/DELETE 一律 400）。
 - **模型目录**：所有 provider 的 models 展开为复合 id `"<route>/<modelId>"`；无 key 置灰（MOCK 下放开）。字段解析顺序复刻 dsh `modelInfo()`：**条目显式值 → 内置官方目录（deepseek-flash/v4-pro）→ provider `defaultContextWindow` → `DEFAULT_CONTEXT_WINDOW`（1,000,000）**，所以 `contextWindow` 永远有值，压缩不会因为"没填窗口"而瞎猜。
 - **模型页 UI**：供应商卡片（显示名/Base URL/API key write-only/模型行编辑器：id、显示名、上下文窗口、👁视觉、需会员/删除）+「⟳ 自动获取」+「桥接模型」卡片（开关+模型下拉）。进设置时会用 `/api/models` 的**生效值**回填 vision/上下文/显示名，所见即真正生效的能力。
 - **自动获取（复刻 dsh pi-ai discovery + `llm-deepseek/src/listing.ts`）**：解析端点 `{baseURL}/models`，接受 `data` 数组或 `models` map；上下文窗口别名 `context_window / context_length / max_input_tokens / max_context_length / max_model_len / top_provider.context_length`；输出上限别名 `max_output_tokens / max_tokens / top_provider.max_completion_tokens`；模态读 `input_modalities / architecture.input_modalities / input / supports_vision / capabilities.vision` → 直接填好 `contextWindow` 与 👁，保存后即用于图片判定与压缩阈值。
@@ -418,7 +432,7 @@ interface PluginContext {
 
 ## 9. 外观：全量照搬 dsh design-platform token
 
-`apps/web/src/styles.css` 整份重写，色板/圆角/字号全部取自 `../deepseek-harness/packages/client/ui-theme/src/styles/design-platform.css` 的 **dark** 分支——中性偏蓝的深色底、层级表面、白色 label 三阶，deepseek 蓝是唯一强调色。
+`apps/web/src/styles.css` 色板/圆角/字号全部取自 `../deepseek-harness/packages/client/ui-theme/src/styles/design-platform.css`——**深浅两套 token 分支**（`:root` = dark，`[data-theme='light']` = light）：中性偏蓝的深色底、层级表面、白色 label 三阶，deepseek 蓝是唯一强调色；浅色分支按同一套变量名换值，强调色加深一档保证对比度（画布与终端有意保持深色）。
 
 | 类别 | token | dark 值 |
 |---|---|---|
@@ -439,7 +453,7 @@ interface PluginContext {
 - 消息：用户气泡右对齐、`--bg-layer-2` 底、`max-width: min(70%, 560px)`；助手正文**不上卡片**（透明无边框，纯排版）。
 - `.run-banner`（原通栏 streaming-bar）改为内容轴内的一行提示，等待态 `.run-banner.waiting` 变 emphasized。
 - `.toast` 从右上角挪到**底部居中**（`bottom: 24px`，`rgb(67,69,74)` 底），不再遮住页头按钮。
-- 兼容层：`--bg / --panel / --panel-2 / --border / --text / --muted / --green / --red` 都指向新 token，画布区（`CanvasPane`）与看板（`StatsTab`）里沿用旧变量名的规则不用改也能跟着变。
+- 兼容层：`--bg / --panel / --panel-2 / --border / --text / --muted / --green / --red / --bg-secondary / --border-primary / --error` 都指向新 token，画布区（`CanvasPane`）与看板（`StatsTab`）里沿用旧变量名的规则不用改也能跟着变。
 
 ---
 
@@ -481,8 +495,6 @@ interface PluginContext {
 - 为什么不做右上角浮层：原来的 `SubagentMenu.tsx`（header `👥` 下拉）已删除——子代理的状态属于**这一段对话**，放当前会话里比放全局角落更符合 dsh 的 `ui-subagent` 语义，也不用移视线。
 - `prefs.inlineSubagents = false` 时不渲染活动条，只剩结算通知行（适合觉得吵的时候）。
 
----
-
 ### 10.4 预览标签：图片 / 文件 / 网页
 
 标签类型共六种：`canvas | images | files | web | subagents | stats`（`DOCK_TABS` 决定 `＋` 菜单顺序）。后三种对应 dsh 的 `ui-attachment` / `ui-sidebar-files`+`ui-sidebar-documentpreview` / `ui-sidebar-browser`：
@@ -516,7 +528,7 @@ interface PluginContext {
 - 按模型覆盖（dsh `modelPolicies`）：`modelPolicies: { '<route>/<modelId>': { thresholdRatio, retainRatio } }`——一个后端服务多种上下文大小的模型时分别设阈值。
 - `.env`：`COMPACTION_THRESHOLD_RATIO / _HEADROOM_TOKENS / _RETAIN_RATIO / _MIN_SHADOWED / _RETRIES / _CONTEXT_WINDOW`（默认 0.8/65536/0.16/1200/2/取模型目录）。**演示压缩**：`COMPACTION_THRESHOLD_RATIO=0.02` + `COMPACTION_RETAIN_RATIO=0.02`。
 
-## 12. 上下文面板（stats 插件）
+## 12. 统计看板（stats 插件）
 
 - `projectStats(events)` 纯函数折叠出两块：
   - `totals`：轮/步行（上下文、输出、缓存命中、TTFT、tok/s、模型/工具耗时）、压缩合成行（影子 N → 摘要 M，省下 X）。
@@ -541,7 +553,7 @@ interface PluginContext {
 
 ---
 
-## 12.1 会话工作目录（cwd）
+### 12.1 会话工作目录（cwd）
 
 - `SessionMeta.cwd` 是 durable 字段（等价 dsh `session.header.cwd`），与 `canvasId` 是两件事：
   `canvasId` = 同一块画布，`cwd` = 磁盘上的哪个工程目录。子代理创建时继承父会话的 cwd。
@@ -551,7 +563,7 @@ interface PluginContext {
   会话目录下，`GRADLE_USER_HOME` 缺省也用会话目录下的 `.gradle-home`。因此一个服务端可以同时
   开多个工程会话，各自的 `mc_scaffold` / `mc_list` 互不干扰。
 
-## 12.2 文档素材库（左栏「文档素材库」）
+### 12.2 文档素材库（左栏「文档素材库」）
 
 - 定位：**从建模画布截取快照归档**，不做自动保存（避免目录里堆满中间态）。
 - 存法 `data/library/`：`<id>.meta.json`（列表用，小）、`<id>.doc.json`（`{resolution, elements, textures}`，
@@ -559,7 +571,7 @@ interface PluginContext {
 - 抽屉里每张卡片：缩略图、名字、`元素数 · 分辨率 · 时间`、「送入画布」「删除」。
 - 「送入画布」是覆盖式写入（几何 + 贴图 + 分辨率），走 `canvas.commit`，服务仍是唯一写入口。
 
-## 12.3 分组关联目录（左栏「新建分组」/ 分组菜单）
+### 12.3 分组关联目录（左栏「新建分组」/ 分组菜单）
 
 **要解决的问题**：以前「新建项目」只是标题栏里一个内联输入框，起个名字就完事——分组和磁盘上的任何东西都没有关系。现在按 dsh 的做法，点「新建分组」弹的是**完整对话框**，并且可以给分组挂一个真实的主机目录。
 
@@ -581,7 +593,7 @@ CDP 实测全流程（弹框 → 选目录 → 进子目录 → 回填路径 →
 ```
 GET  /api/health                       {ok, mock, plugins}
 GET  /api/models                       模型目录（settings 动态合成，含 vision/inputModalities/contextWindow/disabled）
-GET  /api/settings                     {providers(redacted), bridge, prefs:{fontSize,enterToSend,maxActiveSubagents,autoWake,canvasAutoWake,inlineSubagents}, revision}
+GET  /api/settings                     {providers(redacted), bridge, prefs:{theme,fontSize,enterToSend,maxActiveSubagents,autoWake,canvasAutoWake,inlineSubagents,modOutput}, revision}
 PUT  /api/settings                     body {providers?, bridge?, prefs?, expectedRevision?} → {revision, …}；三者任选共用一次 version 递增；revision 不符 → 409
 GET  /api/settings/file                下载原始 settings.json
 GET  /api/attachments/:id              图片字节（内容寻址，immutable 缓存；右侧「图片」标签与历史回看）
@@ -625,8 +637,15 @@ GET  /api/library/:id/thumb            素材缩略图（image/png，immutable�
 POST /api/library/:id/to-canvas        把素材覆盖写回某会话画布 {sessionId}
 DELETE /api/library/:id                删除素材（meta + doc + thumb 三个文件）
 GET  /api/sessions/:id/bbmodel         下载 bbmodel（任一会话 id → 其 canvasId 那份；响应头 x-canvas-session）
-PUT  /api/sessions/:id/bbmodel         画布编辑同步（canvas.commit：写 canvasId 快照 + 广播 model_update）
-PUT  /api/sessions/:id/bbmodel         手动编辑同步回服务端文档
+PUT  /api/sessions/:id/bbmodel         画布编辑同步回服务端文档（canvas.commit：写 canvasId 快照 + 广播 model_update）
+GET  /api/profiles                     代理角色目录（lead / mcmod / modeling，含各自工具面）
+GET  /api/agents/detail                三角色的可调用工具与技能分配（设置 → 代理与技能数据源）
+PATCH /api/agents/:id/skills           覆盖写某角色的技能分配 → data/agent-skills.json
+GET  /api/skills                       技能列表（custom 标记用户注入的）
+GET  /api/skills/:name                 读技能全文（编辑/查看用）
+PUT  /api/skills/:name                 自注入/更新技能（写 skills/<name>/SKILL.md；内置技能名 → 400 只读）
+DELETE /api/skills/:name               删除技能（摘除各角色分配；内置技能 → 400 不可删）
+GET  /api/mc/state|run|stop|jar|export MC 构建状态 / runClient 进程 / jar 导出（mcdev 状态登记与 UI 路由同源）
 ```
 
 SSE 帧：`{id, topic, ...}`，topic：`open`（带 `waiting`）、`turn/start`、`user/message`（自动汇总回合带 `source:{kind:'subagent-settled',form:'notice',settled:[…]}`）、`assistant/delta`、`tool/call`、`tool/result`、`llm/usage`、`step/start|end`、`turn/end`、`session/waiting`（`{waiting:[…]}`，空数组 = 解锁）、`model_update`、`model/selected`、`view_update`、`stats`、`compaction`、`settings/updated`（带 `prefs`，改了设置的其他标签页即时同步）、`models/updated`、`credentials/updated`、`subagent/notice`、`subagent/updated`、`bridge/working|done`、`error`、`done`。
@@ -654,25 +673,27 @@ SSE 帧：`{id, topic, ...}`，topic：`open`（带 `waiting`）、`turn/start`�
 - ✅ 上下文占用按 provider 口径：`llm/usage.promptTokens` 作锚点 + 尾增启发式，压缩后锚点失效回落估算
 - ✅ 动画播放：模式切换+独立驱动，time 推进、姿态变化、画布不压缩
 - ✅ 设置持久化：providers/credentials/bridge 落盘、redact、revision 冲突、模型目录即时刷新、会话级模型选择持久化
-- ✅ prefs 打通（新增）：`GET /api/settings` 带六项开关；`PUT {prefs}` 落盘 `data/settings.json` 并广播 `settings/updated{prefs}`；`maxActiveSubagents` 真的改了并发闸门；关掉 `autoWake` 后派两只 → `turns=1 notices=2 auto=0`（只落通知，不开汇总回合）；`inlineSubagents=false` 刷新后活动条不再出现；老 settings.json 无 prefs 时自动补默认
-- ✅ dsh 式视觉（新增，CDP 1440×900 实测无 JS 异常）：侧栏 `--sidebar-fill` + 品牌渐变块、主区 56px 页头（标题 + 会话 id 副标题）、中轴 748px、用户气泡右对齐 70% 上限、助手正文无卡片、composer 28px 圆角 + 34px 蓝色圆发送键 + 22px 状态行、toast 底部居中
-- ✅ 右侧多标签（新增）：`＋` 菜单列出已关闭的「子代理 / 看板 / 关闭全部标签」；打开看板 → `tabs:['◧建模','▤看板'] active:看板`，关闭后回落「建模」；关掉建模只剩「子代理 2」；重开后顺序为 `['◉子代理 2','◧建模']`；**刷新后标签集合/顺序/激活项全部记住**
-- ✅ AI 自动唤醒（新增）：手动折叠右侧 → 发消息派两只子代理 → 3s 后 `collapsed:false, tabs:['◧建模'], active:'◧建模'`，设置 → 自动化页出现「staff-1 开始建模」唤醒记录；三个触发点（`model_update` / `subagent/updated(running)` / `subagent/notice`）都实测命中
-- ✅ 对话内子代理活动条（新增）：running 时 `activity:2 spinners:2 locked:true`；结算后 `activity:0 / activityCard:false / notices:2 / locked:false / banner:null` —— 活动条与通知行不再重复
-- ✅ 设置四页（新增，面板宽 800）：导航 `通用/模型/子代理/自动化`，通用页 主题/字号/发送键/配置文件、子代理页 Stepper=4 + 两开关、自动化页 1 开关 + 唤醒记录、模型页 provider 卡片 + 桥接 + 保存，均无溢出错位；开关即时保存 + 失败回滚
+- ✅ prefs 打通：`GET /api/settings` 带全量开关（含 `theme`）；`PUT {prefs}` 落盘 `data/settings.json` 并广播 `settings/updated{prefs}`；`maxActiveSubagents` 真的改了并发闸门；关掉 `autoWake` 后派两只 → `turns=1 notices=2 auto=0`（只落通知，不开汇总回合）；`inlineSubagents=false` 刷新后活动条不再出现；老 settings.json 无 prefs 时自动补默认
+- ✅ 浅色主题（CDP 实测）：设置 → 通用 → 主题真实可切；`[data-theme='light']` 全 token 分支生效（主界面/设置窗口/面板均正常渲染），画布与终端保持深色
+- ✅ 代理与技能面板（CDP 实测）：三角色工具 chips + 技能勾选分配乐观更新；技能自注入 → 列表 custom 标记 → 读全文 → 非法名 400 → 删除摘除分配；**内置技能只读**（仅「查看」，PUT/DELETE 服务端 400）
+- ✅ dsh 式视觉（CDP 1440×900 实测无 JS 异常）：侧栏 `--sidebar-fill` + 品牌渐变块、主区 56px 页头（标题 + 会话 id 副标题）、中轴 748px、用户气泡右对齐 70% 上限、助手正文无卡片、composer 28px 圆角 + 34px 蓝色圆发送键 + 22px 状态行、toast 底部居中
+- ✅ 右侧多标签：`＋` 菜单列出已关闭的「子代理 / 看板 / 关闭全部标签」；打开看板 → `tabs:['◧建模','▤看板'] active:看板`，关闭后回落「建模」；关掉建模只剩「子代理 2」；重开后顺序为 `['◉子代理 2','◧建模']`；**刷新后标签集合/顺序/激活项全部记住**
+- ✅ AI 自动唤醒：手动折叠右侧 → 发消息派两只子代理 → 3s 后 `collapsed:false, tabs:['◧建模'], active:'◧建模'`，设置 → 自动化页出现「staff-1 开始建模」唤醒记录；三个触发点（`model_update` / `subagent/updated(running)` / `subagent/notice`）都实测命中
+- ✅ 对话内子代理活动条：running 时 `activity:2 spinners:2 locked:true`；结算后 `activity:0 / activityCard:false / notices:2 / locked:false / banner:null` —— 活动条与通知行不再重复
+- ✅ 设置多页（面板宽 800）：导航 `通用/模型/代理与技能/子代理/自动化`，通用页 主题/字号/发送键/Mod 输出目录/配置文件、子代理页 Stepper=4 + 两开关、自动化页 1 开关 + 唤醒记录、模型页 provider 卡片 + 桥接 + 保存，均无溢出错位；开关即时保存 + 失败回滚
 - ✅ 会话持久化：重启后列表从 `data/sessions/` 重建（标题/时间/模型/画布全恢复）；新建空会话刷新/重启不丢；模型切换即时落盘
 - ✅ 项目分组与归档（dsh workspace 同构）：侧栏分「项目 / 未分组」两级、组头计数与折叠、`＋` 在项目下新建、`⋯` 移入项目；归档即时隐藏（计数 2→1）并可撤销；`仅已归档` 视图能看到归档行、点击提示需先取消归档；重启后 `projects.json` 的项目、归属、归档集合全部还原（实测 17 根会话+项目+归档跨重启一致）
 - ✅ 压缩：真实触发（影子 4.7k → 摘要 82，省 4.6k）、看板压缩行与负增量
 - ✅ 控制台噪音清零（SW/blckbn.ch/插件市场）
-- ✅ 图片输入改成 dsh 语义（新增）：带图直发时模型确实收到 `image_url`；切纯文本模型后日志 `imagesOmitted=true` 且正文是 `[image omitted because this model accepts text only; attachment sha256:c414cd0e]`；`<id>.jsonl` 里 `data:image` 计数为 0；`data/attachments/c414cd0e….png` 70 字节，`GET /api/attachments/sha256:<digest>` → 200 image/png
-- ✅ 上下文监控常驻（新增）：从磁盘打开会话时即渲染 `.ctx-meter`（`上下文占用 943 / 1024.0k tokens（0%）`），不再等下一轮 stats 帧
-- ✅ 右侧预览标签（新增，CDP 实测）：`＋` 菜单可点（z-index 修复）；「图片」1 个缩略图 + 灯箱 1/1；「文件」列出工作区、进入子目录后面包屑为 `‹ 工作区 .wb-p4 ⟳`；「网页」见下一条（开始页 → 探测 → 直连/代理）
+- ✅ 图片输入 dsh 语义：带图直发时模型确实收到 `image_url`；切纯文本模型后日志 `imagesOmitted=true` 且正文是 `[image omitted because this model accepts text only; attachment sha256:c414cd0e]`；`<id>.jsonl` 里 `data:image` 计数为 0；`data/attachments/c414cd0e….png` 70 字节，`GET /api/attachments/sha256:<digest>` → 200 image/png
+- ✅ 上下文监控常驻：从磁盘打开会话时即渲染 `.ctx-meter`（`上下文占用 943 / 1024.0k tokens（0%）`），不再等下一轮 stats 帧
+- ✅ 右侧预览标签（CDP 实测）：`＋` 菜单可点（z-index 修复）；「图片」1 个缩略图 + 灯箱 1/1；「文件」列出工作区、进入子目录后面包屑为 `‹ 工作区 .wb-p4 ⟳`；「网页」见下一条（开始页 → 探测 → 直连/代理）
 - ✅ 思考过程可见（CDP + 真实端点实测）：`assistant/message.reasoning` 落库；折叠块「思考过程 · N 字」可展开；运行横幅从「已想 0 字」变为实时增长（实测 564 字）+ 思考尾巴滚动；`api.deepseek.com` 实探 delta 只有 `reasoning_content`
 - ✅ 消息列表参考图缩略图（CDP 实测）：`msg-img` 1 格、单张 `contain` 不裁切、点击开灯箱 `1 / 1 · ref.png`、src 为 `/api/attachments/sha256%3A…`
 - ✅ 助手正文 Markdown 渲染：`**加粗**` / `- 列表` / 围栏代码块不再原样露出；零依赖、先转义后白名单
 - ✅ 上下文图形化面板（CDP 实测）：点 `.ctx-meter` 弹出 264px 面板（`上下文已用 1%` / `~13.4k / 1.0M`，三段 `759 + 1.2k + 11.4k = 13.4k` 与环一致，色块 `rgb(173,178,184) / rgb(167,139,250) / rgb(122,170,255)`），Esc 关闭
 - ✅ 网页标签可用（CDP 实测）：开始页 → 输入 `example.com`（无 scheme）补成 `https://example.com/` 并渲染；`github.com` → 提示 `X-Frame-Options: DENY` + 遮罩；点「用代理打开」→ `src=/api/web/proxy?url=…`、黄字代理提示、sandbox 无 `allow-same-origin`；切到「图片」再切回 iframe 仍在；`127.0.0.1:8787` → 自身 origin 被拒
-- ✅ 左侧侧栏照 dsh（新增，CDP 实测）：品牌行 60px（mark 22 + name 18px/600）、新会话 38px 圆角 12、`会话` 段头、项目行/会话行 **32px**、会话缩进 34px、相对时间（`刚刚 / n 分钟前 / 47 分钟前`）、hover 才出 `＋ ⋯`、底部设置常驻；收起后 `--rail-w=56px`、只剩 mark 与图标按钮
+- ✅ 左侧侧栏照 dsh（CDP 实测）：品牌行 60px（mark 22 + name 18px/600）、新会话 38px 圆角 12、`会话` 段头、项目行/会话行 **32px**、会话缩进 34px、相对时间（`刚刚 / n 分钟前 / 47 分钟前`）、hover 才出 `＋ ⋯`、底部设置常驻；收起后 `--rail-w=56px`、只剩 mark 与图标按钮
 
 ---
 
@@ -687,7 +708,7 @@ SSE 帧：`{id, topic, ...}`，topic：`open`（带 `waiting`）、`turn/start`�
 7. **bbcanvas 修改版**基于 GPL-3.0 的 Blockbench，构建产物需同 GPL 开源（本地内部使用无碍）。
 8. **vite dev（:5173）可选**——生产用 8787 单进程；dev 只用于前端热更新。
 9. **自动获取模型**依赖端点支持 OpenAI 兼容 `GET /models`；不兼容的端点手动添加模型行。
-10. **项目没有磁盘目录**：dsh 的 Workspace 绑定一个真实目录（attach 时要校验会话 `cwd`），openmods 的项目只是命名分组——所以不要指望「删除项目」会动文件，它连会话都不动（见 §3.4）。会话真正落盘的位置永远是 `data/sessions/`。
+10. **项目没有磁盘目录**：dsh 的 Workspace 绑定一个真实目录（attach 时要校验会话 `cwd`），openmods 的项目只是命名分组——所以不要指望「删除项目」会动文件，它连会话都不动（见 §3.5）。会话真正落盘的位置永远是 `data/sessions/`。
 11. **没有会话硬删除**（与 dsh 一致）：归档是软删除，`archivedSessionIds` 里的会话仍在磁盘上。彻底清理走 §16 的手工归档目录。
 12. **归档门控是服务端的**：即使前端把归档行点开，`/chat` 也会 409 `session-archived`，`spawn_modeling_subagent` 同样拒绝——不要只靠 UI 隐藏来保证语义。
 13. **等待态只存内存**：`waiting` / `settlements` 不落盘（子代理回合本身也随进程结束）。重启后不会卡在等待态，但那次派发**不会有自动汇总**——重新发起即可。等待中的会话在侧栏仍是普通行，没有额外的「等待中」标记。
@@ -709,14 +730,15 @@ SSE 帧：`{id, topic, ...}`，topic：`open`（带 `waiting`）、`turn/start`�
 | 加建模工具 | `plugins/bb-tools/index.ts` tools 数组加 ToolDef；复杂逻辑放 bbmodel.ts |
 | 加子代理角色 | server `AGENT_PROFILES` 加条目（prompt/toolFilter）；`spawn_modeling_subagent` 调用处传 `profile` |
 | 改画布归属 | `CanvasService.idOf()`（meta.canvasId → 父链回溯）；子代理在 `createSession({canvasId})` 继承，运行时不传 state |
-| 加技能 | `skills/<name>/SKILL.md`（frontmatter name/description + 正文），零代码 |
+| 加技能 | `skills/<name>/SKILL.md`（frontmatter name/description + 正文），零代码；或设置 → 代理与技能 → 「＋ 注入技能」 |
+| 改技能保护 | 内置技能（不在 `data/custom-skills.json` 清单里）PUT/DELETE 服务端 400；只读查看走 GET |
 | 调压缩 | `.env` COMPACTION_*（见 §11 表）；看板实时验证 |
 | 改画布行为 | `bbcanvas/bb-bridge.js` → `cp` 到 dist → 刷新页面（无需重启 server） |
 | 换 LLM 端点 | 设置 → 模型 → 供应商 Base URL/API key（或 .env LLM_*） |
 | 看 token 去向 | 右 dock → 看板标签（`＋` 里能重新打开）+ `data/sessions/<id>.jsonl` 的 llm/usage 与 compaction/summary 事件 |
-| 改配色/圆角/字号 | `apps/web/src/styles.css` 的 `:root` —— 值照 dsh `design-platform.css` 抄，别在组件里写死颜色 |
+| 改配色/圆角/字号 | `apps/web/src/styles.css` 的 `:root`（dark）与 `[data-theme='light']`（light）—— 值照 dsh `design-platform.css` 抄，别在组件里写死颜色 |
 | 加一个右侧标签 | `RightDock.tsx` 的 `DockTabId` + `TAB_META` 加分支 → `App.tsx` 的 `dockTabs` 初始值与 localStorage 白名单（旧值会被 filter 掉） |
-| 调 AI 自动唤醒 | `App.tsx` 的 `wakeCanvas(reason)`；触发点搜 `wakeRef.current(`（model_update / subagent/updated / subagent/notice）；开关是 `prefs.canvasAutoWake` |
+| 调 AI 自动唤醒 | `App.tsx` 的 `wakeCanvas(reason)`；触发点搜 `wakeRef.current(`（model_update / subagent / notice）；开关是 `prefs.canvasAutoWake` |
 | 加一个设置开关 | server `settings.ts`（`PrefsConfig` + `DEFAULT_PREFS` + `normalizePrefs` 夹取）→ `web/types.ts` 的 `PrefsDto` → `SettingsPage.tsx` 对应分区加一行 `Switch`/`Seg`，用 `patchPrefs` 即时保存 |
 | 改子代理活动条 | `SubagentActivity.tsx`（务必保住「只在有 running 时渲染」这条收口，否则会和结算通知行重复）；开关是 `prefs.inlineSubagents` |
 | 调试前端 SSE | App.tsx handleEvent 是唯一事件入口；`data/sessions/*.jsonl` 是权威日志 |
@@ -777,3 +799,11 @@ SSE 连接按自己的 canvasId 过滤 ◄──────────┘     
      每条连接 = 本会话回合事件 + 所属 canvasId 的画布事件（主会话与子代理天然同屏）
      GET /api/sessions 不列子代理，目录走 /subagents；bbmodel 一律读写会话的 canvasId
 ```
+
+---
+
+<div align="center">
+
+**License 说明**：本仓库代码为项目自有实现；`bbcanvas/` 基于 Blockbench 5.2.2（GPL-3.0）构建，该部分产物需遵循 GPL-3.0 同协议开源。
+
+</div>
