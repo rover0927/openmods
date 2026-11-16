@@ -8,8 +8,8 @@
 //   由 mc_log 轮询 run/logs/latest.log 判断是否真的起来了。
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { mkdir, readdir, readFile, realpath, rm, stat, writeFile, cp } from 'node:fs/promises'
+import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdir, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile, cp } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Plugin, ToolResult } from '@openmods/plugin-kit'
@@ -23,6 +23,23 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const MC_ROOT = process.env.OPENMODS_MC_ROOT
   ?? (existsSync(join(ROOT, '..', 'mincraft-maker')) ? join(ROOT, '..', 'mincraft-maker', 'projects') : join(ROOT, 'data', 'mcprojects'))
 const TEMPLATE = fileURLToPath(new URL('./template/forge-1.20.1/', import.meta.url))
+
+/**
+ * 本机预热好的 Gradle 缓存（MC_ROOT/.gradle-home）：存在就作为默认 GRADLE_USER_HOME 共享，
+ * 否则每个会话都会在自己工作区重建一份空缓存，遇到镜像抖动就直接构建失败。
+ */
+const WARM_GRADLE_HOME = existsSync(join(MC_ROOT, '.gradle-home')) ? join(MC_ROOT, '.gradle-home') : null
+
+/** 可复制的现成参考工程（MC_ROOT 下含 build.gradle 的目录），列进 mc_scaffold 说明供 from 使用 */
+const REFERENCE_PROJECTS: string[] = (() => {
+  try {
+    return readdirSync(MC_ROOT, { withFileTypes: true })
+      .filter(e => e.isDirectory() && existsSync(join(MC_ROOT, e.name, 'build.gradle')))
+      .map(e => e.name)
+      .sort()
+      .slice(0, 8)
+  } catch { return [] }
+})()
 
 /**
  * 离线构建包（打包在项目里，共约 243M）：
@@ -251,6 +268,152 @@ function replaceAll(text: string, pairs: [string, string][]): string {
   return out
 }
 
+/** 复制参考工程时跳过的目录：构建产物、运行目录、IDE/工具缓存都不跟过去 */
+const REF_COPY_SKIP = new Set(['.git', '.gradle', '.idea', '.vscode', 'bin', 'build', 'out', 'run', 'tools'])
+
+/** gradle.properties 取一个键（缺省空串） */
+function propOf(text: string, key: string): string {
+  return text.match(new RegExp(`^${key}=(.*)$`, 'm'))?.[1]?.trim() ?? ''
+}
+
+/** 参考工程：MC_ROOT 下的名字或绝对路径，必须是含 build.gradle 的目录 */
+async function resolveReference(input: string): Promise<string> {
+  const dir = isAbsolute(input) ? resolve(input) : resolve(MC_ROOT, input)
+  const info = await stat(dir).catch(() => null)
+  if (!info?.isDirectory()) throw new Error(`参考工程不存在：${dir}`)
+  if (!existsSync(join(dir, 'build.gradle'))) throw new Error(`不是 Forge 工程（缺 build.gradle）：${dir}`)
+  return dir
+}
+
+/** 在 src/main/java 里找主类（*Mod.java，层级最浅的优先） */
+async function findMainClass(projectDir: string): Promise<{ className: string; pkgRel: string } | null> {
+  const base = join(projectDir, 'src/main/java')
+  if (!existsSync(base)) return null
+  let best: { className: string; pkgRel: string; depth: number } | null = null
+  const walk = async (dir: string, rel: string) => {
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      const r = rel ? `${rel}/${e.name}` : e.name
+      if (e.isDirectory()) { await walk(join(dir, e.name), r); continue }
+      if (!/^[A-Za-z0-9_]+Mod\.java$/.test(e.name)) continue
+      const depth = r.split('/').length
+      if (!best || depth < best.depth) best = { className: e.name.slice(0, -5), pkgRel: rel, depth }
+    }
+  }
+  await walk(base, '')
+  const found = best as { className: string; pkgRel: string; depth: number } | null
+  return found ? { className: found.className, pkgRel: found.pkgRel } : null
+}
+
+/** 递归搬 Java 包目录，顺带做文本替换与文件改名（主类 XxxMod.java → 新主类名） */
+async function moveJavaTree(src: string, dst: string, pairs: [string, string][], renameMap: Record<string, string>) {
+  await mkdir(dst, { recursive: true })
+  for (const e of await readdir(src, { withFileTypes: true })) {
+    const s = join(src, e.name)
+    const d = join(dst, renameMap[e.name] ?? e.name)
+    if (e.isDirectory()) await moveJavaTree(s, d, pairs, renameMap)
+    else {
+      const text = await readFile(s, 'utf8').catch(() => null)
+      if (text === null) await writeFile(d, await readFile(s))
+      else await writeFile(d, replaceAll(text, pairs))
+    }
+  }
+}
+
+/** gradle.properties：mod_id / mod_name / group / 作者 / 描述 */
+async function writeGradleProps(projectDir: string, opts: { modId: string; packageName: string; displayName?: string; author?: string }) {
+  const propsPath = join(projectDir, 'gradle.properties')
+  let props = await readFile(propsPath, 'utf8')
+  props = props
+    .replace(/^mod_id=.*$/m, `mod_id=${opts.modId}`)
+    .replace(/^mod_name=.*$/m, `mod_name=${opts.displayName ?? opts.modId}`)
+    .replace(/^mod_group_id=.*$/m, `mod_group_id=${opts.packageName}`)
+    .replace(/^mod_authors=.*$/m, `mod_authors=${opts.author ?? 'openmods'}`)
+    .replace(/^mod_description=.*$/m, `mod_description=${opts.displayName ?? opts.modId} - built with openmods`)
+  await writeFile(propsPath, props)
+}
+
+/**
+ * 复制参考工程骨架：整棵树搬过来（跳过构建产物/运行目录），把
+ *   旧包名 → 新包名、旧主类名 → 新主类名、旧 modid → 新 modid、旧显示名 → 新显示名
+ * 同时做 Java 包目录 / assets|data 命名空间目录的改名。
+ * 业务代码不做裁剪，复制完由模型按新需求删改（参考工程本身就是可编译起点）。
+ */
+async function copyReferenceProject(
+  refDir: string,
+  projectDir: string,
+  opts: { modId: string; packageName: string; mainClass: string; displayName?: string },
+): Promise<string[]> {
+  const refProps = await readFile(join(refDir, 'gradle.properties'), 'utf8').catch(() => '')
+  const oldModId = propOf(refProps, 'mod_id')
+  const oldName = propOf(refProps, 'mod_name')
+  if (!oldModId) throw new Error(`参考工程 gradle.properties 缺少 mod_id：${refDir}`)
+  const main = await findMainClass(refDir)
+  if (!main) throw new Error(`参考工程找不到主类（*Mod.java）：${refDir}`)
+
+  const files = await copyTree(refDir, projectDir, REF_COPY_SKIP)
+  // 根级噪音（构建日志 / 崩溃记录 / 画布导出的 bbmodel）不跟着搬
+  for (const f of files.filter(f => !f.includes('/') && /\.(log|bbmodel)$/i.test(f))) {
+    await rm(join(projectDir, f), { force: true })
+  }
+
+  const pairs: [string, string][] = [
+    [main.pkgRel.split('/').join('.'), opts.packageName],
+    [main.className, opts.mainClass],
+    [oldModId, opts.modId],
+  ]
+  const shown = opts.displayName ?? opts.modId
+  if (oldName && oldName !== oldModId) pairs.push([oldName, shown])
+
+  // 1) Java 包目录搬家 + 主类改名
+  const javaRoot = join(projectDir, 'src/main/java')
+  const oldPkgDir = join(javaRoot, main.pkgRel)
+  const newPkgDir = join(javaRoot, ...opts.packageName.split('.'))
+  if (existsSync(oldPkgDir) && resolve(oldPkgDir) !== resolve(newPkgDir)) {
+    await moveJavaTree(oldPkgDir, newPkgDir, pairs, { [`${main.className}.java`]: `${opts.mainClass}.java` })
+    await rm(oldPkgDir, { recursive: true, force: true })
+    // 清掉因搬家变空的父目录（如 com/openmodsai）
+    let dir = dirname(oldPkgDir)
+    while (dir.startsWith(javaRoot) && resolve(dir) !== resolve(javaRoot)) {
+      await rmdir(dir).catch(() => {})
+      dir = dirname(dir)
+    }
+  }
+
+  // 2) 资源/数据命名空间目录改名（assets/reddragon → assets/icedragon）
+  for (const kind of ['assets', 'data']) {
+    const from = join(projectDir, 'src/main/resources', kind, oldModId)
+    const to = join(projectDir, 'src/main/resources', kind, opts.modId)
+    if (from !== to && existsSync(from)) {
+      if (existsSync(to)) await rm(to, { recursive: true, force: true })
+      await rename(from, to).catch(async () => {
+        await cp(from, to, { recursive: true })
+        await rm(from, { recursive: true, force: true })
+      })
+    }
+  }
+
+  // 3) 其余文本文件（json/toml/gradle/properties/txt/mcmeta）统一替换 modid/显示名
+  const textExt = /\.(java|json|toml|mcmeta|gradle|properties|txt|md)$/i
+  const walkReplace = async (dir: string) => {
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      if (e.isDirectory()) {
+        if (REF_COPY_SKIP.has(e.name)) continue
+        await walkReplace(join(dir, e.name))
+        continue
+      }
+      if (!textExt.test(e.name)) continue
+      const p = join(dir, e.name)
+      const text = await readFile(p, 'utf8').catch(() => null)
+      if (text === null) continue
+      const next = replaceAll(text, pairs)
+      if (next !== text) await writeFile(p, next)
+    }
+  }
+  await walkReplace(projectDir)
+
+  return files
+}
+
 /**
  * 从模板创建 1.20.1 Forge 工程。
  * 模板就是官方 MDK 47.4.10（已经预置 BMCLAPI 镜像 + 超时 + run 配置），
@@ -264,13 +427,19 @@ async function scaffold(opts: {
   author?: string
   /** 目标根目录（会话 cwd）；缺省 MC_ROOT */
   root?: string
+  /** 可选：参考工程（MC_ROOT 下的名字或绝对路径），复制其骨架并改包名/modid */
+  from?: string
 }): Promise<{ projectDir: string; files: string[] }> {
   const { modId, packageName } = opts
   if (!MOD_ID_RE.test(modId)) throw new Error(`modId 非法（小写字母开头，只含 a-z0-9_）：${modId}`)
   if (!PKG_RE.test(packageName)) throw new Error(`packageName 非法（如 com.example.mymod）：${packageName}`)
 
-  const dirName = opts.name.trim().replace(/[^a-zA-Z0-9._-]/g, '-')
-  const projectDir = resolve(opts.root ?? MC_ROOT, dirName)
+  const rawName = opts.name.trim()
+  // 绝对路径原样使用：以前一律当目录名清洗，会把 F:\...\dragon 变成 F--Project-... 的嵌套目录，
+  // 模型只好再手工 mv 一堆文件。
+  const projectDir = isAbsolute(rawName)
+    ? resolve(rawName)
+    : resolve(opts.root ?? MC_ROOT, rawName.replace(/[^a-zA-Z0-9._-]/g, '-'))
   const exists = await stat(projectDir).catch(() => null)
   if (exists) {
     const entries = await readdir(projectDir)
@@ -279,6 +448,15 @@ async function scaffold(opts: {
 
   const mainClass = modId.split('_').map(s => s ? s[0].toUpperCase() + s.slice(1) : s).join('') + 'Mod'
   const pkgPath = packageName.split('.').join('/')
+
+  // 0) 参考工程复制骨架：直接搬现成工程（如 reddragon-mod）的源码/资源，改包名+modid。
+  //    比从空模板手搓实体、模型、渲染、动画快一个数量级，也是「本机已有 MDK 资源」的入口。
+  if (opts.from) {
+    const refDir = await resolveReference(opts.from)
+    const files = await copyReferenceProject(refDir, projectDir, { modId, packageName, mainClass, displayName: opts.displayName })
+    await writeGradleProps(projectDir, opts)
+    return { projectDir, files }
+  }
 
   const files = await copyTree(TEMPLATE, projectDir, new Set(['.git', 'run', 'build', '.gradle']))
 
@@ -298,21 +476,12 @@ async function scaffold(opts: {
   }
   // 只删模板自带的示例包目录。注意不能删 com/example 整个父目录：
   // 用户包名常常是 com.example.<modid>，新包就在里面（删父目录会把刚写的文件一起删掉）。
-  const { rm, rmdir } = await import('node:fs/promises')
   await rm(oldPkgDir, { recursive: true, force: true })
   // 顺手清掉因搬家而空掉的父目录（失败无所谓，非空目录 rmdir 会抛错）
   await rmdir(join(projectDir, 'src/main/java/com/example')).catch(() => {})
 
   // 2) gradle.properties：mod_id / mod_name / group / 作者 / 描述
-  const propsPath = join(projectDir, 'gradle.properties')
-  let props = await readFile(propsPath, 'utf8')
-  props = props
-    .replace(/^mod_id=.*$/m, `mod_id=${modId}`)
-    .replace(/^mod_name=.*$/m, `mod_name=${opts.displayName ?? modId}`)
-    .replace(/^mod_group_id=.*$/m, `mod_group_id=${packageName}`)
-    .replace(/^mod_authors=.*$/m, `mod_authors=${opts.author ?? 'openmods'}`)
-    .replace(/^mod_description=.*$/m, `mod_description=${opts.displayName ?? modId} - built with openmods`)
-  await writeFile(propsPath, props)
+  await writeGradleProps(projectDir, opts)
 
   // 3) 示例资源：ruby 的模型/贴图/语言 + 创造栏名
   //    ⚠️ Minecraft 的缺失模型和缺失贴图都渲染成同一个黑紫格，
@@ -391,7 +560,7 @@ async function runGradle(opts: {
   const env = {
     ...process.env,
     JAVA_HOME: process.env.JAVA_HOME ?? 'F:/sdk_java/jdk-17',
-    GRADLE_USER_HOME: process.env.OPENMODS_GRADLE_HOME ?? process.env.GRADLE_USER_HOME ?? join(opts.root ?? MC_ROOT, '.gradle-home'),
+    GRADLE_USER_HOME: process.env.OPENMODS_GRADLE_HOME ?? process.env.GRADLE_USER_HOME ?? WARM_GRADLE_HOME ?? join(opts.root ?? MC_ROOT, '.gradle-home'),
   }
   // 首次跑之前先把两块最容易挂的缓存摆好：FG 绕开 Gradle 仓库直连官方源的
   // 构件（无读超时，缺了就无限期卡住）+ wrapper 发行版（gradlew 首跑免下载）。
@@ -458,8 +627,13 @@ async function runGradle(opts: {
       recordBuild(projectDir, task, code ?? -1)
       const tail = buf.length > 8000 ? `…（截断，共 ${buf.length} 字符）\n${buf.slice(-8000)}` : buf
       const ok = code === 0
+      // 依赖下载失败是环境问题，不是代码问题：明确告诉模型别去改 build.gradle 的平台版本
+      const netHint = !ok && /Connection refused|SSL|Could not resolve|Could not GET|Read timed out/i.test(buf)
+        ? '\n依赖下载失败（镜像/网络）：优先检查网络，或用 OPENMODS_GRADLE_HOME 指向已预热缓存；'
+          + '不要为此修改 build.gradle / gradle.properties 的 MC、Forge、Gradle 版本。'
+        : ''
       resolvePromise({
-        forModel: seedNote + `gradlew ${task} 退出码 ${code}\n${tail || '（无输出）'}`,
+        forModel: seedNote + `gradlew ${task} 退出码 ${code}\n${tail || '（无输出）'}${netHint}`,
         isError: !ok,
       })
     })
@@ -509,15 +683,20 @@ const plugin: Plugin = {
       name: 'mc_scaffold',
       mutates: true,
       description: '创建 Minecraft 1.20.1 Forge（47.4.10）模组工程：官方 MDK 模板 + 国内镜像 + 示例资源。'
-        + 'project 传工程名（落在 data/mcprojects/<name>）或绝对路径（必须是空目录/不存在）。只支持 Java + 1.20.1。',
+        + 'name 传工程目录名（如 ruby-mod），也可传绝对路径（必须是空目录/不存在）；会话目录本身就是工程根时传 "."。'
+        + '不要传了路径又手工 mv 文件——目标目录会被直接使用。'
+        + (REFERENCE_PROJECTS.length
+          ? ` 现成参考工程（用 from 复制骨架，比手搓快）：${REFERENCE_PROJECTS.join('、')}。`
+          : ''),
       parameters: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: '工程目录名 / 模组名（如 ruby-mod）' },
+          name: { type: 'string', description: '工程目录名（如 ruby-mod），或绝对路径（空目录/不存在）；会话目录即工程根时传 "."' },
           modId: { type: 'string', description: 'modid，小写字母开头、只含 a-z0-9_（如 rubymod）' },
           packageName: { type: 'string', description: 'Java 包名（如 com.example.rubymod）' },
           displayName: { type: 'string', description: '游戏内显示名（可选）' },
           author: { type: 'string', description: '作者（可选）' },
+          from: { type: 'string', description: '可选：参考工程名（见说明）或绝对路径；复制其源码/资源骨架并自动改包名/modid/主类名' },
         },
         required: ['name', 'modId', 'packageName'],
       },
@@ -527,10 +706,12 @@ const plugin: Plugin = {
             name: String(args.name), modId: String(args.modId), packageName: String(args.packageName),
             displayName: args.displayName ? String(args.displayName) : undefined,
             author: args.author ? String(args.author) : undefined,
+            from: args.from ? String(args.from) : undefined,
             root: rootOf(exec),
           })
           return {
             forModel: `已创建 1.20.1 Forge 工程：${out.projectDir}\n`
+              + (args.from ? `骨架来自参考工程 ${String(args.from)}（包名/modid/主类名已替换）\n` : '')
               + `主类 src/main/java/${String(args.packageName).replace(/\./g, '/')}/`
               + `${String(args.modId).split('_').map(x => x ? x[0].toUpperCase() + x.slice(1) : x).join('')}Mod.java\n`
               + `下一步：mc_gradle build（缓存已就绪时约 3 分钟；全新 GRADLE_USER_HOME 首次 5~8 分钟）→ mc_gradle runClient background=true。`,
@@ -810,7 +991,7 @@ export function startRunClient(projectDir: string, root: string): Promise<{ pid:
         const env = {
           ...process.env,
           JAVA_HOME: process.env.JAVA_HOME ?? 'F:/sdk_java/jdk-17',
-          GRADLE_USER_HOME: process.env.OPENMODS_GRADLE_HOME ?? process.env.GRADLE_USER_HOME ?? join(root, '.gradle-home'),
+          GRADLE_USER_HOME: process.env.OPENMODS_GRADLE_HOME ?? process.env.GRADLE_USER_HOME ?? WARM_GRADLE_HOME ?? join(root, '.gradle-home'),
         }
         await seedMavenCache(env.GRADLE_USER_HOME)
         await seedWrapperDist(env.GRADLE_USER_HOME, projectDir)

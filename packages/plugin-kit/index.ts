@@ -106,7 +106,8 @@ export interface TerminalInfo {
  * 所有方法都带 sessionId —— 插件不能碰别的会话的进程（归属校验在服务端做）。
  */
 export interface TerminalPort {
-  open(opts: { sessionId: string; command: string; cwd: string; title?: string }): TerminalInfo
+  /** ephemeral=true：前台一次性命令，进程退出后自动从终端列表移除（输出缓冲短期保留） */
+  open(opts: { sessionId: string; command: string; cwd: string; title?: string; ephemeral?: boolean }): TerminalInfo
   openShell(opts: { sessionId: string; cwd: string; title?: string }): TerminalInfo
   list(sessionId: string): TerminalInfo[]
   output(sessionId: string, terminalId: string, tailChars?: number): string | undefined

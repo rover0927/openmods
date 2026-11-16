@@ -418,6 +418,8 @@ export interface LibraryAssetDto {
   textureCount: number
   resolution: { width: number; height: number }
   hasThumb: boolean
+  /** 已构建的 jar 产物（存在即显示「下载 jar」，地址 /api/library/:id/jar） */
+  jar?: { name: string; size: number }
   /** 调色板（#RRGGBB 不带 #）：纯色贴图模型用它拼缩略图，比首张贴图更有辨识度 */
   palette?: string[]
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, type SseFrame } from './api.js'
 import type {
-  AgentProfileDto, CanvasState, ContextBreakdownDto, McProjectUiDto, ModelInfoDto, PendingInteractionDto, PrefsDto, SessionInfoDto,
+  AgentProfileDto, AnimationMetaDto, CanvasState, ContextBreakdownDto, McProjectUiDto, ModelInfoDto, PendingInteractionDto, PrefsDto, SessionInfoDto,
   SessionSummaryDto, StatsDto, SubagentNoticeDto, SubagentWaitDto, TerminalDto, TodoItemDto, TurnEntry, WakeEntry,
 } from './types.js'
 import { EMPTY_CONTEXT_STATS } from './types.js'
@@ -22,6 +22,15 @@ const MODELING_SUGGESTIONS = [
 
 function emptyCanvas(): CanvasState {
   return { hasModel: false, modelName: '', elements: 0, textures: 0, view: '3d', animations: [] }
+}
+
+/** bbmodel 的 animations → 动画条数据（会话画布与素材标签共用） */
+function toAnims(model: any): AnimationMetaDto[] {
+  return (model?.animations ?? []).map((a: any) => ({
+    name: String(a.name ?? '').split('.').pop() ?? '',
+    length: a.length ?? 1,
+    loop: a.loop ?? 'loop',
+  }))
 }
 
 /** 结算消息的 source → 通知行（dsh `form:'notice'`：不展开成用户气泡） */
@@ -65,7 +74,9 @@ function replayEvents(events: any[]): TurnEntry[] {
   for (const ev of events) {
     if (ev.t === 'user/message') {
       out.push({
-        turnId: `t${ev.seq}`, userText: ev.source ? '' : (ev.text ?? ''), attachments: ev.attachments?.length ?? 0,
+        // 优先用日志里的 turnId（= turn/start 的 t<seq>）：SSE 回放的 turn/start 也带同一个 id，
+        // 两边一致才能按 turnId 去重；老日志没有 turnId 才退回自己的 seq。
+        turnId: ev.turnId ?? `t${ev.seq}`, userText: ev.source ? '' : (ev.text ?? ''), attachments: ev.attachments?.length ?? 0,
         // 图片始终显示（即使是纯文本模型没发出去的那几张，用户自己也该看到）
         ...(toImages(ev.attachments).length ? { images: toImages(ev.attachments) } : {}),
         ...(ev.imagesOmitted ? { imagesOmitted: true } : {}),
@@ -80,6 +91,10 @@ function replayEvents(events: any[]): TurnEntry[] {
       if (ev.reasoning) cur.reasoning = cur.reasoning ? `${cur.reasoning}\n\n${ev.reasoning}` : ev.reasoning
     } else if (ev.t === 'tool/call' && out.length && !out[out.length - 1].notice) {
       out[out.length - 1].steps.push({ callId: ev.callId, name: ev.name, done: true })
+    } else if (ev.t === 'turn/end' && out.length && !out[out.length - 1].notice) {
+      // 重开会话也要能看到系统收尾（如「已达单轮步数上限」）：只在模型没有正文时补
+      const cur = out[out.length - 1]
+      if (ev.text && !cur.assistantText) cur.assistantText = ev.text
     } else if (ev.t === 'subagent/notice') {
       out.push({
         turnId: `notice-${ev.seq}`, userText: '', attachments: 0, steps: [], assistantText: '', streaming: false,
@@ -119,6 +134,24 @@ export default function App() {
     return Number.isFinite(w) && w >= 280 && w <= 760 ? w : 420
   })
   const [refineMode, setRefineMode] = useState(false)
+  // 画布多开：'session' = 会话画布（AI 工具的工作区），其余 = 从素材库打开的只读标签（互不覆盖）
+  const [canvasTabs, setCanvasTabs] = useState<{ assetId: string; name: string }[]>([])
+  const [activeCanvasTab, setActiveCanvasTab] = useState<'session' | string>('session')
+  const [sessionCanvasDirty, setSessionCanvasDirty] = useState(false)
+  const activeCanvasTabRef = useRef<'session' | string>('session')
+  /** 素材标签的动画列表（assetId → animations）：打开/切换时从 bbmodel 记下，关闭时清理 */
+  const [assetAnims, setAssetAnims] = useState<Record<string, AnimationMetaDto[]>>({})
+  /** 当前画布是否正在加载（动画条据此禁用播放按钮，而不是因为会话 busy） */
+  const [canvasLoading, setCanvasLoading] = useState(false)
+  useEffect(() => { activeCanvasTabRef.current = activeCanvasTab }, [activeCanvasTab])
+  /** 动画播放失败自动重载后要重试的动画名（bb_loaded 后消费） */
+  const pendingAnimRef = useRef<string | null>(null)
+  /** 发起播放时所在的画布标签：重载完成后只在同一标签上重试 */
+  const pendingAnimTabRef = useRef<'session' | string>('session')
+  /** 最近一次请求播放的动画名：自动重载重试仍失败时用它识别二次失败 */
+  const animNameRef = useRef<string | null>(null)
+  /** 自动重载重试次数：第二次仍失败就 toast 提示，不再循环 */
+  const animRetryRef = useRef(0)
   // 会话：sessionId=当前打开的（可能是子代理），rootSessionId=所属主会话
   const [sessionId, setSessionId] = useState<string>(() => localStorage.getItem('openmods.sid') ?? '')
   const [rootSessionId, setRootSessionId] = useState('')
@@ -175,7 +208,8 @@ export default function App() {
   const [toast, setToast] = useState<{ text: string; action?: { label: string; run: () => void } } | null>(null)
   const [health, setHealth] = useState<{ mock: boolean } | null>(null)
   // 计划模式 / 待办 / 授权（会话级，服务端 durable）
-  const [planMode, setPlanMode] = useState(false)
+  /** 计划模式默认开启：新会话先出方案，批准后再动手 */
+  const [planMode, setPlanMode] = useState(true)
   const [todos, setTodos] = useState<TodoItemDto[] | null>(null)
   const [permission, setPermission] = useState<'ask' | 'auto'>('ask')
   const [allowedTools, setAllowedTools] = useState<string[]>([])
@@ -189,14 +223,17 @@ export default function App() {
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const lastModelRef = useRef<any>(null)
-  const turnsRef = useRef<TurnEntry[]>([])
   const openSeqRef = useRef(0)
   const canvasSessionRef = useRef('')
+  /** 草稿会话：点「新对话」不立即建（服务端不落盘），发首条消息时才真正创建；记着在哪个分组下建的 */
+  const draftProjectRef = useRef<string | undefined>(undefined)
+  /** 草稿会话里先选好的工作目录（首条消息创建会话时带过去） */
+  const draftCwdRef = useRef('')
+  const [draftCwd, setDraftCwd] = useState('')
   /** handleEvent 里要读最新的偏好，但不希望它进依赖（否则每次改设置都重连 SSE） */
   const prefsRef = useRef<PrefsDto | null>(null)
   prefsRef.current = prefs
   const wakeRef = useRef<(reason: string) => void>(() => {})
-  turnsRef.current = turns
 
   /** 提示条：可带一个操作按钮（dsh 的「会话已归档，可 撤销」同款） */
   const showToast = useCallback((msg: string, action?: { label: string; run: () => void }) => {
@@ -257,13 +294,6 @@ export default function App() {
     })
   }, [])
 
-  const lastActiveTurn = useCallback(() => {
-    const list = turnsRef.current
-    for (let i = list.length - 1; i >= 0; i--) {
-      if (!list[i].notice) return list[i]
-    }
-    return undefined
-  }, [])
 
   // 代理角色目录（lead / mcmod）：一次拉取，选择存 localStorage，切换会话时按服务端回显恢复
   useEffect(() => {
@@ -311,14 +341,23 @@ export default function App() {
     switch (f.topic) {
       case 'turn/start':
         setBusy(true)
-        if (lastActiveTurn()?.turnId === 'pending') {
-          updateLastTurn(t => ({ ...t, turnId: f.turnId, profile: f.profile }))
-        } else {
-          setTurns(prev => [...prev, {
+        // 回放/重连会重新补发同一轮的开头帧：按 turnId 去重，避免和磁盘回放的用户气泡叠加
+        setTurns(prev => {
+          if (prev.some(t => !t.notice && t.turnId === f.turnId)) return prev
+          let pending = -1
+          for (let i = prev.length - 1; i >= 0; i--) {
+            if (prev[i].notice) continue
+            if (prev[i].turnId === 'pending') pending = i
+            break
+          }
+          if (pending >= 0) {
+            return prev.map((t, i) => (i === pending ? { ...t, turnId: f.turnId, profile: f.profile } : t))
+          }
+          return [...prev, {
             turnId: f.turnId, userText: '', attachments: f.attachments?.length ?? 0,
             steps: [], assistantText: '', streaming: true, profile: f.profile,
-          }])
-        }
+          }]
+        })
         break
       case 'user/message':
         if (f.source?.kind === 'subagent-settled') {
@@ -372,13 +411,18 @@ export default function App() {
         // 子代理共享画布：标明这次改动来自哪个 agent（主会话画布也能看到）
         setCanvasOrigin(f.agentName ?? null)
         lastModelRef.current = f.bbmodel
-        sendToBridge({ type: 'load_bbmodel', model: f.bbmodel })
+        // 用户正看着素材标签时不打扰 iframe：会话画布标脏，切回去再重载（素材视图不被覆盖）
+        if (activeCanvasTabRef.current !== 'session') {
+          setSessionCanvasDirty(true)
+        } else {
+          sendToBridge({ type: 'load_bbmodel', model: f.bbmodel })
+        }
         // AI 改了画布：自己把右侧拓展唤醒（设置 → 自动化可关）
         wakeRef.current(f.agentName ? `${f.agentName} 更新了画布` : '画布已更新')
         break
       case 'view_update':
         setCanvas(c => ({ ...c, view: f.view }))
-        sendToBridge({ type: 'set_view', view: f.view })
+        if (activeCanvasTabRef.current === 'session') sendToBridge({ type: 'set_view', view: f.view })
         break
       case 'compaction':
         showToast(`上下文已压缩：影子 ${f.shadowedTokens} → 摘要 ${f.summaryTokens} tokens（省下 ${f.saved}）`)
@@ -402,18 +446,28 @@ export default function App() {
         setCtxBreakdown(f.contextBreakdown ?? null)
         break
       case 'turn/end':
-        updateLastTurn(t => ({ ...t, steps: t.steps.map(s => ({ ...s, done: true })) }))
+        updateLastTurn(t => ({
+          ...t,
+          steps: t.steps.map(s => ({ ...s, done: true })),
+          // 步数上限等系统收尾：模型没有正文时才把 turn/end 的文字补上，避免和正常回复重复
+          ...(f.text && !t.assistantText ? { assistantText: f.text } : {}),
+        }))
         break
       // 子代理：完成通知作为紧凑系统行插入主对话（不触发模型回合）
       case 'subagent/notice':
-        setTurns(prev => [...prev, {
-          turnId: `notice-${f.seq ?? Date.now()}`, userText: '', attachments: 0,
-          steps: [], assistantText: '', streaming: false,
-          notice: {
-            childId: f.childId, name: f.name, description: f.description,
-            status: f.status ?? 'done', summary: f.summary ?? '',
-          },
-        }])
+        setTurns(prev => {
+          const turnId = `notice-${f.seq ?? Date.now()}`
+          // 回放/重连补发：同一条通知不重复插入
+          if (prev.some(t => t.turnId === turnId)) return prev
+          return [...prev, {
+            turnId, userText: '', attachments: 0,
+            steps: [], assistantText: '', streaming: false,
+            notice: {
+              childId: f.childId, name: f.name, description: f.description,
+              status: f.status ?? 'done', summary: f.summary ?? '',
+            },
+          }]
+        })
         setSessionsVersion(v => v + 1)
         if (rootSessionId) refreshSubagents(rootSessionId)
         // 子任务结算：唤醒画布，让用户看到最终形态
@@ -454,9 +508,15 @@ export default function App() {
         })
         break
       case 'terminal/exit':
-        setTerminals(prev => prev.map(t => (t.id === f.terminalId
-          ? { ...t, status: 'exited', exitCode: f.exitCode ?? null, signal: f.signal, endedAt: f.endedAt }
-          : t)))
+        // 已退出的终端不再占标签：直接从列表移除，避免越积越多
+        setTerminals(prev => prev.filter(t => t.id !== f.terminalId))
+        setTerminalOutput(prev => {
+          if (!(f.terminalId in prev)) return prev
+          const next = { ...prev }
+          delete next[f.terminalId]
+          return next
+        })
+        setActiveTerminalId(cur => (cur === f.terminalId ? null : cur))
         break
       // 等待态：会话没有结束（不是 idle），但用户不能插话，直到结算后自动汇总
       case 'session/waiting':
@@ -480,7 +540,7 @@ export default function App() {
         if (rootSessionId) refreshSubagents(rootSessionId)
         break
     }
-  }, [sendToBridge, updateLastTurn, lastActiveTurn, showToast, refreshModels, refreshSubagents, rootSessionId])
+  }, [sendToBridge, updateLastTurn, showToast, refreshModels, refreshSubagents, rootSessionId])
 
   // 统一事件流：当前打开的会话（主会话或子代理）都订阅同一条 SSE
   useEffect(() => {
@@ -515,12 +575,14 @@ export default function App() {
   const loadTerminals = useCallback(async (id: string) => {
     try {
       const r = await api.terminals(id)
-      setTerminals(r.terminals)
+      // 已退出的终端不再占标签（列表刷新时也不堆积）
+      const live = r.terminals.filter(t => t.status !== 'exited')
+      setTerminals(live)
       setTerminalShell(r.shell)
-      setActiveTerminalId(prev => (r.terminals.some(t => t.id === prev)
+      setActiveTerminalId(prev => (live.some(t => t.id === prev)
         ? prev
-        : (r.terminals[r.terminals.length - 1]?.id ?? null)))
-      const recent = r.terminals.slice(-4)
+        : (live[live.length - 1]?.id ?? null)))
+      const recent = live.slice(-4)
       const outs = await Promise.all(recent.map(async t => {
         const o = await api.terminalOutput(id, t.id, 20_000).catch(() => null)
         return [t.id, o?.output ?? ''] as const
@@ -536,7 +598,9 @@ export default function App() {
     setCanvasOrigin(null)
     setCanvas(emptyCanvas())
     setPlayingAnim(null)
+    pendingAnimRef.current = null
     lastModelRef.current = null
+    setCanvasLoading(true)
     sendToBridge({ type: 'load_bbmodel', model: null })
     api.bbmodel(id).then(model => {
       if (canvasSessionRef.current !== id) return
@@ -547,18 +611,95 @@ export default function App() {
         elements: model.elements?.length ?? 0,
         textures: model.textures?.length ?? 0,
         view: model.view ?? '3d',
-        animations: (model.animations ?? []).map((a: any) => ({ name: String(a.name ?? '').split('.').pop() ?? '', length: a.length ?? 1, loop: a.loop ?? 'loop' })),
+        animations: toAnims(model),
       })
+      setCanvasLoading(false)
       sendToBridge({ type: 'load_bbmodel', model })
-    }).catch(() => { /* 该会话还没有模型 */ })
+    }).catch(() => { setCanvasLoading(false) /* 该会话还没有模型 */ })
   }, [sendToBridge])
 
+  /** 动画播放/停止（chips 统一入口）：记下意图，模型失同步时 bb_animation_error 能自动重载重试 */
+  const playAnim = useCallback((name: string | null) => {
+    pendingAnimRef.current = name
+    pendingAnimTabRef.current = activeCanvasTabRef.current
+    animNameRef.current = name
+    animRetryRef.current = 0
+    iframeRef.current?.contentWindow?.postMessage(name ? { type: 'play_animation', name } : { type: 'stop_animation' }, '*')
+  }, [])
+
+  // ---- 画布多开：素材库模型开新标签，绝不覆盖会话画布 ----
+  const openLibModel = useCallback((asset: { id: string; name: string }) => {
+    setCanvasTabs(tabs => (tabs.some(t => t.assetId === asset.id) ? tabs : [...tabs, { assetId: asset.id, name: asset.name }]))
+    setActiveCanvasTab(asset.id)
+    setSessionCanvasDirty(dirty => (activeCanvasTabRef.current === 'session' ? dirty : true))
+    activeCanvasTabRef.current = asset.id
+    setPlayingAnim(null)
+    pendingAnimRef.current = null
+    setCanvasLoading(true)
+    api.libraryModel(asset.id).then(model => {
+      if (activeCanvasTabRef.current !== asset.id) return
+      lastModelRef.current = null // 素材标签不影响会话画布的重载缓存
+      setAssetAnims(prev => ({ ...prev, [asset.id]: toAnims(model) }))
+      setCanvasLoading(false)
+      sendToBridge({ type: 'load_bbmodel', model })
+    }).catch(e => { setCanvasLoading(false); showToast(`打开素材失败：${e.message}`) })
+  }, [sendToBridge, showToast])
+
+  const switchCanvasTab = useCallback((tab: 'session' | string) => {
+    if (tab === activeCanvasTabRef.current) return
+    setActiveCanvasTab(tab)
+    activeCanvasTabRef.current = tab
+    setPlayingAnim(null)
+    pendingAnimRef.current = null
+    if (tab === 'session') {
+      // 回到会话画布：吃掉期间的 AI 改动（素材标签期间 model_update 只标脏不加载）
+      setSessionCanvasDirty(false)
+      if (sessionId) loadCanvas(sessionId, { force: true })
+    } else {
+      const t = canvasTabs.find(x => x.assetId === tab)
+      if (t) {
+        setCanvasLoading(true)
+        api.libraryModel(tab).then(model => {
+          if (activeCanvasTabRef.current !== tab) return
+          setAssetAnims(prev => ({ ...prev, [tab]: toAnims(model) }))
+          setCanvasLoading(false)
+          sendToBridge({ type: 'load_bbmodel', model })
+        }).catch(() => setCanvasLoading(false))
+      }
+    }
+  }, [canvasTabs, loadCanvas, sendToBridge, sessionId])
+
+  const closeCanvasTab = useCallback((assetId: string) => {
+    setCanvasTabs(tabs => {
+      const next = tabs.filter(t => t.assetId !== assetId)
+      if (activeCanvasTabRef.current === assetId) {
+        activeCanvasTabRef.current = 'session'
+        setActiveCanvasTab('session')
+        setSessionCanvasDirty(false)
+        setPlayingAnim(null)
+        pendingAnimRef.current = null
+        if (sessionId) loadCanvas(sessionId, { force: true })
+      }
+      return next
+    })
+    // 关掉的素材标签不再保留动画列表
+    setAssetAnims(prev => {
+      if (!(assetId in prev)) return prev
+      const next = { ...prev }
+      delete next[assetId]
+      return next
+    })
+  }, [loadCanvas, sessionId])
+
   // 打开会话（主会话或子代理）：先读 meta，再一起更新 sessionId + 流起点，避免双连接
-  const openSession = useCallback(async (id: string) => {
+  // silent=true：启动恢复时静默失败（存储的 sid 可能是被清理的空会话，不该开局弹错）
+  const openSession = useCallback(async (id: string, silent = false) => {
     const seq = ++openSeqRef.current
     try {
       const res = await api.getSession(id)
       if (seq !== openSeqRef.current) return
+      draftCwdRef.current = ''
+      setDraftCwd('')
       const root = res.parentId ?? res.id
       setSessionInfo(res)
       setRootSessionId(root)
@@ -585,6 +726,12 @@ export default function App() {
       setThinkTail('')
       if (res.modelId) setCurrentModelId(res.modelId)
       // 画布归属由服务端给出（子代理 → 主会话的画布）
+      // 新会话重置素材标签（auto 素材都在库里，不会丢）
+      setCanvasTabs([])
+      setAssetAnims({})
+      setActiveCanvasTab('session')
+      activeCanvasTabRef.current = 'session'
+      setSessionCanvasDirty(false)
       loadCanvas(res.canvasId ?? id)
       // MC 工程状态（dock 顶部「测试 Mod」按钮）：有会话就拉，服务端扫 cwd 下的工程
       setMcProjects([])
@@ -600,7 +747,7 @@ export default function App() {
       void loadTerminals(id)
     } catch (e: any) {
       if (seq !== openSeqRef.current) return
-      showToast(e.message)
+      if (!silent) showToast(e.message)
       localStorage.removeItem('openmods.sid')
       setSessionId('')
       setRootSessionId('')
@@ -636,22 +783,76 @@ export default function App() {
     api.health().then(setHealth).catch(() => {})
     refreshModels()
     const stored = localStorage.getItem('openmods.sid')
-    if (stored) openSession(stored)
+    if (stored) openSession(stored, true)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // MOCK 离线演示是脚本化流程（没有计划评审环节）：不默认开启计划模式，与服务端 createSession 一致
+  useEffect(() => {
+    if (health?.mock) setPlanMode(false)
+  }, [health?.mock])
 
   const onIframeReady = useCallback(() => {
     setIframeReady(true)
     if (lastModelRef.current) sendToBridge({ type: 'load_bbmodel', model: lastModelRef.current })
   }, [sendToBridge])
 
+  /** 动画失同步时重载"当前正在看的画布"（会话画布或素材标签） */
+  const reloadActiveCanvas = useCallback((tab: 'session' | string) => {
+    if (tab === 'session') {
+      if (sessionId) loadCanvas(sessionId, { force: true })
+      return
+    }
+    setCanvasLoading(true)
+    api.libraryModel(tab).then(model => {
+      if (activeCanvasTabRef.current !== tab) return
+      setAssetAnims(prev => ({ ...prev, [tab]: toAnims(model) }))
+      setCanvasLoading(false)
+      sendToBridge({ type: 'load_bbmodel', model })
+    }).catch(() => setCanvasLoading(false))
+  }, [sessionId, loadCanvas, sendToBridge])
+
   // 画布动画播放状态（bridge 回传）
   useEffect(() => {
     const handler = (ev: MessageEvent) => {
-      if (ev.data?.type === 'animation_state') setPlayingAnim(ev.data.playing ?? null)
+      const t = ev.data?.type
+      if (t === 'animation_state') {
+        animRetryRef.current = 0
+        animNameRef.current = null
+        setPlayingAnim(ev.data.playing ?? null)
+        return
+      }
+      // chips 与 iframe 模型失同步（画布刚被覆盖/切换会话竞态）：提示 + 自动重载 + 重试一次，
+      // 二次仍失败则明确提示，绝不静默无反应也不无限重载。
+      if (t === 'bb_animation_error') {
+        const name = pendingAnimRef.current ?? animNameRef.current
+        if (!name) return
+        if (animRetryRef.current >= 1) {
+          pendingAnimRef.current = null
+          animNameRef.current = null
+          animRetryRef.current = 0
+          showToast(`动画播放失败：${ev.data.message ?? '未知原因'}（已自动重载仍失败，请重试或切换画布）`)
+          return
+        }
+        animRetryRef.current += 1
+        showToast(`动画播放失败：${ev.data.message ?? '未知原因'}，正在重载画布模型并重试…`)
+        reloadActiveCanvas(pendingAnimTabRef.current)
+        return
+      }
+      if (t === 'bb_loaded' && pendingAnimRef.current) {
+        const name = pendingAnimRef.current
+        const tab = pendingAnimTabRef.current
+        pendingAnimRef.current = null
+        // 模型刚灌进去，动画注册完成后再播（只在发起播放的同一标签上重试）
+        setTimeout(() => {
+          if (activeCanvasTabRef.current === tab) {
+            iframeRef.current?.contentWindow?.postMessage({ type: 'play_animation', name }, '*')
+          }
+        }, 300)
+      }
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
-  }, [])
+  }, [reloadActiveCanvas, showToast])
 
   useEffect(() => {
     if (!busy) return
@@ -679,7 +880,10 @@ export default function App() {
     let sid = sessionId
     if (!sid) {
       try {
-        const created = await api.createSession()
+        // 惰性创建：到这里才有真对话，服务端此刻才落盘（点「新对话」只是草稿，不留空会话）
+        const created = await api.createSession(draftProjectRef.current, draftCwdRef.current || undefined)
+        draftProjectRef.current = undefined
+        if (created.cwd) setDraftCwd(created.cwd)
         sid = created.id
         openSeqRef.current++
         canvasSessionRef.current = ''
@@ -689,6 +893,8 @@ export default function App() {
         setStreamSince(0)
         localStorage.setItem('openmods.sid', sid)
         setSessionsVersion(v => v + 1)
+        // 草稿里改过计划模式：会话刚建好，把当前状态同步到服务端（真实模式默认本就是开启）
+        await api.setPlanMode(sid, planMode).catch(() => {})
       } catch (e: any) {
         showToast(`无法创建会话：${e.message}（检查 server 是否运行）`)
         return
@@ -716,7 +922,7 @@ export default function App() {
       updateLastTurn(t => ({ ...t, error: e.message }))
       setBusy(false)
     }
-  }, [sessionId, currentModelId, updateLastTurn, showToast, pendingAtts, waiting.length, agentProfile])
+  }, [sessionId, currentModelId, updateLastTurn, showToast, pendingAtts, waiting.length, agentProfile, planMode])
 
   const stop = useCallback(async () => {
     if (!sessionId) return
@@ -728,9 +934,10 @@ export default function App() {
 
   // ---- 计划模式 / 授权策略 / 人机交互 ----
   const togglePlan = useCallback(async () => {
-    if (!sessionId) return
     const next = !planMode
     setPlanMode(next) // 乐观更新；失败回滚
+    // 草稿会话还没落盘：只改本地，发送首条消息创建会话时再同步（见 send）
+    if (!sessionId) return
     try {
       await api.setPlanMode(sessionId, next)
       showToast(next ? '已进入计划模式：AI 先出方案，批准后才动手' : '已退出计划模式')
@@ -804,38 +1011,88 @@ export default function App() {
     }
   }, [sessionId, showToast])
 
-  const newSession = useCallback(async (projectId?: string) => {
-    try {
-      const created = await api.createSession(projectId)
-      openSeqRef.current++
-      canvasSessionRef.current = ''
-      setSessionId(created.id)
-      setRootSessionId(created.id)
-      setSessionInfo(null)
-      setStreamSince(0)
-      localStorage.setItem('openmods.sid', created.id)
-      setSessionsVersion(v => v + 1)
-      setTurns([])
-      setStats(null)
-      setCanvas(emptyCanvas())
-      setCanvasOrigin(null)
-      setPlayingAnim(null)
-      setBusy(false)
-      setWaiting([])
-      setPlanMode(false)
-      setTodos(null)
-      setPermission('ask')
-      setAllowedTools([])
-      setInteractions([])
-      setTerminals([])
-      setTerminalOutput({})
-      setActiveTerminalId(null)
-      lastModelRef.current = null
-      sendToBridge({ type: 'load_bbmodel', model: null })
-    } catch (e: any) {
-      showToast(`无法新建会话：${e.message}（检查 server 是否运行）`)
+  /** 关闭单个终端：运行中先调 kill API，再从标签里移除 */
+  const closeTerminal = useCallback(async (id: string) => {
+    const t = terminals.find(x => x.id === id)
+    if (t?.status === 'running') {
+      try { await api.killTerminal(sessionId, id) } catch (e: any) { showToast(e.message); return }
     }
-  }, [sendToBridge, showToast])
+    setTerminals(prev => prev.filter(x => x.id !== id))
+    setTerminalOutput(prev => {
+      if (!(id in prev)) return prev
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+    setActiveTerminalId(cur => (cur === id ? null : cur))
+  }, [sessionId, terminals, showToast])
+
+  /** 全部清空：运行中的先 kill，然后清空列表与输出 */
+  const closeAllTerminals = useCallback(async () => {
+    if (sessionId) {
+      await Promise.all(terminals
+        .filter(t => t.status === 'running')
+        .map(t => api.killTerminal(sessionId, t.id).catch(() => {})))
+    }
+    setTerminals([])
+    setTerminalOutput({})
+    setActiveTerminalId(null)
+  }, [sessionId, terminals])
+
+  /** 欢迎区「绑定工作目录」：系统原生选择器 → setSessionCwd → 同步 sessionInfo 并 toast */
+  const pickSessionCwd = useCallback(async () => {
+    try {
+      // 草稿会话还没落盘：先记下，首条消息创建会话时一起带上
+      const r = await api.pickDir(sessionInfo?.cwd ?? draftCwdRef.current, '绑定工作目录')
+      if (!r.path) return
+      const path = r.path
+      if (!sessionId) {
+        draftCwdRef.current = path
+        setDraftCwd(path)
+        showToast(`已选择工作目录：${path}（发送首条消息时生效）`)
+        return
+      }
+      await api.setSessionCwd(sessionId, path)
+      setSessionInfo(info => (info ? { ...info, cwd: path } : info))
+      setSessionsVersion(v => v + 1)
+      showToast(`已绑定工作目录：${path}`)
+    } catch (e: any) {
+      showToast(`选择目录失败：${e.message}`)
+    }
+  }, [sessionId, sessionInfo?.cwd, showToast])
+
+  // 新对话 = 草稿态：不请求服务端、不落盘，列表里不出现「新对话」；
+  // 真正发出第一条消息时 send() 才创建会话（分组归属由 draftProjectRef 带过去）
+  const newSession = useCallback((projectId?: string) => {
+    draftProjectRef.current = projectId
+    draftCwdRef.current = ''
+    setDraftCwd('')
+    openSeqRef.current++
+    canvasSessionRef.current = ''
+    localStorage.removeItem('openmods.sid')
+    setSessionId('')
+    setRootSessionId('')
+    setSessionInfo(null)
+    setStreamSince(0)
+    setTurns([])
+    setStats(null)
+    setCanvas(emptyCanvas())
+    setCanvasOrigin(null)
+    setPlayingAnim(null)
+    setBusy(false)
+    setWaiting([])
+    // 新会话默认进入计划模式（与服务端 createSession 的 root 默认一致；MOCK 演示除外）
+    setPlanMode(!health?.mock)
+    setTodos(null)
+    setPermission('ask')
+    setAllowedTools([])
+    setInteractions([])
+    setTerminals([])
+    setTerminalOutput({})
+    setActiveTerminalId(null)
+    lastModelRef.current = null
+    sendToBridge({ type: 'load_bbmodel', model: null })
+  }, [sendToBridge, health?.mock])
 
   const openSubagent = useCallback((childId: string) => {
     if (childId) openSession(childId)
@@ -911,6 +1168,7 @@ export default function App() {
         models={models}
         currentModelId={currentModelId ?? ''}
         refineMode={refineMode}
+        onToggleRefine={() => setRefineMode(r => !r)}
         stats={stats}
         ctxTokens={ctxTokens}
         modelWindow={modelWindow}
@@ -939,6 +1197,9 @@ export default function App() {
         onMcRun={mcRun}
         onMcStop={mcStop}
         onMcExport={mcExport}
+        onOpenSettings={() => setSettingsOpen(true)}
+        sessionCwd={sessionInfo?.cwd ?? draftCwd}
+        onPickCwd={pickSessionCwd}
       />
       <RightDock
         width={dockWidth}
@@ -966,11 +1227,18 @@ export default function App() {
         onIframeReady={onIframeReady}
         busy={busy}
         suggestions={MODELING_SUGGESTIONS}
-        refineMode={refineMode}
-        onRefineToggle={() => setRefineMode(r => !r)}
         onSuggestion={(t) => send(t, 'build')}
         onDownload={download}
         playingAnim={playingAnim}
+        onPlayAnim={playAnim}
+        activeAnimations={activeCanvasTab === 'session' ? canvas.animations : (assetAnims[activeCanvasTab] ?? [])}
+        canvasLoading={canvasLoading}
+        canvasTabs={canvasTabs}
+        activeCanvasTab={activeCanvasTab}
+        sessionCanvasDirty={sessionCanvasDirty}
+        onSwitchCanvasTab={switchCanvasTab}
+        onCloseCanvasTab={closeCanvasTab}
+        onOpenLibrary={() => setLibraryOpen(true)}
         pendingAtts={pendingAtts}
         onAddFiles={addPendingFiles}
         onRemoveDockAtt={(i) => setPendingAtts(prev => prev.filter((_, idx) => idx !== i))}
@@ -992,6 +1260,8 @@ export default function App() {
         terminalShell={terminalShell}
         onSelectTerminal={setActiveTerminalId}
         onKillTerminal={killTerminal}
+        onCloseTerminal={closeTerminal}
+        onCloseAllTerminals={closeAllTerminals}
         onOpenTerminal={openTerminal}
         onTerminalInput={terminalInput}
         planMode={planMode}
@@ -1007,6 +1277,7 @@ export default function App() {
         sessionId={sessionId}
         onClose={() => setLibraryOpen(false)}
         onToast={showToast}
+        onOpenInCanvas={openLibModel}
         onOpenSession={id => {
           // 素材库可能刚建了会话（引用新会话 / 接着改）：先关抽屉再切，随后刷新左栏
           setLibraryOpen(false)

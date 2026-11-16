@@ -1,6 +1,8 @@
 // bb-tools 插件：建模工具集。几何体在服务端 bbmodel 文档上变更，
 // 每次变更后编译并写入会话状态（server 负责 SSE 推送画布更新）。
 import { randomUUID } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, resolve, sep } from 'node:path'
 import type { Plugin, ToolExecContext, ToolDef, ToolResult } from '@openmods/plugin-kit'
 import { createDoc, addCube, addGroup, findGroup, docCounts, outlineText, type BbDoc, type BbAnimation, type BbAnimKeyframe } from './bbmodel.js'
 import { materialListForPrompt, resolveColor } from './materials.js'
@@ -315,6 +317,42 @@ const tools: ToolDef[] = [
       const list = doc.animations ?? []
       if (!list.length) return ok('模型上还没有动画。可用 set_animation 添加。')
       return ok(list.map(a => `- ${a.name}：${a.length}s，${a.loop}，${Object.keys(a.bones).length} 根骨骼`).join('\n'))
+    },
+  },
+  {
+    name: 'canvas_export',
+    description: '把当前画布工程**完整**导出为 Blockbench 项目 JSON 写入会话工作目录：全部分组骨骼与 pivot、每个方块的 from/to/rotation/UV、全部贴图（dataURL）、全部动画关键帧——与用户在画布上看到的 100% 一致。这是把画布模型落地成文件的唯一可靠途径：不要派子代理"抄写"画布（读 193 个方块再吐出来必然截断/失真），不要用原版 item 模型导出（没有骨骼概念，分组/pivot/动画全丢）。导出后用脚本解析这个 JSON 生成模型类/贴图即可。',
+    parameters: {
+      type: 'object',
+      properties: {
+        file_path: { type: 'string', description: '目标文件（相对会话工作目录），默认 canvas-export/<模型名>.json' },
+      },
+    },
+    mutates: true,
+    async execute(args, exec) {
+      const doc = getDoc(exec)
+      if (!doc.elements.length && !(doc.animations ?? []).length) {
+        return { forModel: '画布是空的，没有可导出的内容。', isError: true }
+      }
+      const cwd = exec.session.cwd ?? process.cwd()
+      const defName = `canvas-export/${String(doc.name ?? 'model').replace(/[^\w-]+/g, '_')}.json`
+      const rel = String(args.file_path ?? '').trim() || defName
+      const abs = resolve(cwd, rel)
+      if (!abs.startsWith(resolve(cwd) + sep) && abs !== resolve(cwd)) {
+        return { forModel: `file_path 必须在会话工作目录内（${cwd}）的相对路径。`, isError: true }
+      }
+      mkdirSync(dirname(abs), { recursive: true })
+      const json = JSON.stringify(doc, null, 2)
+      writeFileSync(abs, json, 'utf8')
+      const groups: string[] = []
+      const walk = (nodes: any[]) => { for (const n of nodes) if (typeof n !== 'string') { groups.push(n.name); walk(n.children ?? []) } }
+      walk(doc.outliner ?? [])
+      const kb = Math.round(Buffer.byteLength(json) / 1024)
+      return ok([
+        `已导出画布工程 → ${rel}（${kb} KB）`,
+        `内容：${doc.elements.length} 个方块、${groups.length} 个分组骨骼、${doc.textures.length} 张贴图（dataURL 内嵌）、${doc.animations.length} 套动画关键帧。`,
+        `骨骼树（outliner）、每块的 from/to/rotation、贴图引用与 UV、动画 bones 关键帧全部在内，与画布所见一致。直接解析此文件生成模型/贴图，不要再派子代理读画布。`,
+      ].join('\n'))
     },
   },
 ]

@@ -61,7 +61,8 @@ export const plugin: Plugin = {
             forModel: `已在后台终端 ${t.id} 启动（cwd: ${t.cwd}）。用 terminal_read 读输出、terminal_kill 结束；右侧「终端」标签能实时看到。`,
           }
         }
-        const t = ctx.terminals.open({ sessionId: sid, command, cwd, title: clip(String(args.description ?? command), 40) })
+        // 前台一次性命令：退出后不进终端列表（前端标签不堆积），输出仍可直接读到
+        const t = ctx.terminals.open({ sessionId: sid, command, cwd, title: clip(String(args.description ?? command), 40), ephemeral: true })
         const timeout = Math.min(MAX_TIMEOUT, Math.max(1000, Number(args.timeoutMs) || DEFAULT_TIMEOUT))
         const r = await ctx.terminals.wait(sid, t.id, timeout)
         const out = ctx.terminals.output(sid, t.id, TAIL_CHARS) ?? ''

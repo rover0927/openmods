@@ -16,6 +16,10 @@ export function TerminalPane(props: {
   shell?: string
   onSelect: (id: string) => void
   onKill: (id: string) => void
+  /** 关闭单个终端标签（运行中会先结束进程） */
+  onClose: (id: string) => void
+  /** 全部清空终端标签 */
+  onCloseAll: () => void
   /** command 为空 = 开交互 shell */
   onOpen: (command: string) => void
   onInput: (id: string, text: string) => void
@@ -67,6 +71,12 @@ export function TerminalPane(props: {
             <span className={`state-dot ${t.status === 'running' ? 'ongoing' : 'idle'}`} />
             <span className="term-tab-id">{t.id}</span>
             <span className="term-tab-title">{t.title || t.command || 'shell'}</span>
+            <span
+              className="term-tab-close"
+              role="button"
+              title="关闭这个终端标签（运行中会先结束进程）"
+              onClick={e => { e.stopPropagation(); props.onClose(t.id) }}
+            >✕</span>
           </button>
         ))}
         <button
@@ -74,6 +84,11 @@ export function TerminalPane(props: {
           title="新建一个 shell 终端"
           onClick={() => props.onOpen('')}
         >＋</button>
+        <button
+          className="term-clear"
+          title="清空所有终端标签（运行中的会先结束）"
+          onClick={props.onCloseAll}
+        >全部清空</button>
       </div>
 
       {active && (

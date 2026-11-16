@@ -49,6 +49,13 @@ function ComposerDock(props: {
 }
 
 // 中央主区的「对话」视图 —— 消息流 + composer + dock 状态条（建模元素在右侧拓展）
+/** 目录名：欢迎区只显示最后一段，完整路径放 title */
+function baseName(p: string): string {
+  const s = String(p ?? '').replace(/[\\/]+$/, '')
+  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'))
+  return i >= 0 ? s.slice(i + 1) : s
+}
+
 export function SessionView(props: {
   turns: TurnEntry[]
   busy: boolean
@@ -96,23 +103,57 @@ export function SessionView(props: {
   pendingAsks: number
   onTogglePlan: () => void
   onTogglePermission: () => void
+  /** 切换「完善想法」模式（原画布下方按钮迁入输入区） */
+  onToggleRefine: () => void
+  /** 会话绑定的工作目录（root 会话欢迎区显示/更换） */
+  sessionCwd?: string
+  onPickCwd: () => void
 }) {
   const {
     turns, busy, waiting, streamChars, elapsedSec, thinkTail, models, currentModelId, refineMode, pendingAtts,
     onAddFiles, onRemoveAtt, stats, ctxTokens, modelWindow, ctxBreakdown, profiles, agentProfile, onPickProfile,
     iframeReady, onPickModel, onSend, onStop,
     onOpenSubagent, onStopSubagent, isSubagent, subagentName, subagents, inlineSubagents, enterToSend,
-    planMode, permission, pendingAsks, onTogglePlan, onTogglePermission,
+    planMode, permission, pendingAsks, onTogglePlan, onTogglePermission, onToggleRefine,
+    sessionCwd, onPickCwd,
   } = props
   const empty = turns.length === 0
   const currentModel = models.find(m => m.id === currentModelId)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [text, setText] = useState('')
+  const [slashIdx, setSlashIdx] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
   /** 等待子代理时锁输入：会话还在跑这一轮，用户不能插话（服务端同样 409） */
   const waitingLocked = waiting.length > 0
 
   const askLocked = pendingAsks > 0
+  /** 「/」命令：原输入区并排的「完善想法」「三视图」两个按钮收进斜杠菜单 */
+  const slashCommands = [
+    {
+      id: 'refine', name: '完善想法', keys: ['refine', 'wanshan'], on: refineMode,
+      hint: '描述想法，AI 先打磨成建模描述再上画布',
+      run: onToggleRefine,
+    },
+    {
+      id: 'views', name: '三视图', keys: ['views', 'image', 'sanshitu'], on: false,
+      hint: '附参考图（三视图等），随下一条消息发给 AI',
+      run: () => fileRef.current?.click(),
+    },
+  ]
+  const slashQuery = text.startsWith('/') ? text.slice(1) : null
+  const slashItems = slashQuery === null || /\s/.test(slashQuery)
+    ? []
+    : slashCommands.filter(c =>
+        !slashQuery
+        || c.name.includes(slashQuery)
+        || c.keys.some(k => k.includes(slashQuery.toLowerCase())))
+  const slashOpen = slashItems.length > 0
+  const slashActive = Math.min(slashIdx, Math.max(slashItems.length - 1, 0))
+  const runSlash = (cmd: typeof slashCommands[number]) => {
+    setText('')
+    setSlashIdx(0)
+    cmd.run()
+  }
   const submit = () => {
     const t = text.trim()
     if (!t || busy || waitingLocked || askLocked) return
@@ -170,6 +211,17 @@ export function SessionView(props: {
                   ? '这个子代理属于当前会话：它和主代理、其它子代理在同一块画布上工作，右侧画布随改动实时更新。这里是它的对话记录，可以继续给它派活，或回到主会话查看整体。'
                   : '描述你想要的模型，AI 会派子代理在当前会话里并行完成，改动实时出现在右侧画布上。'}
               </p>
+              {!isSubagent && (
+                <button
+                  className="welcome-cwd"
+                  title={sessionCwd ? `工作目录：${sessionCwd}\n点击更换` : '选择一个本地文件夹作为会话的工作目录'}
+                  onClick={onPickCwd}
+                >
+                  <span className="welcome-cwd-icon" aria-hidden="true">▣</span>
+                  <span className="welcome-cwd-name">{sessionCwd ? baseName(sessionCwd) : '绑定工作目录'}</span>
+                  <span className="welcome-cwd-action">{sessionCwd ? '更换' : '选择'}</span>
+                </button>
+              )}
             </div>
           )}
           {turns.map((t, i) => (
@@ -224,11 +276,35 @@ export function SessionView(props: {
               ? `等待 ${waiting.length} 个子代理完成中…（结算后会自动汇总，不能插话）`
               : isSubagent
                 ? '给这个子代理继续下达指令（画布与主会话共用）'
-                : refineMode ? '描述你的想法，AI 帮你完善…' : '输入消息，可粘贴图片'}
+                : refineMode ? '描述你的想法，AI 帮你完善…' : '输入消息，可粘贴图片 · 输入 / 调用命令'}
             value={text}
-            onChange={e => setText(e.target.value)}
+            onChange={e => { setText(e.target.value); setSlashIdx(0) }}
             onPaste={onPaste}
             onKeyDown={e => {
+              // 「/」命令菜单优先：↑↓ 选择，Enter/Tab 执行，Esc 取消（不发送消息）
+              if (slashOpen) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setSlashIdx(i => (i + 1) % slashItems.length)
+                  return
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setSlashIdx(i => (i - 1 + slashItems.length) % slashItems.length)
+                  return
+                }
+                if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+                  e.preventDefault()
+                  runSlash(slashItems[slashActive])
+                  return
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setText('')
+                  setSlashIdx(0)
+                  return
+                }
+              }
               const withMod = e.metaKey || e.ctrlKey
               const shouldSend = enterToSend
                 ? e.key === 'Enter' && !e.shiftKey && !withMod
@@ -239,6 +315,23 @@ export function SessionView(props: {
               }
             }}
           />
+          {slashOpen && (
+            <div className="slash-menu" role="listbox">
+              <div className="slash-menu-title">命令 · ↑↓ 选择 · Enter 执行 · Esc 取消</div>
+              {slashItems.map((c, i) => (
+                <button
+                  key={c.id}
+                  className={`slash-item ${i === slashActive ? 'on' : ''}`}
+                  onMouseEnter={() => setSlashIdx(i)}
+                  onClick={() => runSlash(c)}
+                >
+                  <span className="slash-name">/{c.name}</span>
+                  <span className="slash-hint">{c.hint}</span>
+                  {c.on && <span className="slash-state">已开启</span>}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="input-row">
             <button className="icon-btn" title="附图（支持 Ctrl+V 粘贴）" onClick={() => fileRef.current?.click()}>＋</button>
             <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={e => { onAddFiles(e.target.files); e.target.value = '' }} />

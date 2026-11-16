@@ -48,6 +48,17 @@ Forge 47.x 与 1.20.1 严格对应；换 Forge 小版本只改 `gradle.propertie
 
 `gradle.properties` 的 Mod Properties（`mod_name` / `mod_description` / `mod_authors`）**只能写 ASCII**：Java Properties 按 ISO-8859-1 读取，中文经 `${mod_name}` 展开后在 mod 列表里全变 `?`。展示名用英文（如 `Basketball`），作者默认 `openmodsai`；名字与简介保持简洁，由你按 mod 内容定义。
 
+## 2.5 脚手架与现成资源（别手搓框架）
+
+- `mc_scaffold` 用内置的官方 MDK 模板（`plugins/mcdev/template/forge-1.20.1`）建工程，`build.gradle` / `settings.gradle` / wrapper / `gradle.properties` 都是现成的，**不要手写或改动**它们。
+- 会话目录里已有 `build.gradle` 时直接沿用，不要重复 scaffold；`name` 可以传目录名或绝对路径，目标目录必须为空；建完不要再用 `mv` 搬文件。
+- 本机有可直接复制的参考工程（`mc_scaffold` 的 `from=` 参数，工具说明里会列出可选名字）：
+  - `reddragon-mod`：龙类完整实现——实体、Goals/AI、模型、渲染器、动画、`WingsLayer`、`biome_modifier` 生成；
+  - `basketball-mod`：实体/方块/物品的注册与资源示例。
+  `from` 会把参考工程的源码与资源整棵复制过来，并自动替换包名、modid、主类名；复制后按新需求删改，不要从空文件开始重建。
+- Gradle 缓存默认共享已预热的 `mincraft-maker/projects/.gradle-home`（约 1.3G，含 `caches/modules-2`、`forge_gradle`、wrapper 发行版），不要再让用户重新下载依赖；需要覆盖时用 `OPENMODS_GRADLE_HOME`。
+- 构建输出里出现 `Connection refused` / `SSL` / `Could not resolve` / `Read timed out` 属于镜像或网络问题：换网络/源或告知用户，**不要**因此修改 `build.gradle`、`settings.gradle`、wrapper 或平台版本；只有 javac 编译错误才改代码。
+
 ## 3. 入口与注册
 
 ```java

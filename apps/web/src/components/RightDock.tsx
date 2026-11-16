@@ -48,15 +48,26 @@ export function RightDock(props: {
   canvas: CanvasState
   /** 当前画布所属会话（查看子代理时显示其名称） */
   canvasOwner?: string
+  /** 画布多开标签：'session' = 会话画布，其余 = 素材库打开的只读标签 */
+  canvasTabs: { assetId: string; name: string }[]
+  activeCanvasTab: 'session' | string
+  sessionCanvasDirty: boolean
+  onSwitchCanvasTab: (tab: 'session' | string) => void
+  onCloseCanvasTab: (assetId: string) => void
+  onOpenLibrary: () => void
   iframeRef: RefObject<HTMLIFrameElement>
   onIframeReady: () => void
   busy: boolean
   suggestions: string[]
-  refineMode: boolean
-  onRefineToggle: () => void
   onSuggestion: (text: string) => void
   onDownload: () => void
   playingAnim: string | null
+  /** 播放/停止动画（统一入口：App 记意图，失同步可自动重载重试） */
+  onPlayAnim: (name: string | null) => void
+  /** 当前画布标签的动画列表（会话画布 = canvas.animations，素材标签 = App 记录的列表） */
+  activeAnimations: CanvasState['animations']
+  /** 画布模型还在加载：只在这种情况下禁用动画按钮（不因会话 busy 整体禁用） */
+  canvasLoading: boolean
   pendingAtts: { name: string; dataUrl: string }[]
   onAddFiles: (files: FileList | null) => void
   onRemoveDockAtt: (idx: number) => void
@@ -81,6 +92,10 @@ export function RightDock(props: {
   terminalShell?: string
   onSelectTerminal: (id: string) => void
   onKillTerminal: (id: string) => void
+  /** 关闭单个终端标签（运行中会先结束进程） */
+  onCloseTerminal: (id: string) => void
+  /** 全部清空终端标签（运行中的先结束） */
+  onCloseAllTerminals: () => void
   onOpenTerminal: (command: string) => void
   onTerminalInput: (id: string, text: string) => void
   /** 计划面板 */
@@ -92,7 +107,6 @@ export function RightDock(props: {
   onPermission: (policy: 'ask' | 'auto') => void
   onResetAllowed: () => void
 }) {
-  const fileRef = useRef<HTMLInputElement>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
   if (props.collapsed) {
@@ -178,30 +192,53 @@ export function RightDock(props: {
 
         {active === 'canvas' && (
           <div className="dock-pane">
+            {/* 画布多开：会话画布 + 素材库打开的模型（只读预览，互不覆盖） */}
+            <div className="canvas-tabs">
+              <button
+                className={`canvas-tab ${props.activeCanvasTab === 'session' ? 'active' : ''}`}
+                onClick={() => props.onSwitchCanvasTab('session')}
+                title={props.canvas.modelName || '会话画布（AI 工具的工作区）'}
+              >
+                {props.sessionCanvasDirty && props.activeCanvasTab !== 'session' && <span className="canvas-tab-dirty" title="会话画布有新改动">●</span>}
+                <span className="canvas-tab-label">{props.canvas.modelName || '会话画布'}</span>
+              </button>
+              {props.canvasTabs.map(t => (
+                <button
+                  key={t.assetId}
+                  className={`canvas-tab ${props.activeCanvasTab === t.assetId ? 'active' : ''}`}
+                  onClick={() => props.onSwitchCanvasTab(t.assetId)}
+                  title={`素材：${t.name}（只读预览；要修改请用素材库的「接着改」）`}
+                >
+                  <span className="canvas-tab-label">{t.name}</span>
+                  <span
+                    className="canvas-tab-close"
+                    onClick={e => { e.stopPropagation(); props.onCloseCanvasTab(t.assetId) }}
+                    title="关闭标签"
+                  >✕</span>
+                </button>
+              ))}
+              <button className="canvas-tab add" onClick={props.onOpenLibrary} title="从素材库打开模型（新标签，不影响会话画布）">＋</button>
+            </div>
             <div className="dock-canvas">
               <CanvasPane canvas={props.canvas} iframeRef={props.iframeRef} onIframeReady={props.onIframeReady} />
             </div>
-            {(props.canvas.animations?.length ?? 0) > 0 && (
+            {props.activeAnimations.length > 0 && (
               <div className="anim-strip">
                 <span className="anim-label dim">动画</span>
                 <div className="anim-chips">
-                  {props.canvas.animations.map(a => (
+                  {props.activeAnimations.map(a => (
                     <button
                       key={a.name}
                       className={`anim-chip ${props.playingAnim === a.name ? 'playing' : ''}`}
-                      disabled={props.busy}
+                      disabled={props.canvasLoading}
                       title={`${a.length}s · ${a.loop}${props.playingAnim === a.name ? '（点击停止）' : ''}`}
-                      onClick={() => {
-                        const w = props.iframeRef.current?.contentWindow
-                        if (props.playingAnim === a.name) w?.postMessage({ type: 'stop_animation' }, '*')
-                        else w?.postMessage({ type: 'play_animation', name: a.name }, '*')
-                      }}
+                      onClick={() => props.onPlayAnim(props.playingAnim === a.name ? null : a.name)}
                     >
                       {props.playingAnim === a.name ? '▶ ' : ''}{a.name}
                     </button>
                   ))}
                   {props.playingAnim && (
-                    <button className="anim-chip stop" onClick={() => props.iframeRef.current?.contentWindow?.postMessage({ type: 'stop_animation' }, '*')}>■ 停止</button>
+                    <button className="anim-chip stop" onClick={() => props.onPlayAnim(null)}>■ 停止</button>
                   )}
                 </div>
               </div>
@@ -214,20 +251,6 @@ export function RightDock(props: {
                   ))}
                 </div>
               )}
-              <div className="quick-actions">
-                <button
-                  className={`mode ${props.refineMode ? 'active' : ''}`}
-                  onClick={props.onRefineToggle}
-                  title="开启后在中间输入框描述想法，AI 会先帮你打磨成建模描述"
-                >
-                  ✦ 帮我完善想法{props.refineMode ? '（已开启）' : ''}
-                </button>
-                <button className="icon-btn wide" title="附参考图（三视图），随下一条消息发送" onClick={() => fileRef.current?.click()}>三视图</button>
-                <input
-                  ref={fileRef} type="file" accept="image/*" multiple hidden
-                  onChange={e => { props.onAddFiles(e.target.files); e.target.value = '' }}
-                />
-              </div>
               {props.pendingAtts.length > 0 && (
                 <div className="attach-row" style={{ padding: 0 }}>
                   {props.pendingAtts.map((a, i) => (
@@ -239,7 +262,7 @@ export function RightDock(props: {
                 </div>
               )}
               <div className="input-foot dim">
-                在中间输入框输入并回车发送{props.refineMode ? '；完善想法模式开启中' : ''}。{props.modelTagline}
+                在中间输入框输入并回车发送。{props.modelTagline}
               </div>
             </div>
           </div>
@@ -296,6 +319,8 @@ export function RightDock(props: {
             shell={props.terminalShell}
             onSelect={props.onSelectTerminal}
             onKill={props.onKillTerminal}
+            onClose={props.onCloseTerminal}
+            onCloseAll={props.onCloseAllTerminals}
             onOpen={props.onOpenTerminal}
             onInput={props.onTerminalInput}
           />

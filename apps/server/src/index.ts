@@ -21,6 +21,7 @@ import { probeWeb, proxyWeb } from './webview.js'
 import { createInteractionHub, type InteractionReply, type PendingInteraction } from './interaction.js'
 import { createTerminalManager } from './terminals.js'
 import { projectStats } from '../../../plugins/stats/projection.js'
+import { compile as compileBb } from '../../../plugins/bb-tools/bbmodel.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '../../..')
@@ -34,6 +35,19 @@ const DEFAULT_CWD = process.env.OPENMODS_MC_ROOT
   ?? (existsSync(join(ROOT, '..', 'mincraft-maker'))
     ? join(ROOT, '..', 'mincraft-maker', 'projects')
     : join(ROOT, 'data', 'mcprojects'))
+
+/**
+ * 未显式绑定目录的新会话工作区：<ROOT>/data/workspaces/<sessionId>。
+ * 这样两个会话各自 mc_scaffold / gradlew build 互不覆盖（历史会话仍用自己 meta 里的 cwd）。
+ */
+const WORKSPACES_DIR = join(ROOT, 'data', 'workspaces')
+
+/** 取（并确保存在）某个会话的独立工作区 */
+function sessionWorkspace(sessionId: string): string {
+  const dir = join(WORKSPACES_DIR, sessionId)
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
 
 // ---- .env 简易加载（无依赖） ----
 try {
@@ -206,8 +220,13 @@ const AGENT_PROFILES: Record<string, import('@openmods/agent-core').AgentProfile
       + '建模/动画任务一律派发给建模子代理（spawn_modeling_subagent），你不亲自建模。子代理属于当前会话：它们在同一个工作上下文里并行工作，'
       + '**共用用户正在看的这块画布**，改动实时出现在画布上，不会另开画布或新会话。派发完就结束这一轮，不要轮询、不要反复调 list_subagents 等结果：'
       + '主会话会进入等待态（这期间用户不能插话），最后一只子代理结算时系统会自动开一轮汇总回合，把各子代理的收尾汇报交给你。'
-      + '到了汇总回合，你必须先核对画布（list_outline / list_animations）、修补缺口或冲突，再向用户汇报成果，不能只说"已完成"。',
-    toolFilter: ['load_skill', 'spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOLS],
+      + '到了汇总回合，你必须先核对画布（list_outline / list_animations）、修补缺口或冲突，修补完**用 ask_user_question 请用户验收画布成果**（选项至少含：验收通过继续 / 要改哪里 / 重做某部分）。'
+      + '用户明确通过之前，不要开始下一阶段（导出模型、写代码、构建都不行）——用户正看着画布，只有他能判断"像不像"。不能只说"已完成"。\n'
+      + '不确定、没把握的事：先做一次小成本验证（读一次文件/试一次工具）；同一件事连续失败两次就停下来 ask_user_question 问用户，把你试过什么、看到什么报错讲清楚，让用户拍板——'
+      + '不要连续盲试烧掉大半个回合，更不要在没把握的方向上重做已完成的成果（重头再来的代价比问一句大得多）。\n'
+      + '画布数据落地：验收通过后用 canvas_export 把完整画布工程一次导出成 JSON（分组骨骼/pivot/方块 UV/贴图/动画全在内），再用脚本解析生成代码。'
+      + '**严禁**派子代理"抄写"画布（读几十上百个方块再吐出来必然截断失真）、严禁让子代理把几何坐标当文字汇报——那是用整个回合换一份有损数据。',
+    toolFilter: ['load_skill', 'spawn_modeling_subagent', 'list_subagents', 'canvas_export', ...WORKSPACE_TOOLS],
     skills: PROFILE_SKILLS.lead,
   },
   // 1.20.1 Forge 模组开发主代理：工程面工具（mcdev 插件）+ 完整工作台 + 建模委派。
@@ -222,17 +241,24 @@ const AGENT_PROFILES: Record<string, import('@openmods/agent-core').AgentProfile
       + '工作流固定：\n'
       + '1) 先 load_skill("minecraft-forge-1.20.1") 拿到工具链与 API 约束；写代码前需要精确签名就读 skills/minecraft-forge-1.20.1/references/forge-1.20.1-api.md，不要凭记忆写。\n'
       + '2) 核对需求：modid、Java 包名、要加的东西（物品/方块/实体/命令/玩法）。信息不足时用 ask_user_question 一次问全，别反复问。\n'
-      + '3) mc_scaffold 建工程（官方 MDK 模板 + 国内镜像已内置），再用 read/edit/write（或 mc_list/mc_read/mc_write）写 Java 与资源。\n'
-      + '4) 造型（物品/方块/生物外观）派给 spawn_modeling_subagent；派发完结束这一轮，等系统汇总回合再用 mc_export_model 把画布模型导出成 models/item + 贴图。不要自己手搓几何。\n'
-      + '5) 构建用 mc_gradle task=build；要验证能否进游戏就用 mc_gradle task=runClient background=true，'
+      + '3) 建工程：先看会话目录里是否已有工程（存在 build.gradle 就直接沿用，不要重复 scaffold）。目录为空才用 mc_scaffold：'
+      + 'name 只传目录名或绝对路径，目标必须是空目录，建完不要再手工 mv 文件。做龙/实体/方块等有现成示例时，'
+      + '用 mc_scaffold 的 from=参考工程（可用项见工具说明）复制骨架，再改包名/modid，不要从零手搓框架。\n'
+      + '   然后用 read/edit/write（或 mc_list/mc_read/mc_write）改 Java 与资源。\n'
+      + '4) 构建失败先分流：出现 Connection refused / SSL / Could not resolve / Read timed out 是镜像或网络问题——'
+      + '告知用户或换网络/源，不要改代码，也不要动 build.gradle、settings.gradle、gradle wrapper 或平台版本；'
+      + '只有编译错误才按报错改代码。本机已有预热 Gradle 缓存，不要建议用户重新下载依赖。\n'
+      + '5) 造型（物品/方块/生物外观）派给 spawn_modeling_subagent；派发完结束这一轮，等系统汇总回合。汇总回合先请用户验收画布模型（ask_user_question：通过 / 要改哪里 / 重做），用户通过后用 canvas_export 把完整画布工程导出成 JSON（分组骨骼/pivot/UV/贴图/动画全在内），再用脚本解析生成 Java 模型类与贴图——这是唯一不失真的落地路径。mc_export_model 只产原版 item 模型（无骨骼无动画），仅限导出简单物品外观。不要自己手搓几何，更不要派子代理抄画布。\n'
+      + '   若 canvas_export 产物解析后发现与画布不符（不太可能），先核对解析代码再考虑其它路径；仍不行就 ask_user_question 问用户怎么落地（比如让用户从 Blockbench 手动保存 .bbmodel），不要反复盲试、更不要据此重做模型。\n'
+      + '6) 构建用 mc_gradle task=build；要验证能否进游戏就用 mc_gradle task=runClient background=true，'
       + '   然后 mc_log 读启动标记（Sound engine started / Forge mod loading），失败先看崩溃报告再改。\n'
-      + '6) 收尾汇报：改了哪些文件、build 是否通过、客户端是否真的起来了、还有哪些没验证。\n'
+      + '7) 收尾汇报：改了哪些文件、build 是否通过、客户端是否真的起来了、还有哪些没验证。\n'
       + '工具名以本清单为准，只能调用实际注册的工具；没有 mc_export、mc_edit、mc_canvas_outline、mc_list_outline、export_model、save_model 这些工具——'
-      + '导出画布模型叫 mc_export_model，改工程文件用 edit/write。拿不准就先看函数目录（工具定义），不要凭名字猜。\n'
+      + '画布工程整体导出叫 canvas_export（含骨骼/贴图/动画），导出原版 item 模型才叫 mc_export_model，改工程文件用 edit/write。拿不准就先看函数目录（工具定义），不要凭名字猜。\n'
       + '铁律：不改 MC 版本、不换加载器、不动 gradle.properties 里的 minecraft_version/forge_version；'
       + '资源路径全小写；每次写完 Java 都要重新 build，不能只靠肉眼检查。',
     toolFilter: [
-      'load_skill', 'mc_scaffold', 'mc_list', 'mc_read', 'mc_write', 'mc_gradle', 'mc_log', 'mc_export_model',
+      'load_skill', 'mc_scaffold', 'mc_list', 'mc_read', 'mc_write', 'mc_gradle', 'mc_log', 'mc_export_model', 'canvas_export',
       'spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOLS,
     ],
     skills: PROFILE_SKILLS.mcmod,
@@ -240,7 +266,7 @@ const AGENT_PROFILES: Record<string, import('@openmods/agent-core').AgentProfile
   modeling: {
     id: 'modeling',
     name: '建模子代理（modeling）',
-    prompt: '你是建模子代理（modeling）：执行主代理派发的建模/动画任务。你工作在**当前会话的画布**上（与主代理、其它子代理共用同一份工程），你的每次修改都会实时显示给用户，因此要只做自己负责的部分、增量追加，不要清空或重建整个工程。动手前先 list_outline 看清已有分组与部件：已有同名骨骼（如 head、body）就直接往里加，用 place_cubes 的 group 参数指定父分组；确实需要新骨骼时才 add_group。除非主代理明确要求重做，否则不要调用 create_model（它会清空共享画布）。收尾一次简短总结（你新增/修改了什么、部件数、画布现状），不与用户寒暄，不派发任务。',
+    prompt: '你是建模子代理（modeling）：执行主代理派发的建模/动画任务。你工作在**当前会话的画布**上（与主代理、其它子代理共用同一份工程），你的每次修改都会实时显示给用户，因此要只做自己负责的部分、增量追加，不要清空或重建整个工程。动手前先 list_outline 看清已有分组与部件：已有同名骨骼（如 head、body）就直接往里加，用 place_cubes 的 group 参数指定父分组；确实需要新骨骼时才 add_group。除非主代理明确要求重做，否则不要调用 create_model（它会清空共享画布）。收尾一次简短总结（你新增/修改了什么、部件数、画布现状），不与用户寒暄，不派发任务。总结最后一行固定写「验收点：……」——列出你最没把握、最需要用户亲自确认的部位/动画/比例，供主代理在向用户请求验收时转述；自己拿不准的设计决定不要硬猜，在总结里写成待确认项。',
     // 子代理是无人值守的画布工作者：不给它终端/授权/提问/计划，避免等待一个不会有人回答的弹窗
     toolExclude: [
       'spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOLS,
@@ -503,12 +529,14 @@ interface CreateSessionOptions {  parentId?: string
   modelId?: string
   /** 会话所属画布：子代理在这里继承父会话的画布（等价 dsh 子会话继承 cwd） */
   canvasId?: string
-  /** 会话绑定的本地工作目录；缺省落 DEFAULT_CWD，子代理继承父会话 */
+  /** 会话绑定的本地工作目录；缺省给新会话建独立工作区（data/workspaces/<id>），子代理继承父会话 */
   cwd?: string
 }
 
 function createSession(id = randomUUID().slice(0, 8), opts: CreateSessionOptions = {}): SessionEntry {
   if (!isValidSessionId(id)) throw new Error('非法会话 id')
+  // 是否是从磁盘恢复的老会话：没有 meta.cwd 的历史会话必须继续用 DEFAULT_CWD（不迁移工作区）
+  const existed = sessionStore.exists(id)
   // 先占位空日志 + 读到旧 meta：这样"新建后刷新/重启"仍然是一个存在的会话
   sessionStore.ensureLogFile(id)
   const meta = sessionStore.readMeta(id)
@@ -521,9 +549,10 @@ function createSession(id = randomUUID().slice(0, 8), opts: CreateSessionOptions
   // 画布归属：durable 值优先，其次继承父会话，最后才是自己——永不产生"第二个 workspace"
   const canvasId = meta.canvasId ?? opts.canvasId ?? (mode === 'root' ? id : canvas.idOf(parentId ?? id))
   canvas.adopt(id, canvasId)
-  // 工作目录：durable 值优先 → 创建参数 → 父会话继承 → 全局默认（MC_PROJECTS_ROOT 之上）
+  // 工作目录：durable 值优先 → 创建参数 → 父会话继承 → 新会话独立工作区（老会话保持 DEFAULT_CWD）
   const parentCwd = parentId ? (sessions.get(parentId)?.cwd ?? sessionStore.readMeta(parentId).cwd) : undefined
-  const cwd = meta.cwd ?? opts.cwd ?? parentCwd ?? DEFAULT_CWD
+  const cwd = meta.cwd ?? opts.cwd ?? parentCwd
+    ?? (existed ? DEFAULT_CWD : (mode === 'root' ? sessionWorkspace(id) : DEFAULT_CWD))
 
   // —— 协作状态恢复：meta 优先；老日志里可能只有 plan/mode、todo/write 事件 ——
   const lastEvent = (t: string) => {
@@ -534,7 +563,9 @@ function createSession(id = randomUUID().slice(0, 8), opts: CreateSessionOptions
   const loggedPlan = lastEvent('plan/mode')?.active
   const loggedTodos = lastEvent('todo/write')?.todos
   const coop: CoopState = {
-    planMode: typeof meta.planMode === 'boolean' ? meta.planMode : (loggedPlan ?? false),
+    // 计划模式：meta 优先；老日志只有 plan/mode 事件；都没有时 root 会话默认开启
+    // （子代理要写画布，默认关闭；MOCK 离线演示是脚本化流程、没有计划评审环节，也不默认开启）
+    planMode: typeof meta.planMode === 'boolean' ? meta.planMode : (loggedPlan ?? (mode === 'root' && !MOCK)),
     todos: meta.todos !== undefined ? (meta.todos ?? null) : (loggedTodos ?? null),
     permission: meta.permission === 'auto' ? 'auto' : 'ask',
     allowedTools: new Set(Array.isArray(meta.allowedTools) ? meta.allowedTools.map(String) : []),
@@ -924,7 +955,8 @@ function formatSettlementPrompt(batch: SettledChild[]): string {
     '[runtime] 子代理已全部结算，这一轮是自动开启的汇总回合。收尾前必须完成验收：',
     '1) 用 list_outline / list_animations 核对画布现状（部件数、贴图、动画、分组命名），确认每个子代理负责的部分都在；',
     '2) 有重叠部件、命名冲突、漏做或明显错误就直接修（只补缺口，不要重做整块，更不要 create_model）；',
-    '3) 最后向用户汇报：每个子代理做了什么、画布最终状态、还有什么没完成。不要只说"已完成"。',
+    '3) 修补完用 ask_user_question **请用户验收**：用户正看着画布，只有他能判断像不像。选项至少含「验收通过，继续下一步 / 要改（用户说明哪里）/ 重做某部分」。用户通过之前不要进入下一阶段（导出、写代码、构建都不行）。',
+    '4) 汇报里写清：每个子代理做了什么、画布最终状态、你没把握的点（有就直接在提问里一并问，不要自己猜）。落地画布数据用 canvas_export 一次导出成 JSON，严禁派子代理"抄写"画布或让子代理用文字汇报几何坐标。',
   )
   return parts.join('\n')
 }
@@ -947,8 +979,9 @@ function startSubagent(parent: SessionEntry, input: { description: string; promp
   const id = randomUUID().slice(0, 8)
   const child = createSession(id, {
     parentId: parent.id,
-    // 子代理继承父会话的画布（dsh：childSessionMeta 带上 parentHeader.cwd）
+    // 子代理继承父会话的画布与工作区（dsh：childSessionMeta 带上 parentHeader.cwd）
     canvasId: parent.canvasId,
+    cwd: parent.cwd,
     agentName: name,
     description: input.description,
     modelId: parent.runtime.currentModelId,
@@ -1038,10 +1071,7 @@ async function runSessionTurn(
     }
     persistMeta(s)
     if (failure) s.sse.send('error', { message: failure.message })
-    s.sse.send('stats', {
-      ...stats,
-      ...contextFigures(s),
-    })
+    s.sse.send('stats', statsFrame(s))
     s.sse.send('done', { text: result?.text ?? '', aborted: result?.aborted ?? false })
     s.sse.endTurn()
     const parent = s.parentId ? sessions.get(s.parentId) : undefined
@@ -1057,10 +1087,7 @@ async function runSessionTurn(
   if (failure) {
     s.sse.send('error', { message: failure.message })
   } else {
-    s.sse.send('stats', {
-      ...projectStats(s.log.all()),
-      ...contextFigures(s),
-    })
+    s.sse.send('stats', statsFrame(s))
     s.sse.send('done', { text: result?.text ?? '', aborted: result?.aborted ?? false })
   }
   s.sse.endTurn()
@@ -1099,6 +1126,21 @@ function contextFigures(s: SessionEntry) {
   }
 }
 
+/** stats + context 三件套，并把 tokenSplit 三段从 contextBreakdown 回填。
+ *  REST /stats 与所有 SSE stats 帧都必须走这里：日志投影里 system/tools/message
+ *  恒为 0（日志没有拆分），只带旁路 contextBreakdown 的话，前端 SSE 帧一覆盖就把
+ *  「系统提示词/工具定义/对话内容」打回 0k。 */
+function statsFrame(s: SessionEntry) {
+  const stats = projectStats(s.log.all())
+  const figures = contextFigures(s)
+  if (figures.contextBreakdown) {
+    stats.context.tokenSplit.system = figures.contextBreakdown.systemTokens
+    stats.context.tokenSplit.tools = figures.contextBreakdown.toolsTokens
+    stats.context.tokenSplit.message = figures.contextBreakdown.messageTokens
+  }
+  return { stats, ...figures }
+}
+
 // ---- 内部事件 → SSE 桥 ----
 // 画布变更不再由 server 手动 fan-out：CanvasService 是唯一权威，一次 commit 广播一次，
 // 每条 SSE 连接自己按 canvasId 过滤（与 dsh 的事件总线 + 会话投影同构）。
@@ -1106,10 +1148,7 @@ bus.on('compaction/done', (data: any) => {
   const s = sessions.get(data.sessionId)
   if (!s) return
   s.sse.send('compaction', data)
-  s.sse.send('stats', {
-    ...projectStats(s.log.all()),
-    ...contextFigures(s),
-  })
+  s.sse.send('stats', statsFrame(s))
 })
 
 // ---- Fastify ----
@@ -1374,6 +1413,8 @@ app.post('/api/settings/discover-models', async (req, reply) => {
 
 // ---- 会话 ----
 app.post('/api/sessions', async (req, reply) => {
+  // 先清一遍历史空会话：点「新对话」不再立即建会话（前端惰性），但旧客户端/残留还是会产生
+  pruneEmptySessions()
   const body = (req.body ?? {}) as { projectId?: string; cwd?: string }
   // dsh 语义：在有关联目录的分组下新建会话，继承该分组的 cwd（显式 cwd 优先）
   // 必须在 createSession 之前解析——cwd 在会话创建时就要定下来并落 meta
@@ -1433,6 +1474,30 @@ app.get('/api/sessions', async (req) => {
   return { sessions: filtered.sort((a, b) => b.updatedAt - a.updatedAt), archivedView }
 })
 
+/**
+ * 清理「只建没聊」的空会话：日志里没有任何用户消息、画布没模型、没绑素材的 root 会话，
+ * 直接从磁盘删掉（jsonl + meta + bbdoc）——用户点 N 次「新对话」不该留下 N 条「新对话」。
+ * 只删磁盘：内存里本次运行打开/新建的会话一律跳过（正在用），子代理会话不归这里管。
+ */
+function pruneEmptySessions(): number {
+  let n = 0
+  for (const row of sessionStore.list()) {
+    if (row.mode === 'subagent') continue
+    if (sessions.has(row.id)) continue // 本次运行已打开/创建 = 活跃，不碰
+    if (row.title) continue // 有用户消息 = 有对话
+    if (row.hasModel) continue // 画布上有模型
+    if (sessionStore.readMeta(row.id).libraryId) continue // 素材编辑会话
+    try {
+      rmSync(sessionStore.logPath(row.id), { force: true })
+      rmSync(sessionStore.metaPath(row.id), { force: true })
+      rmSync(sessionStore.docPath(row.id), { force: true })
+      n++
+    } catch { /* 单个失败不阻塞 */ }
+  }
+  if (n) console.log(`[cleanup] 已清理 ${n} 个未产生对话的空会话`)
+  return n
+}
+
 // ---- 项目（dsh workspace-controller 的对应物） ----
 
 /** 目录入参统一 realpath 校验（分组 cwd 与会话 cwd 共用）；返回 null 表示非法 */
@@ -1463,6 +1528,128 @@ app.post('/api/explorer', async (req, reply) => {
   const { spawn } = await import('node:child_process')
   spawn('explorer.exe', [abs], { detached: true, stdio: 'ignore' }).unref()
   return { ok: true }
+})
+
+/**
+ * 系统原生「选择文件夹」对话框（资源管理器风格，IFileOpenDialog + FOS_PICKFOLDERS）。
+ * 服务跑在本机，弹窗由服务端拉起；前端只拿选中的绝对路径，取消返回 path: null。
+ */
+const PICK_DIR_PS = [
+  'param([string]$Out, [string]$Title, [string]$Initial)',
+  "$ErrorActionPreference = 'Stop'",
+  "Add-Type -TypeDefinition @'",
+  'using System;',
+  'using System.Runtime.InteropServices;',
+  '',
+  'public static class OpenModsFolderPicker',
+  '{',
+  '    [ComImport, Guid("42f85136-db7e-439c-85f1-e4075d135fc8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]',
+  '    private interface IFileDialog',
+  '    {',
+  '        [PreserveSig] int Show(IntPtr parent);',
+  '        void SetFileTypes(uint cFileTypes, IntPtr rgFilterSpec);',
+  '        void SetFileTypeIndex(uint iFileType);',
+  '        void GetFileTypeIndex(out uint piFileType);',
+  '        void Advise(IntPtr pfde, out uint pdwCookie);',
+  '        void Unadvise(uint dwCookie);',
+  '        void SetOptions(uint fos);',
+  '        void GetOptions(out uint pfos);',
+  '        void SetDefaultFolder(IShellItem psi);',
+  '        void SetFolder(IShellItem psi);',
+  '        void GetFolder(out IShellItem ppsi);',
+  '        void GetCurrentSelection(out IShellItem ppsi);',
+  '        void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string pszName);',
+  '        void GetFileName(out IntPtr pszName);',
+  '        void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string pszTitle);',
+  '        void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string pszText);',
+  '        void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string pszLabel);',
+  '        void GetResult(out IShellItem ppsi);',
+  '        void AddPlace(IShellItem psi, int fdap);',
+  '        void SetDefaultExtension([MarshalAs(UnmanagedType.LPWStr)] string pszDefaultExtension);',
+  '        void Close(int hr);',
+  '        void SetClientGuid(ref Guid guid);',
+  '        void ClearClientData();',
+  '        void SetFilter(IntPtr pFilter);',
+  '    }',
+  '',
+  '    [ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]',
+  '    private interface IShellItem',
+  '    {',
+  '        void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);',
+  '        void GetParent(out IShellItem ppsi);',
+  '        void GetDisplayName(uint sigdnName, [MarshalAs(UnmanagedType.LPWStr)] out string ppszName);',
+  '        void GetAttributes(uint sfgaoMask, out uint psfgaoAttribs);',
+  '        void Compare(IShellItem psi, uint hint, out int piOrder);',
+  '    }',
+  '',
+  '    [ComImport, Guid("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7")]',
+  '    private class FileOpenDialog { }',
+  '',
+  '    [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]',
+  '    private static extern void SHCreateItemFromParsingName(',
+  '        [MarshalAs(UnmanagedType.LPWStr)] string pszPath,',
+  '        IntPtr pbc,',
+  '        [MarshalAs(UnmanagedType.LPStruct)] Guid riid,',
+  '        [MarshalAs(UnmanagedType.Interface)] out object ppv);',
+  '',
+  '    public static string Pick(string title, string initialDir)',
+  '    {',
+  '        IFileDialog dialog = (IFileDialog)new FileOpenDialog();',
+  '        uint options;',
+  '        dialog.GetOptions(out options);',
+  '        dialog.SetOptions(options | 0x20u | 0x40u);',
+  '        if (!String.IsNullOrEmpty(title)) dialog.SetTitle(title);',
+  '        if (!String.IsNullOrEmpty(initialDir))',
+  '        {',
+  '            try',
+  '            {',
+  '                object item;',
+  '                SHCreateItemFromParsingName(initialDir, IntPtr.Zero, typeof(IShellItem).GUID, out item);',
+  '                dialog.SetFolder((IShellItem)item);',
+  '            }',
+  '            catch { }',
+  '        }',
+  '        if (dialog.Show(IntPtr.Zero) != 0) return null;',
+  '        IShellItem result;',
+  '        dialog.GetResult(out result);',
+  '        string path;',
+  '        result.GetDisplayName(0x80058000u, out path);',
+  '        return path;',
+  '    }',
+  '}',
+  "'@",
+  '$picked = [OpenModsFolderPicker]::Pick($Title, $Initial)',
+  'if ($picked) { [IO.File]::WriteAllText($Out, $picked, [Text.Encoding]::UTF8) }',
+].join('\r\n')
+
+app.post('/api/fs/pick-dir', async (req, reply) => {
+  const body = (req.body ?? {}) as { path?: string; title?: string }
+  if (process.platform !== 'win32') return reply.code(400).send({ error: '仅支持 Windows 系统文件夹对话框' })
+  const start = resolveDir(String(body.path ?? '').trim()) ?? DEFAULT_CWD
+  const title = String(body.title ?? '').trim() || '选择文件夹'
+  const { spawn } = await import('node:child_process')
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'openmods-pick-'))
+  const script = path.join(tmp, 'pick.ps1')
+  const outFile = path.join(tmp, 'picked.txt')
+  try {
+    fs.writeFileSync(script, PICK_DIR_PS, 'utf8')
+    const ok = await new Promise<boolean>(resolve => {
+      const p = spawn('powershell.exe', [
+        '-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', script, outFile, title, start,
+      ], { windowsHide: true, stdio: 'ignore' })
+      p.on('exit', code => resolve(code === 0))
+      p.on('error', () => resolve(false))
+    })
+    if (!ok) return reply.code(500).send({ error: '打开系统文件夹对话框失败' })
+    let picked = ''
+    try { picked = fs.readFileSync(outFile, 'utf8').trim() } catch { /* 用户取消或直接关闭 */ }
+    return { path: picked || null }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
 })
 
 const mcdevUi = await import('../../../plugins/mcdev/index.js')
@@ -1779,6 +1966,29 @@ app.post('/api/terminals/:tid/kill', async (req, reply) => {
   return { ok, terminal: terminals.get(t.id) }
 })
 
+// 关闭终端（前端标签的 × / 全部清空）：运行中的先收进程树，条目立即移除
+app.delete('/api/terminals/:tid', async (req, reply) => {
+  const sid = String((req.query as any)?.sessionId ?? '').trim()
+  const t = terminals.get(String((req.params as any).tid))
+  if (!t || t.sessionId !== sid) return reply.code(404).send({ error: '终端不存在' })
+  return { ok: terminals.close(t.id) }
+})
+
+app.post('/api/terminals/:tid/close', async (req, reply) => {
+  const body = (req.body ?? {}) as { sessionId?: string }
+  const sid = String(body.sessionId ?? '').trim()
+  const t = terminals.get(String((req.params as any).tid))
+  if (!t || t.sessionId !== sid) return reply.code(404).send({ error: '终端不存在' })
+  return { ok: terminals.close(t.id) }
+})
+
+// 清空某会话的全部终端（对应「全部清空」）
+app.delete('/api/terminals', async (req, reply) => {
+  const sid = String((req.query as any)?.sessionId ?? '').trim()
+  if (!sid) return reply.code(400).send({ error: 'sessionId 不能为空' })
+  return { ok: true, closed: terminals.closeSession(sid) }
+})
+
 // 目录浏览（左栏选择工作目录用）：只列子目录，不读文件
 app.get('/api/fs/browse', async (req, reply) => {
   const raw = String((req.query as any)?.path ?? '').trim() || DEFAULT_CWD
@@ -2016,15 +2226,9 @@ function cancelWaiting(s: SessionEntry) {
 app.get('/api/sessions/:id/stats', async (req, reply) => {
   try {
     const s = await ensureSession((req.params as any).id)
-    const stats = projectStats(s.log.all())
-    const figures = contextFigures(s)
-    // 日志里只有 prompt/output 总量，没有 system / tools 的拆分：
-    // 用运行时现算的 contextBreakdown 回填，保证环上三段之和 == 上下文总量。
-    if (figures.contextBreakdown) {
-      stats.context.tokenSplit.system = figures.contextBreakdown.systemTokens
-      stats.context.tokenSplit.tools = figures.contextBreakdown.toolsTokens
-      stats.context.tokenSplit.message = figures.contextBreakdown.messageTokens
-    }
+    const frame = statsFrame(s)
+    const stats = frame.stats
+    const figures = { contextTokens: frame.contextTokens, modelWindow: frame.modelWindow, contextBreakdown: frame.contextBreakdown }
     // 编队：同一画布下的子代理累计输出（面板「主 / 子代理」那一行）
     // 走磁盘列表而不是内存 sessions：重启后子代理的执行态已丢失，但它们的 token 账还在日志里
     const rootCanvas = s.canvasId ?? s.id
@@ -2109,10 +2313,25 @@ app.post('/api/library/capture', async (req, reply) => {
       canvasId: s.canvasId ?? canvas.idOf(sessionId),
       name: String(body.name ?? ''),
       doc,
+      // 素材归档时顺带收当前会话工作区里的最新构建产物（build/libs/*.jar）
+      cwd: s.cwd,
     })
     return { asset }
   } catch (e: any) {
     return reply.code(400).send({ error: e.message })
+  }
+})
+
+// 素材模型：编译成 Blockbench 可加载的 bbmodel（画布「新标签打开」用，不覆盖会话画布）
+app.get('/api/library/:id/model', async (req, reply) => {
+  const id = String((req.params as any).id)
+  if (!library.get(id)) return reply.code(404).send({ error: '素材不存在' })
+  const doc = library.readDoc(id)
+  if (!doc) return reply.code(404).send({ error: '素材快照已损坏' })
+  try {
+    return compileBb(doc as any)
+  } catch (e: any) {
+    return reply.code(400).send({ error: `素材编译失败：${e.message}` })
   }
 })
 
@@ -2206,6 +2425,21 @@ app.get('/api/library/:id/thumb', async (req, reply) => {
     .send(buf)
 })
 
+// 下载归档的构建产物（没有 jar 的素材 404；文件名沿用构建产物名）
+app.get('/api/library/:id/jar', async (req, reply) => {
+  const id = String((req.params as any).id)
+  const asset = library.get(id)
+  const buf = library.readJar(id)
+  if (!asset?.jar || !buf) return reply.code(404).send({ error: '该素材没有归档 jar' })
+  const name = asset.jar.name || `${asset.name || id}.jar`
+  // Content-Disposition 的 ASCII 回退 + RFC 5987 的 UTF-8 文件名（中文名不丢）
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '')
+  return reply
+    .header('content-type', 'application/java-archive')
+    .header('content-disposition', `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`)
+    .send(buf)
+})
+
 // 把素材送回某个会话的画布（覆盖式写入：几何 + 分组 + 贴图 + 动画 + 分辨率）
 app.post('/api/library/:id/to-canvas', async (req, reply) => {
   const id = String((req.params as any).id)
@@ -2240,25 +2474,44 @@ app.post('/api/library/:id/to-canvas', async (req, reply) => {
 // 挂在 canvas.onChange 上而不是某个工具里：AI 工具、子代理、手动编辑三种来源一视同仁。
 // 防抖 700ms：一轮对话里可能连续改十几次画布，没必要每次都写快照（贴图 dataURL 不小）。
 const libSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
+// 自动入库防抖（非编辑会话的画布：按 canvasId upsert auto 素材，保证模型永不丢）
+const autoLibTimers = new Map<string, ReturnType<typeof setTimeout>>()
 canvas.onChange(change => {
   if (change.kind !== 'model') return
   const libId = libraryOfSession(change.originId)
-  if (!libId) return
-  // 刚把素材种进画布（打开编辑会话）：这一次 commit 不是内容修改，别顶版本号
-  const guard = libSeedGuard.get(libId)
-  if (guard !== undefined) {
-    if (guard > Date.now()) return
-    libSeedGuard.delete(libId)
+  if (libId) {
+    // 刚把素材种进画布（打开编辑会话）：这一次 commit 不是内容修改，别顶版本号
+    const guard = libSeedGuard.get(libId)
+    if (guard !== undefined) {
+      if (guard > Date.now()) return
+      libSeedGuard.delete(libId)
+    }
+    const prev = libSyncTimers.get(libId)
+    if (prev) clearTimeout(prev)
+    libSyncTimers.set(libId, setTimeout(() => {
+      libSyncTimers.delete(libId)
+      const doc = canvas.read(change.canvasId)
+      if (!doc) return
+      const meta = library.updateDoc(libId, doc)
+      if (!meta) console.warn(`[library] 素材 ${libId} 已不存在，跳过回写`)
+    }, 700))
+    return
   }
-  const prev = libSyncTimers.get(libId)
-  if (prev) clearTimeout(prev)
-  libSyncTimers.set(libId, setTimeout(() => {
-    libSyncTimers.delete(libId)
+  // 自动入库：普通会话的画布模型只要非空就 upsert 进素材库（编辑会话走上面的回写，不重复入）
+  if ((change.elements ?? 0) <= 0) return
+  const prevAuto = autoLibTimers.get(change.canvasId)
+  if (prevAuto) clearTimeout(prevAuto)
+  autoLibTimers.set(change.canvasId, setTimeout(() => {
+    autoLibTimers.delete(change.canvasId)
     const doc = canvas.read(change.canvasId)
     if (!doc) return
-    const meta = library.updateDoc(libId, doc)
-    if (!meta) console.warn(`[library] 素材 ${libId} 已不存在，跳过回写`)
-  }, 700))
+    try {
+      const meta = library.upsertByCanvas({ canvasId: change.canvasId, sessionId: change.originId, doc })
+      if (meta) console.log(`[library] 自动入库「${meta.name}」（${meta.elementCount} 元素，v${meta.version}）`)
+    } catch (e: any) {
+      console.warn('[library] 自动入库失败:', e?.message ?? e)
+    }
+  }, 900))
 })
 
 // 图片字节出口（右侧「图片」标签、历史回看、灯箱都用它）
@@ -2378,6 +2631,8 @@ if (existsSync(webDist)) {
 }
 
 app.listen({ port: PORT, host: '127.0.0.1' }).then(() => {
+  // 启动即清「只建没聊」的历史空会话（内存热缓存为空 = 一定没有活跃会话，删了绝对安全）
+  pruneEmptySessions()
   console.log(`[openmods] server ready → http://127.0.0.1:${PORT}`)
   console.log(`[openmods] 插件: ${loadedPlugins.map(p => p.name).join(', ') || '无'}`)
   console.log(`[openmods] 技能: ${dirProvider.list().map(s => s.name).join(', ') || '无'}`)

@@ -137,7 +137,14 @@ export interface SessionRuntime extends SessionRuntimeLike {
   runTurn(opts: { text: string; attachments?: any[]; modelId?: string; mode?: 'build' | 'refine'; profile?: string; source?: TurnSource }, signal: AbortSignal): Promise<{ text: string; aborted: boolean }>
 }
 
-const MAX_STEPS = 12
+/**
+ * 单轮步数硬上限：默认 40。原来的 12 对 MC 模组开发（多文件读写 + 多轮构建修错）太紧，
+ * 会在工程做一半时静默结束本轮，用户只看到「对话断了」。可用 OPENMODS_MAX_STEPS 覆盖。
+ */
+const MAX_STEPS = (() => {
+  const n = Number(process.env.OPENMODS_MAX_STEPS)
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 200) : 40
+})()
 
 function safeJsonParse(s: string): any {
   try { return JSON.parse(s) } catch { return {} }
@@ -262,9 +269,12 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
       let finalText = ''
       let overflowRetried = false
       let aborted = false
+      // 跑满 MAX_STEPS 且没有自然收尾（无工具调用）＝步数上限截断，要在对话里明确告诉用户
+      let hitStepLimit = false
+      let stepNo = 0
 
       try {
-        for (let stepNo = 1; stepNo <= MAX_STEPS; stepNo++) {
+        for (stepNo = 1; stepNo <= MAX_STEPS; stepNo++) {
           if (signal.aborted) { aborted = true; break }
           const stepId = `${turnId}s${stepNo}`
 
@@ -374,9 +384,15 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
           rt.emit('step/end', { turnId, stepId })
           break
         }
+        // for 循环走完（stepNo 超出上限）且不是用户中止 → 判定为步数上限截断
+        if (stepNo > MAX_STEPS && !aborted) hitStepLimit = true
       } finally {
-        deps.log.append('turn/end', { turnId, text: finalText, aborted })
-        rt.emit('turn/end', { turnId, text: finalText, aborted })
+        if (hitStepLimit && !finalText) {
+          finalText = `已达到单轮 ${MAX_STEPS} 步上限，任务还没做完。回复「继续」我接着做。`
+        }
+        const reason = hitStepLimit ? 'step-limit' : aborted ? 'aborted' : 'natural'
+        deps.log.append('turn/end', { turnId, text: finalText, aborted, reason })
+        rt.emit('turn/end', { turnId, text: finalText, aborted, reason })
       }
       return { text: finalText, aborted }
     },

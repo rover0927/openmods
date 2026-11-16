@@ -72,20 +72,6 @@ export function LeftSidebar(props: {
   const [rail, setRail] = useState(() => localStorage.getItem('openmods.sbRail') === '1')
   const [menu, setMenu] = useState<{ session: SessionSummaryDto; at: Anchor } | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ project: ProjectDto; at: Anchor } | null>(null)
-  /**
-   * 目录选择浮层（dsh DirectoryBrowser 的简化：面包屑 + 逐层列表，只读不建目录）。
-   * 两种用途共用：session=改绑某会话目录；new-project=给新建分组关联目录。
-   */
-  const [picking, setPicking] = useState<{
-    purpose: 'session' | 'new-project'
-    session?: SessionSummaryDto
-    /** new-project 且是给已有分组改目录时带上项目 id */
-    editProjectId?: string
-    path: string
-    parent: string | null
-    dirs: { name: string; path: string }[]
-    error?: string
-  } | null>(null)
   const { onToast } = props
 
   const reload = useCallback(async () => {
@@ -223,58 +209,38 @@ export function LeftSidebar(props: {
     }
   }, [reload, onToast])
 
-  // ---- 目录浏览器（dsh DirectoryBrowser 简化版：面包屑 + 逐层列表，只读） ----
-  /** 打开或切换目录；purpose=session 带上要改绑的会话，new-project 则回写 newCwd */
-  const loadDir = useCallback(async (
+  // ---- 目录选择：直接用系统原生文件夹对话框（资源管理器风格），不再自绘目录树 ----
+  /** 弹出系统选择框并直接应用：会话→落会话 cwd；已有分组→setProjectCwd；新建分组→回填 newCwd */
+  const pickDir = useCallback(async (
     purpose: 'session' | 'new-project',
-    session: SessionSummaryDto | undefined,
-    path?: string,
+    session?: SessionSummaryDto,
     editProjectId?: string,
+    start?: string,
   ) => {
     try {
-      const r = await api.browseDirs(path ?? (purpose === 'session' ? session?.cwd : undefined))
-      setPicking({ purpose, session, editProjectId, path: r.path, parent: r.parent, dirs: r.dirs })
-    } catch (e: any) {
-      setPicking({
-        purpose, session, editProjectId,
-        path: path ?? (purpose === 'session' ? session?.cwd : '') ?? '',
-        parent: null, dirs: [], error: e.message,
-      })
-    }
-  }, [])
-
-  /** 确认选中的目录：会话→落会话 cwd；已有分组→setProjectCwd；新建分组→回填 newCwd */
-  const confirmPicker = useCallback(async () => {
-    if (!picking) return
-    if (picking.purpose === 'new-project') {
-      if (picking.editProjectId) {
-        const pid = picking.editProjectId
-        const target = picking.path
-        try {
-          await api.setProjectCwd(pid, target)
-          setPicking(null)
+      const r = await api.pickDir(
+        start || (purpose === 'session' ? session?.cwd : undefined),
+        purpose === 'session' ? '绑定工作目录' : '选择关联文件夹',
+      )
+      if (!r.path) return // 取消
+      if (purpose === 'new-project') {
+        if (editProjectId) {
+          await api.setProjectCwd(editProjectId, r.path)
           await reload()
-          onToast(`已为该分组关联目录：${dirName(target)}`)
-        } catch (e: any) {
-          onToast(`关联失败：${e.message}`)
+          onToast(`已为该分组关联目录：${dirName(r.path)}`)
+        } else {
+          setNewCwd(r.path)
         }
         return
       }
-      setNewCwd(picking.path)
-      setPicking(null)
-      return
-    }
-    if (!picking.session) return
-    try {
-      await api.setSessionCwd(picking.session.id, picking.path)
-      const target = picking.path
-      setPicking(null)
+      if (!session) return
+      await api.setSessionCwd(session.id, r.path)
       await reload()
-      onToast(`已绑定目录：${target}`)
+      onToast(`已绑定目录：${r.path}`)
     } catch (e: any) {
-      onToast(`绑定失败：${e.message}`)
+      onToast(`选择目录失败：${e.message}`)
     }
-  }, [picking, reload, onToast])
+  }, [reload, onToast])
 
   const renderRow = (s: SessionSummaryDto) => {
     const archived = !!s.archived
@@ -298,23 +264,6 @@ export function LeftSidebar(props: {
           )}
           {s.title || '新会话'}
         </span>
-        {s.cwd && (
-          <span
-            className="sb-cwd"
-            role="button"
-            tabIndex={0}
-            title={`工作目录：${s.cwd}\n点击切换`}
-            onClick={e => {
-              e.stopPropagation()
-              if (archived) { onToast('已归档对话不能改绑定目录'); return }
-              void loadDir('session', s)
-            }}
-            onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); void loadDir('session', s) } }}
-          >
-            <span className="sb-cwd-icon" aria-hidden="true">▹</span>
-            {dirName(s.cwd)}
-          </span>
-        )}
         <span className="sb-time">{archived ? '已归档' : formatTime(s.updatedAt)}</span>
         <span className="sb-row-actions">
           <button
@@ -467,6 +416,17 @@ export function LeftSidebar(props: {
               <button className="menu-item" onClick={() => { void moveTo(menu.session) }}>移出到未分组</button>
             )}
             {!projects.length && !menu.session.projectId && <div className="menu-empty dim">还没有项目</div>}
+            {menu.session.mode !== 'subagent' && (
+              <button
+                className="menu-item"
+                onClick={() => {
+                  const s = menu.session
+                  setMenu(null)
+                  if (s.archived) { onToast('已归档对话不能改绑定目录'); return }
+                  void pickDir('session', s)
+                }}
+              >{menu.session.cwd ? '更改绑定目录' : '绑定工作目录'}</button>
+            )}
             <div className="menu-sep" />
             {menu.session.archived ? (
               <button className="menu-item" onClick={() => { const s = menu.session; setMenu(null); void restore(s) }}>
@@ -507,7 +467,7 @@ export function LeftSidebar(props: {
               onClick={() => {
                 const p = projectMenu.project
                 setProjectMenu(null)
-                void loadDir('new-project', undefined, p.cwd || undefined, p.id)
+                void pickDir('new-project', undefined, p.id, p.cwd || undefined)
               }}
             >{projectMenu.project.cwd ? '更改关联文件夹' : '关联文件夹'}</button>
             {projectMenu.project.cwd && (
@@ -569,7 +529,7 @@ export function LeftSidebar(props: {
         </div>
       )}
       {/* 新建分组弹窗（对齐 dsh/WorkBuddy：名称 + 说明 + 关联文件夹 + 取消/保存） */}
-      {creating && !picking && (
+      {creating && (
         <div className="dialog-backdrop" onClick={() => setCreating(false)}>
           <div className="dialog new-group-dialog" onClick={e => e.stopPropagation()}>
             <div className="dialog-title-row">
@@ -589,7 +549,7 @@ export function LeftSidebar(props: {
             />
             <div className="dialog-hint">
               分组可用于整理你的任务列表，还可{' '}
-              <button className="inline-link" onClick={() => void loadDir('new-project', undefined, newCwd || undefined)}>
+              <button className="inline-link" onClick={() => void pickDir('new-project', undefined, undefined, newCwd || undefined)}>
                 <span aria-hidden="true">▣</span> {newCwd ? '更换关联文件夹' : '关联电脑上的文件夹'}
               </button>
               ，让 WorkBuddy 参考已有资料，并优先将生成的产物文件保存到关联文件夹内
@@ -608,57 +568,6 @@ export function LeftSidebar(props: {
             <div className="dialog-actions">
               <button className="dialog-btn" onClick={() => setCreating(false)}>取消</button>
               <button className="dialog-btn primary" disabled={!newTitle.trim()} onClick={() => void createProject()}>保存</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 目录浏览器（会话改绑 / 新建分组关联 共用；面包屑 + 逐层列表，只读） */}
-      {picking && (
-        <div className="dialog-backdrop" onClick={() => setPicking(null)}>
-          <div className="dialog dir-dialog" onClick={e => e.stopPropagation()}>
-            <div className="dialog-title-row">
-              <div className="dialog-title">
-                {picking.purpose === 'new-project' ? '选择关联文件夹' : '绑定工作目录'}
-              </div>
-              <button className="dialog-x" title="关闭" onClick={() => setPicking(null)}>×</button>
-            </div>
-            <div className="dialog-body">
-              {picking.purpose === 'new-project'
-                ? '选择电脑上的一个文件夹关联到这个分组；该分组下新建的会话会在这里工作。'
-                : `「${picking.session?.title || picking.session?.id}」的工程类工具（mc_scaffold / mc_list / mc_gradle …）都会在这个目录下工作。`}
-            </div>
-            <div className="dir-path">
-              <button
-                className="sb-icon-btn"
-                title="上一级"
-                disabled={!picking.parent}
-                onClick={() => { if (picking.parent) void loadDir(picking.purpose, picking.session, picking.parent) }}
-              >↑</button>
-              <span className="dir-path-text" title={picking.path}>{picking.path || '（根目录）'}</span>
-            </div>
-            {picking.error
-              ? <div className="dialog-body dir-err">{picking.error}</div>
-              : (
-                <div className="dir-list">
-                  {picking.dirs.length === 0 && <div className="dir-empty">（没有子目录）</div>}
-                  {picking.dirs.map(d => (
-                    <button
-                      key={d.path}
-                      className="dir-row"
-                      onClick={() => void loadDir(picking.purpose, picking.session, d.path)}
-                      title={d.path}
-                    >
-                      <span className="dir-row-icon" aria-hidden="true">▸</span>{d.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            <div className="dialog-actions">
-              <button className="dialog-btn" onClick={() => setPicking(null)}>取消</button>
-              <button className="dialog-btn primary" disabled={!!picking.error} onClick={() => void confirmPicker()}>
-                {picking.purpose === 'new-project' ? '选择此文件夹' : '绑定此目录'}
-              </button>
             </div>
           </div>
         </div>

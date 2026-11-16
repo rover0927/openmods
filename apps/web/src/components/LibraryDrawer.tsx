@@ -4,12 +4,13 @@ import type { LibraryAssetDto } from '../types.js'
 
 // 文档素材库抽屉 —— 从建模画布截取快照归档（几何 + 分组 + 贴图 + 动画）。
 //
-// 一张卡片的三种"用"法（语义严格区分）：
+// 一张卡片的几种"用"法（语义严格区分）：
+//   画布打开   → 在右侧画布新开一个标签预览（只读，绝不覆盖会话画布）
 //   接着改    → 打开这个素材的编辑会话（没有就建），之后画布改动自动回写素材本身（不产生副本）
 //   引用新会话 → 复制一份到新会话的画布上改，素材本身不动（副本迭代）
-//   送入画布   → 把素材覆盖进当前会话的画布（拼装到别的工程里）
+//   送入画布   → 把素材覆盖进当前会话的画布（有确认弹窗：会话画布已自动存进素材库，不丢）
 //
-// 只做手动归档：不会自动保存每次建模结果，避免目录里堆满中间态。
+// 会话画布模型由服务端自动入库（auto 素材）：建模结果永远有一份最新快照，覆盖也丢不了。
 
 function fmtTime(ts: number): string {
   const d = new Date(ts)
@@ -26,13 +27,15 @@ function fmtAgo(ts: number): string {
   return `${fmtTime(ts)} 更新`
 }
 
-export function LibraryDrawer({ open, sessionId, onClose, onToast, onOpenSession }: {
+export function LibraryDrawer({ open, sessionId, onClose, onToast, onOpenSession, onOpenInCanvas }: {
   open: boolean
   sessionId: string
   onClose: () => void
   onToast: (msg: string) => void
   /** 切到某个会话（引用新会话 / 接着改之后） */
   onOpenSession: (id: string) => void
+  /** 在画布新标签打开素材（只读预览，不覆盖会话画布） */
+  onOpenInCanvas: (asset: LibraryAssetDto) => void
 }) {
   const [assets, setAssets] = useState<LibraryAssetDto[]>([])
   const [loading, setLoading] = useState(false)
@@ -114,6 +117,8 @@ export function LibraryDrawer({ open, sessionId, onClose, onToast, onOpenSession
 
   const apply = async (a: LibraryAssetDto) => {
     if (busyId) return
+    // 覆盖是破坏性动作：明确确认（会话画布有自动入库兜底，但用户当前上下文可能没保存）
+    if (!window.confirm(`「送入画布」会覆盖当前会话画布的内容。\n会话模型已在素材库自动存档（auto），但如果刚才的改动还没入库，请先「从当前画布截取」。\n\n确定覆盖？`)) return
     setBusyId(a.id)
     try {
       const r = await api.applyLibrary(a.id, sessionId)
@@ -247,6 +252,12 @@ export function LibraryDrawer({ open, sessionId, onClose, onToast, onOpenSession
                 <button
                   className="lib-btn primary"
                   disabled={busyId === a.id}
+                  title="在右侧画布新开一个标签预览（只读，不覆盖会话画布）"
+                  onClick={() => onOpenInCanvas(a)}
+                >画布打开</button>
+                <button
+                  className="lib-btn"
+                  disabled={busyId === a.id}
                   title="打开这个素材的编辑会话：之后画布改动自动存回这个素材（不产生副本）"
                   onClick={() => void edit(a)}
                 >接着改</button>
@@ -261,9 +272,17 @@ export function LibraryDrawer({ open, sessionId, onClose, onToast, onOpenSession
                 <button
                   className="lib-btn"
                   disabled={busyId === a.id}
-                  title="把素材覆盖进当前会话的画布"
+                  title="把素材覆盖进当前会话的画布（会弹确认）"
                   onClick={() => void apply(a)}
                 >送入画布</button>
+                {a.jar && (
+                  <a
+                    className="lib-btn lib-jar"
+                    href={api.libraryJarUrl(a.id)}
+                    download={a.jar.name}
+                    title={`下载 ${a.jar.name}（${(a.jar.size / 1024).toFixed(0)} KB）`}
+                  >下载 jar</a>
+                )}
                 <button className="lib-btn danger" onClick={() => void remove(a)}>删除</button>
               </div>
             </div>

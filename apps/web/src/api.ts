@@ -66,6 +66,13 @@ export const api = {
     jfetch<{ path: string; parent: string | null; dirs: { name: string; path: string }[]; defaultRoot: string }>(
       `/api/fs/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`,
     ),
+  /** 系统原生「选择文件夹」对话框（资源管理器风格）；取消返回 path: null */
+  pickDir: (path?: string, title?: string) =>
+    jfetch<{ path: string | null }>('/api/fs/pick-dir', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path, title }),
+    }),
   /** archived=hide（默认）/ all / only —— 对应 dsh 的 viewOptions 三种筛选 */
   listSessions: (archived: ArchivedView = 'hide') =>
     jfetch<{ sessions: SessionSummaryDto[]; archivedView: ArchivedView }>(`/api/sessions?archived=${archived}`),
@@ -226,6 +233,14 @@ export const api = {
     }),
   /** 缩略图带上 updatedAt 做缓存键：就地回写后浏览器不会继续显示上一版 */
   libraryThumb: (id: string, version?: number) => `/api/library/${id}/thumb${version ? `?v=${version}` : ''}`,
+  /** 下载素材编译出的 jar 产物 */
+  libraryJarUrl: (id: string) => `/api/library/${id}/jar`,
+  /** 素材编译成 bbmodel（画布「新标签打开」用，不覆盖会话画布） */
+  libraryModel: async (id: string): Promise<any> => {
+    const res = await fetch(`/api/library/${id}/model`)
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? '素材加载失败')
+    return res.json()
+  },
   stop: (id: string) => jfetch<{ ok: boolean }>(`/api/sessions/${id}/stop`, { method: 'POST' }),
   bbmodel: async (id: string): Promise<any> => {
     const res = await fetch(`/api/sessions/${id}/bbmodel`)

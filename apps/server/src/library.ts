@@ -13,7 +13,7 @@
 // 素材只做"归档/取回"，不参与画布同步：截取时从 canvas.read 拷一份，
 // 送进画布时走 canvas.commit（服务仍是唯一写入口）。
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -30,6 +30,10 @@ export interface LibraryAsset {
   canvasId?: string
   /** 绑定的「编辑会话」：该会话画布改动自动回写本素材（就地迭代，不产生副本） */
   editingSessionId?: string
+  /** 自动入库的素材：会话画布模型由服务端自动 upsert（保证用户做的模型永不丢） */
+  auto?: boolean
+  /** 截取时归档的构建产物（工程 build/libs 下最新的 jar；没有构建产物时不写这个字段） */
+  jar?: { name: string; size: number }
   elementCount: number
   textureCount: number
   resolution: { width: number; height: number }
@@ -92,12 +96,46 @@ function paletteOf(textures: any[]): string[] {
   return out
 }
 
+/** 扫描太大目录没意义：工程根、build 产物以外的源码/依赖目录不进去 */
+const JAR_SCAN_SKIP = new Set(['node_modules', '.git', '.gradle', 'build', 'out', 'run', 'bin', 'obj', 'src', 'logs'])
+
+/**
+ * 在会话工作区里找最新的构建产物：`<dir>/build/libs/*.jar`。
+ * 工作区布局通常是 <workspace>/<工程名>/build/libs，所以向下最多 3 层。
+ */
+function findLatestJar(root: string): { path: string; name: string; size: number } | undefined {
+  let best: { path: string; name: string; size: number; mtime: number } | undefined
+  const visit = (dir: string, depth: number) => {
+    const libs = join(dir, 'build', 'libs')
+    try {
+      for (const file of readdirSync(libs)) {
+        if (!file.endsWith('.jar')) continue
+        const p = join(libs, file)
+        const st = statSync(p)
+        if (!st.isFile()) continue
+        if (!best || st.mtimeMs > best.mtime) best = { path: p, name: file, size: st.size, mtime: st.mtimeMs }
+      }
+    } catch { /* 这个目录没有构建产物 */ }
+    if (depth >= 3) return
+    let entries
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (!e.isDirectory() || e.name.startsWith('.') || JAR_SCAN_SKIP.has(e.name)) continue
+      visit(join(dir, e.name), depth + 1)
+    }
+  }
+  visit(root, 0)
+  return best ? { path: best.path, name: best.name, size: best.size } : undefined
+}
+
 export function createLibraryStore(root: string) {
   const dir = join(root, 'data', 'library')
   mkdirSync(dir, { recursive: true })
   const metaPath = (id: string) => join(dir, `${id}.meta.json`)
   const docPath = (id: string) => join(dir, `${id}.doc.json`)
   const thumbPath = (id: string) => join(dir, `${id}.png`)
+  const jarPath = (id: string) => join(dir, `${id}.jar`)
+
 
   function readMeta(id: string): LibraryAsset | undefined {
     if (!ID_RE.test(id)) return undefined
@@ -136,7 +174,7 @@ export function createLibraryStore(root: string) {
     }
   }
 
-  return {
+  const store = {
     dir,
 
     list(): LibraryAsset[] {
@@ -170,6 +208,8 @@ export function createLibraryStore(root: string) {
       canvasId?: string
       name: string
       doc: any
+      /** 会话工作区：截取时顺带归档最新构建产物（build/libs/*.jar） */
+      cwd?: string
     }): LibraryAsset {
       const snap = snapshotOf(opts.doc ?? {})
       if (snap.elements.length === 0) throw new Error('当前画布没有模型元素，先让建模子代理建好再截取')
@@ -190,6 +230,16 @@ export function createLibraryStore(root: string) {
         hasThumb: false,
       }
       Object.assign(meta, writeSnapshot(id, snap))
+      // 构建产物一起归档：素材卡片可直接下载 jar；没有构建产物时不写字段
+      if (opts.cwd) {
+        const jar = findLatestJar(opts.cwd)
+        if (jar) {
+          try {
+            copyFileSync(jar.path, jarPath(id))
+            meta.jar = { name: jar.name, size: jar.size }
+          } catch { /* 复制失败不影响素材归档 */ }
+        }
+      }
       writeMeta(meta)
       return meta
     },
@@ -253,17 +303,57 @@ export function createLibraryStore(root: string) {
       }
     },
 
+    /** 归档的构建产物（没有 jar 时返回 undefined） */
+    readJar(id: string): Buffer | undefined {
+      if (!ID_RE.test(id)) return undefined
+      try {
+        if (!existsSync(jarPath(id))) return undefined
+        return readFileSync(jarPath(id))
+      } catch {
+        return undefined
+      }
+    },
+
     remove(id: string): boolean {
       if (!ID_RE.test(id)) return false
       let ok = false
-      for (const p of [metaPath(id), docPath(id), thumbPath(id)]) {
+      for (const p of [metaPath(id), docPath(id), thumbPath(id), jarPath(id)]) {
         try {
           if (statSync(p).isFile()) { unlinkSync(p); ok = true }
         } catch { /* 文件不存在就跳过 */ }
       }
       return ok
     },
+
+    /**
+     * 会话画布自动入库：按 canvasId upsert 一份「auto」素材。
+     * 每个会话建立的模型在素材库始终有一份最新快照——画布被覆盖/清空也丢不了。
+     * 已有同 canvasId 的 auto 素材就 updateDoc（版本+1），没有就新建；
+     * 用户手动截取的素材（auto 缺省）不会被自动更新，保持"冻结版"语义。
+     */
+    upsertByCanvas(opts: { canvasId: string; sessionId?: string; doc: any }): LibraryAsset | undefined {
+      const snap = snapshotOf(opts.doc ?? {})
+      if (snap.elements.length === 0) return undefined
+      const existing = store.list().find(a => a.auto === true && a.canvasId === opts.canvasId)
+      if (existing) return store.updateDoc(existing.id, opts.doc)
+      const now = Date.now()
+      const id = randomUUID().slice(0, 10)
+      const meta: LibraryAsset = {
+        id,
+        name: (snap.name && snap.name !== '未命名模型' ? snap.name : `自动存档 ${opts.canvasId.slice(0, 6)} ${new Date(now).toLocaleDateString('zh-CN')}`).slice(0, 60),
+        createdAt: now,
+        updatedAt: now,
+        version: 1,
+        sessionId: opts.sessionId,
+        canvasId: opts.canvasId,
+        auto: true,
+      }
+      Object.assign(meta, writeSnapshot(id, snap))
+      writeMeta(meta)
+      return meta
+    },
   }
+  return store
 }
 
 export type LibraryStore = ReturnType<typeof createLibraryStore>
