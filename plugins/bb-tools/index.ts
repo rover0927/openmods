@@ -1,0 +1,335 @@
+// bb-tools 插件：建模工具集。几何体在服务端 bbmodel 文档上变更，
+// 每次变更后编译并写入会话状态（server 负责 SSE 推送画布更新）。
+import { randomUUID } from 'node:crypto'
+import type { Plugin, ToolExecContext, ToolDef, ToolResult } from '@openmods/plugin-kit'
+import { createDoc, addCube, addGroup, findGroup, docCounts, outlineText, type BbDoc, type BbAnimation, type BbAnimKeyframe } from './bbmodel.js'
+import { materialListForPrompt, resolveColor } from './materials.js'
+import { solidPngDataUrl } from './png.js'
+
+// 画布统一由 CanvasService 持有：插件只按 sessionId 读/提交，不接触存储与广播
+function getDoc(ctx: ToolExecContext): BbDoc {
+  return ctx.canvas.ensure(ctx.sessionId) as BbDoc
+}
+
+function groupNames(doc: BbDoc): string[] {
+  const names: string[] = []
+  const walk = (nodes: any[]) => {
+    for (const n of nodes) {
+      if (typeof n !== 'string') { names.push(n.name); walk(n.children) }
+    }
+  }
+  walk(doc.outliner)
+  return names
+}
+
+function sync(ctx: ToolExecContext, doc: BbDoc) {
+  // 编译、广播、原子落盘都在服务里完成（同一会话树的其它 agent 会实时收到）
+  ctx.canvas.commit(ctx.sessionId, doc)
+}
+
+function texFor(doc: BbDoc, color: string): string {
+  const key = `mat_${color.replace('#', '')}`
+  let tex = doc.textures.find(t => t.name === key)
+  if (!tex) {
+    tex = {
+      uuid: randomUUID(),
+      name: key,
+      id: String(doc.textures.length),
+      width: 64,
+      height: 64,
+      source: solidPngDataUrl(color),
+      saved: false,
+      mode: 'bitmap',
+    }
+    doc.textures.push(tex)
+  }
+  return tex.uuid
+}
+
+function collectGroupUuids(g: { uuid: string; children: any[] }, set: Set<string>) {
+  set.add(g.uuid)
+  for (const child of g.children) {
+    if (typeof child === 'string') set.add(child)
+    else collectGroupUuids(child, set)
+  }
+}
+
+function ok(forModel: string): ToolResult {
+  return { forModel }
+}
+
+const tools: ToolDef[] = [
+  {
+    name: 'create_model',
+    mutates: true,
+    description: '创建新的空白模型项目（清空当前会话画布）。画布是主代理与所有子代理共享的：已有部件时默认拒绝，确需清空重做要显式传 reset:true。',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '模型/项目名，建议英文小写+下划线' },
+        reset: { type: 'boolean', description: '画布已有部件时是否强制清空（默认 false）' },
+      },
+      required: ['name'],
+    },
+    async execute(args, ctx) {
+      const existing = ctx.canvas.read(ctx.sessionId) as BbDoc | undefined
+      const count = existing?.elements.length ?? 0
+      if (count > 0 && args.reset !== true) {
+        return {
+          forModel: `画布上已经有 ${count} 个部件——这是与主代理/其它子代理共享的画布，不能直接清空。继续在当前工程上增量建模即可（先 list_outline 看结构）；确实要清空重做，请带 reset:true 再调用。`,
+          isError: true,
+        }
+      }
+      const doc = createDoc(String(args.name ?? 'model'))
+      ctx.canvas.commit(ctx.sessionId, doc)
+      return ok(`已创建项目 "${doc.name}"（free 通用模型格式，画布已清空）。现在可以用 place_cubes 搭几何体。`)
+    },
+  },
+  {
+    name: 'place_cubes',
+    mutates: true,
+    description: '批量放置立方体（只读画布自动更新）。from/to 为 [x,y,z] 角点，Y 向上。建议先搭大轮廓再补细节；部件名用材质前缀。',
+    parameters: {
+      type: 'object',
+      properties: {
+        elements: {
+          type: 'array',
+          description: '立方体数组，一次调用尽量批量放置',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              from: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+              to: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+              material: { type: 'string', description: '材质关键字或 #RRGGBB' },
+            },
+            required: ['name', 'from', 'to'],
+          },
+        },
+        group: { type: 'string', description: '可选：放入的分组名（root=顶层）' },
+      },
+      required: ['elements'],
+    },
+    async execute(args, ctx) {
+      const doc = getDoc(ctx)
+      const list = Array.isArray(args.elements) ? args.elements : []
+      if (!list.length) return { forModel: 'elements 为空', isError: true }
+      for (const spec of list) {
+        addCube(doc, {
+          name: String(spec.name),
+          from: spec.from,
+          to: spec.to,
+          material: spec.material,
+          parent: args.group,
+        })
+      }
+      sync(ctx, doc)
+      return ok(`已放置 ${list.length} 个立方体，共 ${docCounts(doc).elements} 个。`)
+    },
+  },
+  {
+    name: 'modify_cube',
+    mutates: true,
+    description: '修改已有立方体（按名称或 UUID 匹配）。可改 from/to（移动/缩放）、rotation、origin（枢轴）、material。',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: '部件名或 UUID' },
+        from: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+        to: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+        rotation: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+        origin: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+        material: { type: 'string' },
+      },
+      required: ['id'],
+    },
+    async execute(args, ctx) {
+      const doc = getDoc(ctx)
+      const el = doc.elements.find(e => e.name === args.id || e.uuid === args.id)
+      if (!el) return { forModel: `找不到部件 "${args.id}"（用 list_outline 查看现有部件）`, isError: true }
+      if (args.from) el.from = args.from.map(Number)
+      if (args.to) el.to = args.to.map(Number)
+      if (args.rotation) el.rotation = args.rotation.map(Number)
+      if (args.origin) el.origin = args.origin.map(Number)
+      if (args.material) el.faces = Object.fromEntries(
+        Object.entries(el.faces).map(([f, v]) => [f, { ...v, texture: texFor(doc, resolveColor(args.material)) }]),
+      ) as BbDoc['elements'][0]['faces']
+      sync(ctx, doc)
+      return ok(`已修改 ${el.name}。`)
+    },
+  },
+  {
+    name: 'delete_elements',
+    mutates: true,
+    description: '删除部件或分组（按名称/UUID，支持数组）。',
+    parameters: {
+      type: 'object',
+      properties: { ids: { type: 'array', items: { type: 'string' }, description: '部件/分组名或 UUID 列表' } },
+      required: ['ids'],
+    },
+    async execute(args, ctx) {
+      const doc = getDoc(ctx)
+      const ids: string[] = args.ids ?? []
+      let removed = 0
+      const removeUuids = new Set<string>()
+      for (const id of ids) {
+        const el = doc.elements.find(e => e.name === id || e.uuid === id)
+        if (el) { removeUuids.add(el.uuid); removed++; continue }
+        const g = findGroup(doc, id)
+        if (g) { collectGroupUuids(g, removeUuids); removed++ }
+      }
+      doc.elements = doc.elements.filter(e => !removeUuids.has(e.uuid))
+      const prune = (nodes: any[]): any[] => nodes
+        .filter(n => typeof n === 'string' ? !removeUuids.has(n) : !removeUuids.has(n.uuid))
+        .map(n => typeof n === 'string' ? n : { ...n, children: prune(n.children) })
+      doc.outliner = prune(doc.outliner)
+      sync(ctx, doc)
+      return ok(`已删除 ${removed} 项，剩余 ${docCounts(doc).elements} 个部件。`)
+    },
+  },
+  {
+    name: 'add_group',
+    mutates: true,
+    description: '创建分组/骨骼（可嵌套，origin 为枢轴）。',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        parent: { type: 'string', description: '父分组名，缺省为顶层' },
+        origin: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+      },
+      required: ['name'],
+    },
+    async execute(args, ctx) {
+      const doc = getDoc(ctx)
+      const g = addGroup(doc, String(args.name), args.parent, args.origin ?? [0, 0, 0])
+      sync(ctx, doc)
+      return ok(`已创建分组 ${g.name}。`)
+    },
+  },
+  {
+    name: 'list_outline',
+    description: '查看当前模型大纲（分组树 + 部件名 + 坐标范围）。',
+    parameters: { type: 'object', properties: {} },
+    async execute(_args, ctx) {
+      return ok(outlineText(getDoc(ctx)))
+    },
+  },
+  {
+    name: 'set_camera_view',
+    description: '设置只读画布相机视角：3d / front / side / back。',
+    parameters: {
+      type: 'object',
+      properties: { view: { type: 'string', enum: ['3d', 'front', 'side', 'back'] } },
+      required: ['view'],
+    },
+    async execute(args, ctx) {
+      const doc = getDoc(ctx)
+      doc.view = args.view
+      ctx.canvas.setView(ctx.sessionId, doc.view)
+      return ok(`视角已切换为 ${doc.view}。`)
+    },
+  },
+  {
+    name: 'set_animation',
+    mutates: true,
+    description: '为模型添加/替换一个骨骼动画（走路、扇动、浮动等）。bones 的键必须是已存在的分组（骨骼）名——没有就先 add_group；keyframes 按 time 升序（秒）；rotation 为角度 [x,y,z]。loop 建议循环动作用 loop。',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '动画短名，如 walk / flap' },
+        length: { type: 'number', description: '动画总时长（秒）' },
+        loop: { type: 'string', enum: ['loop', 'once', 'hold'], description: '缺省 loop' },
+        bones: {
+          type: 'object',
+          description: '骨骼名 → 关键帧数组（time 升序）',
+          additionalProperties: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                time: { type: 'number' },
+                rotation: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description: '角度 [x,y,z]' },
+                position: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description: '位移 [x,y,z]' },
+              },
+              required: ['time'],
+              additionalProperties: false,
+            },
+          },
+        },
+      },
+      required: ['name', 'length', 'bones'],
+    },
+    async execute(args, ctx) {
+      const doc = getDoc(ctx)
+      doc.animations = doc.animations ?? []
+      const bones: Record<string, BbAnimKeyframe[]> = {}
+      const groups = groupNames(doc)
+      for (const [bone, kfs] of Object.entries(args.bones ?? {})) {
+        if (!findGroup(doc, bone)) {
+          return { forModel: `骨骼 "${bone}" 不存在（骨骼=分组名）。可用骨骼: ${groups.join(', ') || '无——先用 add_group 创建'}；或者告诉我想要的动画效果，我创建合适的分组结构。`, isError: true }
+        }
+        bones[bone] = ((kfs as any[]) ?? [])
+          .map(k => ({ time: Number(k?.time) || 0, rotation: k.rotation, position: k.position }))
+          .sort((a, b) => a.time - b.time)
+        if (!bones[bone].length) return { forModel: `骨骼 "${bone}" 的关键帧为空`, isError: true }
+      }
+      const name = String(args.name ?? '').trim()
+      if (!name) return { forModel: '缺少动画名', isError: true }
+      const anim: BbAnimation = {
+        name,
+        length: Math.max(0.1, Number(args.length) || 1),
+        loop: args.loop === 'once' || args.loop === 'hold' ? args.loop : 'loop',
+        bones,
+      }
+      const idx = doc.animations.findIndex(a => a.name === name)
+      if (idx >= 0) doc.animations[idx] = anim
+      else doc.animations.push(anim)
+      sync(ctx, doc)
+      return ok(`动画 "${name}" 已保存（${Object.keys(bones).length} 根骨骼 / ${anim.length}s / ${anim.loop}）。用户可在右侧面板点击播放。`)
+    },
+  },
+  {
+    name: 'remove_animation',
+    mutates: true,
+    description: '删除一个动画（按名称）。',
+    parameters: {
+      type: 'object',
+      properties: { name: { type: 'string' } },
+      required: ['name'],
+    },
+    async execute(args, ctx) {
+      const doc = getDoc(ctx)
+      const before = doc.animations?.length ?? 0
+      doc.animations = (doc.animations ?? []).filter(a => a.name !== args.name)
+      sync(ctx, doc)
+      return ok(`已删除 ${before - doc.animations.length} 个动画，剩余 ${doc.animations.length} 个。`)
+    },
+  },
+  {
+    name: 'list_animations',
+    description: '查看模型上已有的动画列表（名称/时长/循环模式/骨骼数）。',
+    parameters: { type: 'object', properties: {} },
+    async execute(_args, ctx) {
+      const doc = getDoc(ctx)
+      const list = doc.animations ?? []
+      if (!list.length) return ok('模型上还没有动画。可用 set_animation 添加。')
+      return ok(list.map(a => `- ${a.name}：${a.length}s，${a.loop}，${Object.keys(a.bones).length} 根骨骼`).join('\n'))
+    },
+  },
+]
+
+const plugin: Plugin = {
+  name: 'bb-tools',
+  apply(ctx) {
+    for (const t of tools) ctx.tools.register(t)
+    ctx.hooks.registerSystemSection(() =>
+      `# 可用材质（place_cubes 的 material 参数）\n${materialListForPrompt()}，也可直接传十六进制 #RRGGBB。`,
+    )
+    ctx.hooks.registerSystemSection(() =>
+      `# 动画\n用 set_animation 为分组（骨骼）添加关键帧动画：骨骼名必须是已存在的分组名（先用 add_group 创建，如 arm_left/leg_right）；循环动作用 loop:"loop"。动画保存后用户可在右侧面板点击播放，无需你再描述播放方式。`,
+    )
+  },
+}
+
+export default plugin

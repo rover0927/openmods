@@ -1,0 +1,16 @@
+# ---- 依赖与构建产物 ----
+node_modules/
+apps/web/dist/
+# 画布 source map（19M 调试用，bundle.js 本体必须进仓库：构建依赖仓库外的 ../blockbench）
+bbcanvas/dist/dist/*.map
+
+# ---- 运行时数据（含 credentials.json 的 API key 与会话记录，绝不入库）----
+data/
+.env
+
+# ---- 离线构建包：243M 二进制不进 git，从 Releases 下载（见 README「离线构建包」）----
+plugins/mcdev/vendor/
+
+# ---- 临时 / 日志 ----
+.tmp*
+*.log

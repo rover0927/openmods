@@ -1,0 +1,285 @@
+// 后端 API 封装 + POST SSE 流解析
+import type {
+  ArchivedView, ModelInfoDto, PrefsDto, ProjectBaselineDto, ProjectDto, SessionInfoDto, SessionSummaryDto, SettingsDto,
+  StatsFrameDto, LibraryAssetDto,
+} from './types.js'
+
+export interface SseFrame {
+  topic: string
+  [key: string]: any
+}
+
+async function jfetch<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init)
+  if (!res.ok) throw new Error(`${res.status} ${await res.text().catch(() => '')}`)
+  return res.json() as Promise<T>
+}
+
+export const api = {
+  health: () => jfetch<{ ok: boolean; mock: boolean; plugins: string[] }>('/api/health'),
+  models: () => jfetch<{ models: ModelInfoDto[]; defaultModelId: string }>('/api/models'),
+  settings: () => jfetch<{ settings: SettingsDto }>('/api/settings'),
+  /** providers / bridge / prefs 都是可选的：按分区保存不会互相覆盖 */
+  saveSettings: (
+    patch: { providers?: any; bridge?: { enabled: boolean; modelId?: string }; prefs?: Partial<PrefsDto> },
+    expectedRevision: number,
+  ) =>
+    jfetch<{ ok: boolean; revision: number; prefs: PrefsDto }>('/api/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...patch, expectedRevision }),
+    }),
+  /** 只存行为偏好（通用 / 子代理 / 自动化页的即时开关） */
+  savePrefs: (prefs: Partial<PrefsDto>, expectedRevision: number) =>
+    jfetch<{ ok: boolean; revision: number; prefs: PrefsDto }>('/api/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prefs, expectedRevision }),
+    }),
+  setCredential: (route: string, apiKey: string) =>
+    jfetch<{ ok: boolean }>(`/api/settings/credentials/${route}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ apiKey }),
+    }),
+  discoverModels: (baseURL: string, opts?: { route?: string; apiKey?: string }) =>
+    jfetch<{ models: { id: string; name?: string; contextWindow?: number; maxOutputTokens?: number; inputModalities?: string[] }[] }>('/api/settings/discover-models', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseURL, route: opts?.route, apiKey: opts?.apiKey }),
+    }),
+  createSession: (projectId?: string, cwd?: string) =>
+    jfetch<{ id: string; projectId?: string; cwd?: string }>('/api/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId, cwd }),
+    }),
+  /** 切换会话绑定的工作目录（左栏用） */
+  setSessionCwd: (id: string, cwd: string) =>
+    jfetch<{ ok: boolean; cwd: string }>(`/api/sessions/${id}/cwd`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd }),
+    }),
+  /** 目录浏览（选工作目录用，只列子目录） */
+  browseDirs: (path?: string) =>
+    jfetch<{ path: string; parent: string | null; dirs: { name: string; path: string }[]; defaultRoot: string }>(
+      `/api/fs/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`,
+    ),
+  /** archived=hide（默认）/ all / only —— 对应 dsh 的 viewOptions 三种筛选 */
+  listSessions: (archived: ArchivedView = 'hide') =>
+    jfetch<{ sessions: SessionSummaryDto[]; archivedView: ArchivedView }>(`/api/sessions?archived=${archived}`),
+
+  // ---- 项目（dsh workspace） ----
+  projects: () => jfetch<ProjectBaselineDto>('/api/projects'),
+  createProject: (title: string, cwd?: string) =>
+    jfetch<{ project: ProjectDto }>('/api/projects', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title, ...(cwd ? { cwd } : {}) }),
+    }),
+  renameProject: (id: string, title: string) =>
+    jfetch<{ project: ProjectDto }>(`/api/projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title }),
+    }),
+  /** 改分组关联的目录；cwd 传空串 = 解除关联 */
+  setProjectCwd: (id: string, cwd: string) =>
+    jfetch<{ project: ProjectDto }>(`/api/projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd }),
+    }),
+  /** 只删项目注册：会话记录保留，回落「未分组」 */
+  deleteProject: (id: string) =>
+    jfetch<{ deleted: true; movedSessionIds: string[] }>(`/api/projects/${id}`, { method: 'DELETE' }),
+  attachSession: (projectId: string, sessionId: string) =>
+    jfetch<{ project: ProjectDto }>(`/api/projects/${projectId}/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    }),
+  detachSession: (projectId: string, sessionId: string) =>
+    jfetch<{ project: ProjectDto }>(`/api/projects/${projectId}/sessions/${sessionId}`, { method: 'DELETE' }),
+
+  // ---- 归档（软删除） ----
+  /**
+   * 归档一个会话。会话仍在跑时服务端回 409 + activity，
+   * 这里结构化返回，由 UI 决定「停止并归档」还是放弃（dsh archive 确认框）。
+   */
+  archiveSession: async (id: string, stopActivity = false):
+    Promise<{ ok: true; archivedSessionIds: string[] } | { conflict: true; activity: any[] }> => {
+    const res = await fetch(`/api/sessions/${id}/archive`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ stopActivity }),
+    })
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({}))
+      return { conflict: true, activity: body.activity ?? [] }
+    }
+    if (!res.ok) throw new Error(`${res.status} ${await res.text().catch(() => '')}`)
+    return res.json()
+  },
+  unarchiveSession: (id: string) =>
+    jfetch<{ ok: boolean; archivedSessionIds: string[] }>(`/api/sessions/${id}/unarchive`, { method: 'POST' }),
+  getSession: (id: string) => jfetch<SessionInfoDto>(`/api/sessions/${id}`),
+  subagents: (id: string) => jfetch<{ subagents: SessionSummaryDto[] }>(`/api/sessions/${id}/subagents`),
+  /** 统一会话事件流（EventSource）；since=0 表示补发当前进行中回合的帧 */
+  streamUrl: (id: string, since = -1) => `/api/sessions/${id}/stream?since=${since}`,
+  setSessionModel: (id: string, modelId: string) =>
+    jfetch<{ ok: boolean; modelId: string }>(`/api/sessions/${id}/model`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ modelId }),
+    }),
+  profiles: () => jfetch<{ profiles: { id: string; name: string }[] }>('/api/profiles'),
+  stats: (id: string) => jfetch<StatsFrameDto>(`/api/sessions/${id}/stats`),
+
+  // ---- 计划模式 / 授权策略 / 人机交互 ----
+  setPlanMode: (id: string, active: boolean) =>
+    jfetch<{ ok: boolean; active: boolean }>(`/api/sessions/${id}/plan`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ active }),
+    }),
+  setPermissions: (id: string, patch: { policy?: 'ask' | 'auto'; resetAllowed?: boolean }) =>
+    jfetch<{ ok: boolean; policy: 'ask' | 'auto'; allowedTools: string[] }>(`/api/sessions/${id}/permissions`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+  answerInteraction: (id: string, reqId: string, reply: {
+    answers?: { id: string; selected: string[]; custom?: string }[]
+    approved?: boolean
+    feedback?: string
+    decision?: 'allow' | 'deny'
+    remember?: boolean
+  }) =>
+    jfetch<{ ok: boolean }>(`/api/sessions/${id}/interactions/${reqId}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(reply),
+    }),
+
+  // ---- 终端 ----
+  terminals: (sessionId: string) =>
+    jfetch<{ terminals: import('./types.js').TerminalDto[]; shell: string }>(`/api/terminals?sessionId=${encodeURIComponent(sessionId)}`),
+  openTerminal: (sessionId: string, opts?: { command?: string; cwd?: string; title?: string }) =>
+    jfetch<{ terminal: import('./types.js').TerminalDto }>('/api/terminals', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, ...opts }),
+    }),
+  terminalOutput: (sessionId: string, terminalId: string, tail = 20000) =>
+    jfetch<{ terminal: import('./types.js').TerminalDto; output: string }>(
+      `/api/terminals/${terminalId}/output?sessionId=${encodeURIComponent(sessionId)}&tail=${tail}`,
+    ),
+  terminalInput: (sessionId: string, terminalId: string, text: string) =>
+    jfetch<{ ok: boolean }>(`/api/terminals/${terminalId}/input`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, text }),
+    }),
+  killTerminal: (sessionId: string, terminalId: string) =>
+    jfetch<{ ok: boolean }>(`/api/terminals/${terminalId}/kill`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    }),
+  // ---- 文档素材库（画布快照归档） ----
+  library: () => jfetch<{ assets: LibraryAssetDto[] }>('/api/library'),
+  captureLibrary: (sessionId: string, name?: string) =>
+    jfetch<{ asset: LibraryAssetDto }>('/api/library/capture', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, name }),
+    }),
+  deleteLibrary: (id: string) =>
+    jfetch<{ ok: boolean }>(`/api/library/${id}`, { method: 'DELETE' }),
+  /** 引用到新会话：素材种到新会话画布，素材本身不动（副本迭代） */
+  forkLibrary: (id: string, sessionId?: string) =>
+    jfetch<{ sessionId: string; cwd: string; name: string }>(`/api/library/${id}/fork`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    }),
+  /** 就地改：返回这个素材绑定的编辑会话（没有就建一个，改动自动回写素材） */
+  editLibrary: (id: string, sessionId?: string) =>
+    jfetch<{ sessionId: string; created: boolean; name: string }>(`/api/library/${id}/edit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    }),
+  renameLibrary: (id: string, name: string) =>
+    jfetch<{ asset: LibraryAssetDto }>(`/api/library/${id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }),
+  applyLibrary: (id: string, sessionId: string) =>
+    jfetch<{ ok: boolean; elementCount: number }>(`/api/library/${id}/to-canvas`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    }),
+  /** 缩略图带上 updatedAt 做缓存键：就地回写后浏览器不会继续显示上一版 */
+  libraryThumb: (id: string, version?: number) => `/api/library/${id}/thumb${version ? `?v=${version}` : ''}`,
+  stop: (id: string) => jfetch<{ ok: boolean }>(`/api/sessions/${id}/stop`, { method: 'POST' }),
+  bbmodel: async (id: string): Promise<any> => {
+    const res = await fetch(`/api/sessions/${id}/bbmodel`)
+    if (!res.ok) throw new Error('画布还没有模型')
+    return res.json()
+  },
+  putBbmodel: (id: string, model: any) =>
+    jfetch<{ ok: boolean; elements: number }>(`/api/sessions/${id}/bbmodel`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model }),
+    }),
+  /** 异步启动一轮对话：事件走 streamUrl 的 EventSource */
+  chat: (id: string, body: { text: string; modelId?: string; mode?: 'build' | 'refine'; attachments?: any[]; profile?: string }) =>
+    jfetch<{ ok: boolean; sessionId: string }>(`/api/sessions/${id}/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+
+  // ---- 资源管理器 / MC 工程状态（mcdev） ----
+  /** 用 Windows 资源管理器打开一个目录（或定位一个文件） */
+  explorerOpen: (path: string) =>
+    jfetch<{ ok: boolean }>('/api/explorer', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path }),
+    }),
+  /** 会话工作目录下的 MC 工程状态（构建结果 / runClient 运行中 / jar 产物） */
+  mcState: (sessionId: string) =>
+    jfetch<{ root: string; projects: import('./types.js').McProjectUiDto[] }>(
+      `/api/mc/state?sessionId=${encodeURIComponent(sessionId)}`,
+    ),
+  /** 启动 runClient 测试 mod（等价 mc_gradle task=runClient background=true） */
+  mcRun: (sessionId: string, project: string) =>
+    jfetch<{ ok: boolean; pid: number; logPath: string }>('/api/mc/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, project }),
+    }),
+  /** 停掉工程正在跑的 runClient */
+  mcStop: (sessionId: string, project: string) =>
+    jfetch<{ ok: boolean; stopped: boolean }>('/api/mc/stop', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, project }),
+    }),
+  /** 把工程最新 jar 复制到设置里的 mod-output 目录 */
+  mcExport: (sessionId: string, project: string) =>
+    jfetch<{ ok: boolean; name: string; dest: string; size: number }>('/api/mc/export', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, project }),
+    }),
+  /** 下载构建出的 mod jar */
+  mcJarUrl: (path: string) => `/api/mc/jar?path=${encodeURIComponent(path)}`,
+}
