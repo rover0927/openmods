@@ -55,12 +55,57 @@
   --green: var(--success);
   --green-dark: rgba(78, 209, 126, 0.32);
   --red: var(--danger);
+  /* 组件里出现的语义别名（此前缺失导致引用处静默失效，现已补齐） */
+  --bg-primary: var(--bg-base);
+  --bg-secondary: var(--bg-layer-1);
+  --border-primary: var(--border-l2);
+  --error: var(--danger);
+
+  color-scheme: dark;
 
   --rail-w: 240px;
   --content-w: 748px;
   /* 正文字号由设置（通用 → 字号）写入，默认 14px */
   --content-font: 14px;
   --content-line: 24px;
+}
+
+/* ---- 浅色主题（设置 → 通用 → 主题；写 documentElement[data-theme]） ----
+   同一套 token 名换 light 值；画布（.canvas-pane）与终端（.term-out）保持深色 */
+[data-theme='light'] {
+  --bg-base: rgb(255, 255, 255);
+  --bg-layer-1: rgb(244, 245, 247);
+  --bg-layer-2: rgb(236, 238, 241);
+  --bg-layer-3: rgb(228, 230, 234);
+  --sidebar-fill: rgb(247, 248, 250);
+  --border-l1: rgba(0, 0, 0, 0.07);
+  --border-l2: rgba(0, 0, 0, 0.12);
+  --border-l3: rgba(0, 0, 0, 0.16);
+  --border-l4: rgba(0, 0, 0, 0.2);
+  --label-primary: rgb(26, 28, 31);
+  --label-secondary: rgb(84, 89, 95);
+  --label-tertiary: rgb(122, 127, 133);
+  --label-caption: rgb(160, 165, 170);
+  --interactive-hover: rgba(0, 0, 0, 0.05);
+  --button-elevated: rgb(255, 255, 255);
+  --interactive-active: rgba(0, 0, 0, 0.09);
+  /* 深色平台用亮蓝；浅底上加深一档保证对比度 */
+  --accent: rgb(68, 118, 235);
+  --accent-hover: rgb(52, 101, 220);
+  --meter-system: rgb(150, 156, 162);
+  --meter-tools: rgb(140, 110, 230);
+  --meter-messages: var(--accent);
+  --success: rgb(42, 168, 96);
+  --warn: rgb(212, 144, 22);
+  --danger: rgb(224, 74, 74);
+
+  --bg-primary: var(--bg-base);
+  --bg-secondary: var(--bg-layer-1);
+  --border-primary: var(--border-l2);
+  --error: var(--danger);
+  --green-dark: rgba(42, 168, 96, 0.28);
+
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1631,3 +1676,88 @@ select.agent-chip option { background: var(--bg-layer-2); color: var(--label-pri
 }
 .term-input-row { display: flex; gap: 8px; flex-shrink: 0; }
 .term-foot { font-size: 10.5px; line-height: 15px; flex-shrink: 0; }
+
+/* ---- 设置 → 代理与技能 ---- */
+.skill-editor {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; margin: 4px 0 12px;
+  background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: var(--radius-md);
+}
+.skill-editor-head { display: flex; align-items: center; justify-content: space-between; }
+.skill-editor-x {
+  width: 24px; height: 24px; border-radius: var(--radius-sm);
+  color: var(--label-tertiary); font-size: 14px; line-height: 1;
+}
+.skill-editor-x:hover { background: var(--interactive-hover); color: var(--label-primary); }
+.skill-content {
+  width: 100%; min-height: 220px; padding: 8px 10px; resize: vertical;
+  background: var(--bg-primary); border: 1px solid var(--border-primary); border-radius: var(--radius-sm);
+  color: var(--label-primary); font-family: var(--mono-font, monospace); font-size: 12.5px; line-height: 1.6;
+}
+.skill-content:focus { outline: none; border-color: var(--accent); }
+.skill-editor-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.skill-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.skill-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border: 1px solid var(--border-primary); border-radius: var(--radius-md);
+  background: var(--bg-primary); transition: border-color 0.15s, background 0.15s;
+}
+.skill-item:hover { border-color: var(--border-l3); background: var(--bg-layer-1); }
+.skill-item-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.skill-name {
+  font-weight: 600; font-size: 12.5px; color: var(--label-primary); white-space: nowrap;
+  font-family: var(--mono-font, ui-monospace, SFMono-Regular, Consolas, monospace);
+}
+.skill-badge {
+  flex-shrink: 0; padding: 1px 7px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent);
+  font-size: 10.5px; line-height: 16px;
+}
+.skill-badge.builtin {
+  background: var(--bg-layer-2); color: var(--label-tertiary);
+}
+.skill-desc {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--label-tertiary); font-size: 12px;
+}
+.skill-item-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.skill-item-actions .btn { height: 24px; padding: 0 10px; font-size: 11.5px; border-radius: var(--radius-sm); }
+.btn.danger-link { color: var(--error); }
+.agent-list { display: flex; flex-direction: column; gap: 8px; }
+.agent-card {
+  border: 1px solid var(--border-primary); border-radius: var(--radius-md); overflow: hidden;
+  background: var(--bg-primary);
+}
+.agent-card:hover { border-color: var(--border-l3); }
+.agent-head {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  background: none; border: none; text-align: left; cursor: pointer;
+}
+.agent-head:hover { background: var(--interactive-hover); }
+.agent-caret { color: var(--label-tertiary); transition: transform 0.15s; font-size: 11px; }
+.agent-caret.open { transform: rotate(90deg); }
+.agent-name { font-weight: 600; font-size: 13px; color: var(--label-primary); }
+.agent-count { margin-left: auto; color: var(--label-tertiary); font-size: 11.5px; }
+.agent-body { padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-primary); background: var(--bg-secondary); }
+.agent-sub { font-size: 11.5px; font-weight: 600; color: var(--label-secondary); margin-top: 4px; letter-spacing: 0.02em; }
+.tool-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.tool-chip {
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--bg-primary); border: 1px solid var(--border-primary);
+  color: var(--label-secondary); font-size: 11.5px; font-family: var(--mono-font, ui-monospace, SFMono-Regular, Consolas, monospace);
+  cursor: default;
+}
+.agent-skills {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 16px;
+}
+.agent-skill-row {
+  display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--label-secondary); cursor: pointer;
+  padding: 2px 0;
+}
+.agent-skill-row:hover { color: var(--label-primary); }
+.agent-prompt summary { font-size: 11.5px; color: var(--label-tertiary); cursor: pointer; }
+.agent-prompt pre {
+  margin: 6px 0 0; padding: 8px 10px; max-height: 200px; overflow: auto;
+  background: var(--bg-secondary); border-radius: var(--radius-sm);
+  color: var(--label-tertiary); font-size: 11.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+}

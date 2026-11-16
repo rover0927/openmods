@@ -385,12 +385,13 @@ interface PluginContext {
 ## 8. 设置系统（复刻 dsh SettingsRoot / ui-settings）
 
 - **置顶子窗口**（`SettingsWindow.tsx`）：overlay + mask + **800×800 居中面板**——`grid-template-columns: 188px minmax(0,1fr)`、`areas: 'title header' / 'nav options'`、`border-radius: 28px`；nav cell 40px 高 r12，options 区 `padding: 0 24px 24px` 独立滚动；<768px 面板铺满 + 横向导航。右上「打开配置文件」下载 settings.json + ✕ + Esc 关闭。
-- **四个分区**（按 dsh ui-settings 的粒度收敛，`SettingsPage.tsx` 内 `SettingsSectionId`）：
+- **五个分区**（按 dsh ui-settings 的粒度收敛，`SettingsPage.tsx` 内 `SettingsSectionId`）：
 
   | 分区 | 内容 |
   |---|---|
-  | 通用 `general` | 主题（深色 / 浅色暂禁用）、字号（小 13 / 标准 14 / 大 15）、发送键（Enter 发送 / ⌘Ctrl+Enter 发送）、revision + 打开配置文件 |
+  | 通用 `general` | 主题（深色 / 浅色暂禁用）、字号（小 13 / 标准 14 / 大 15）、发送键（Enter 发送 / ⌘Ctrl+Enter 发送）、Mod 构建输出目录、revision + 打开配置文件 |
   | 模型 `models` | 供应商卡片（显示名 / Base URL / key write-only / 模型行编辑器）+ ⟳ 自动获取 + 桥接模型；保存按钮只在本页 |
+  | 代理与技能 `agents` | 三个角色（lead / mcmod / modeling）的可调用工具 chips 与技能勾选分配（`PATCH /api/agents/:id/skills`，覆盖写 `data/agent-skills.json`）；技能库列表 + **自注入**（新建/编辑/删除 SKILL.md，热扫描下个会话生效） |
   | 子代理 `subagent` | 并发上限 Stepper（1–8）、结算后自动唤醒、对话里显示运行状态 |
   | 自动化 `automation` | 画布自动唤醒开关 + **最近的唤醒**列表（时刻 + 原因，数据来自 §10 的 `wakeLog`） |
 
@@ -408,7 +409,7 @@ interface PluginContext {
   | `modOutput` | '' | **mod-output：jar 导出保存目录**。标题栏「jar ⤓」把最新构建产物复制到这里（`POST /api/mc/export`，`resolveDir` 校验目录存在）；留空时按钮回退为浏览器下载 |
 
 - **即时保存**：设置面板除模型页外没有「保存」按钮——开关一动就 `PUT /api/settings {prefs, expectedRevision}`；成功回填 `res.prefs`，409/失败则**回滚到改动前的值**并 toast。服务端 `normalizePrefs()` 做容错 + 区间夹取，老 settings.json（还没有 prefs 字段）在构造时补默认，不需要迁移脚本。
-- **API**：`GET /api/settings`（redacted：key 只回 `{set}` 槽位，含 `prefs`）、`PUT /api/settings`（`{providers?, bridge?, prefs?, expectedRevision}`——三者任选、共用一次 revision 递增，`saveProviders()` 是它的薄包装）、`PUT /api/settings/credentials/:route`。
+- **API**：`GET /api/settings`（redacted：key 只回 `{set}` 槽位，含 `prefs`）、`PUT /api/settings`（`{providers?, bridge?, prefs?, expectedRevision}`——三者任选、共用一次 revision 递增，`saveProviders()` 是它的薄包装）、`PUT /api/settings/credentials/:route`；代理与技能：`GET /api/agents/detail`、`PATCH /api/agents/:id/skills`、`GET/PUT/DELETE /api/skills(/:name)`（PUT = 自注入，写 `skills/<name>/SKILL.md`，custom 标记存 `data/custom-skills.json`）。
 - **模型目录**：所有 provider 的 models 展开为复合 id `"<route>/<modelId>"`；无 key 置灰（MOCK 下放开）。字段解析顺序复刻 dsh `modelInfo()`：**条目显式值 → 内置官方目录（deepseek-flash/v4-pro）→ provider `defaultContextWindow` → `DEFAULT_CONTEXT_WINDOW`（1,000,000）**，所以 `contextWindow` 永远有值，压缩不会因为"没填窗口"而瞎猜。
 - **模型页 UI**：供应商卡片（显示名/Base URL/API key write-only/模型行编辑器：id、显示名、上下文窗口、👁视觉、需会员/删除）+「⟳ 自动获取」+「桥接模型」卡片（开关+模型下拉）。进设置时会用 `/api/models` 的**生效值**回填 vision/上下文/显示名，所见即真正生效的能力。
 - **自动获取（复刻 dsh pi-ai discovery + `llm-deepseek/src/listing.ts`）**：解析端点 `{baseURL}/models`，接受 `data` 数组或 `models` map；上下文窗口别名 `context_window / context_length / max_input_tokens / max_context_length / max_model_len / top_provider.context_length`；输出上限别名 `max_output_tokens / max_tokens / top_provider.max_completion_tokens`；模态读 `input_modalities / architecture.input_modalities / input / supports_vision / capabilities.vision` → 直接填好 `contextWindow` 与 👁，保存后即用于图片判定与压缩阈值。

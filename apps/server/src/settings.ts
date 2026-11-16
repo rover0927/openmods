@@ -67,6 +67,8 @@ export interface BridgeConfig {
 export interface PrefsConfig {
   /** 对话正文字号（dsh ui-theme FontSizeRow）：13 / 14 / 15 */
   fontSize: number
+  /** 主题：dark / light。前端写到 documentElement[data-theme]，styles.css 两套 token 分支切换 */
+  theme: 'dark' | 'light'
   /** 发送键（dsh EnterBehaviorRow）：true = Enter 发送、Shift+Enter 换行 */
   enterToSend: boolean
   /** 同时运行的子代理上限（dsh SubagentLimitsFields） */
@@ -83,6 +85,7 @@ export interface PrefsConfig {
 
 export const DEFAULT_PREFS: PrefsConfig = {
   fontSize: 14,
+  theme: 'dark',
   enterToSend: true,
   maxActiveSubagents: 4,
   autoWake: true,
@@ -107,6 +110,7 @@ export function normalizePrefs(raw: any): PrefsConfig {
   }
   return {
     fontSize: num(p.fontSize, 12, 18, DEFAULT_PREFS.fontSize),
+    theme: p.theme === 'light' ? 'light' : 'dark',
     enterToSend: typeof p.enterToSend === 'boolean' ? p.enterToSend : DEFAULT_PREFS.enterToSend,
     maxActiveSubagents: num(p.maxActiveSubagents, 1, 8, DEFAULT_PREFS.maxActiveSubagents),
     autoWake: typeof p.autoWake === 'boolean' ? p.autoWake : DEFAULT_PREFS.autoWake,

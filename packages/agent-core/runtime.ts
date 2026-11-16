@@ -48,6 +48,8 @@ export interface AgentProfile {
   toolFilter?: string[]
   /** 工具排除名单（优先于白名单） */
   toolExclude?: string[]
+  /** 技能白名单（系统提示只列这些、load_skill 只放行这些）；缺省 = 全部 */
+  skills?: string[]
 }
 
 /**
@@ -390,9 +392,11 @@ function toOpenAiTools(defs: ToolDef[]) {
 }
 
 function filterToolsForProfile(tools: ToolDef[], profileId: string | undefined, profiles: Record<string, AgentProfile>): ToolDef[] {
-  const filter = profileId ? profiles[profileId]?.toolFilter : undefined
-  if (!filter) return tools
-  return tools.filter(t => filter.includes(t.name))
+  const profile = profileId ? profiles[profileId] : undefined
+  let scoped = tools
+  if (profile?.toolFilter) scoped = scoped.filter(t => profile.toolFilter!.includes(t.name))
+  if (profile?.toolExclude) scoped = scoped.filter(t => !profile.toolExclude!.includes(t.name))
+  return scoped
 }
 
 /** 角色白名单 + 动态 gate（exit_plan_mode 只在计划模式下出现） */
@@ -449,6 +453,7 @@ export function buildSystemPrompt(
   const profile = profileId ? registries.profiles[profileId] : undefined
   const turnTools = selectTools(registries.tools, profileId, registries.profiles, session ?? { planMode: deps.planMode?.() ?? false })
   const skillList = registries.skillProviders.flatMap(p => p.list())
+    .filter(s => !profile?.skills || profile.skills.includes(s.name))
   const lines: string[] = []
   if (profile) {
     lines.push(`[代理角色：${profile.name}] ${profile.prompt}`)

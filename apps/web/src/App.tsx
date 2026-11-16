@@ -284,6 +284,8 @@ export default function App() {
   const applyPrefs = useCallback((p: PrefsDto) => {
     setPrefs(p)
     document.documentElement.style.setProperty('--content-font', `${p.fontSize}px`)
+    // 主题切换：styles.css 的 [data-theme='light'] 分支整体换 token（画布/终端保持深色）
+    document.documentElement.dataset.theme = p.theme
   }, [])
 
   useEffect(() => {

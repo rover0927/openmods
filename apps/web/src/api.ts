@@ -282,4 +282,25 @@ export const api = {
     }),
   /** 下载构建出的 mod jar */
   mcJarUrl: (path: string) => `/api/mc/jar?path=${encodeURIComponent(path)}`,
+
+  // ---- 设置 → 代理与技能 ----
+  agentsDetail: () =>
+    jfetch<{ agents: import('./types.js').AgentDetailDto[]; allSkills: import('./types.js').SkillMetaDto[] }>('/api/agents/detail'),
+  setAgentSkills: (id: string, skills: string[]) =>
+    jfetch<{ ok: boolean; skills: string[] }>(`/api/agents/${encodeURIComponent(id)}/skills`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ skills }),
+    }),
+  skills: () => jfetch<{ skills: import('./types.js').SkillMetaDto[] }>('/api/skills'),
+  skill: (name: string) =>
+    jfetch<import('./types.js').SkillContentDto>(`/api/skills/${encodeURIComponent(name)}`),
+  saveSkill: (name: string, body: { description: string; content: string }) =>
+    jfetch<{ ok: boolean; name: string; description: string }>(`/api/skills/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  deleteSkill: (name: string) =>
+    jfetch<{ ok: boolean }>(`/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 }

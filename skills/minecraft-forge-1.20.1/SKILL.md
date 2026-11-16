@@ -46,6 +46,8 @@ Forge 47.x 与 1.20.1 严格对应；换 Forge 小版本只改 `gradle.propertie
 
 `modid` 必须小写、匹配 `[a-z][a-z0-9_]{1,63}`，并且与 `@Mod("<modid>")`、`gradle.properties` 的 `mod_id`、资源目录名完全一致。
 
+`gradle.properties` 的 Mod Properties（`mod_name` / `mod_description` / `mod_authors`）**只能写 ASCII**：Java Properties 按 ISO-8859-1 读取，中文经 `${mod_name}` 展开后在 mod 列表里全变 `?`。展示名用英文（如 `Basketball`），作者默认 `openmodsai`；名字与简介保持简洁，由你按 mod 内容定义。
+
 ## 3. 入口与注册
 
 ```java

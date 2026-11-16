@@ -27,6 +27,18 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: ReactNode }[] = [
     ),
   },
   {
+    id: 'agents',
+    label: '代理与技能',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+        <rect x="2.2" y="2.6" width="4.6" height="4.6" rx="1" />
+        <rect x="9.2" y="2.6" width="4.6" height="4.6" rx="1" />
+        <rect x="2.2" y="9.2" width="4.6" height="4.6" rx="1" />
+        <path d="M11.5 9.4v4.2M9.4 11.5h4.2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     id: 'subagent',
     label: '子代理',
     icon: (

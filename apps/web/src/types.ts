@@ -338,6 +338,8 @@ export interface BridgeConfigDto {
 /** 行为偏好（设置里的 通用 / 子代理 / 自动化 三页写的就是它） */
 export interface PrefsDto {
   fontSize: number
+  /** 主题：dark / light（写 documentElement[data-theme]） */
+  theme: 'dark' | 'light'
   enterToSend: boolean
   maxActiveSubagents: number
   /** 子代理全部结算后自动唤醒主会话汇总 */
@@ -435,4 +437,31 @@ export interface McProjectUiDto {
   runClientRunning: boolean
   runClientStartedAt?: number
   jars: { name: string; path: string; size: number; mtime: number }[]
+}
+
+// ---- 设置 → 代理与技能 ----
+export interface AgentToolMetaDto {
+  name: string
+  description: string
+}
+
+export interface AgentDetailDto {
+  id: string
+  name: string
+  prompt: string
+  tools: AgentToolMetaDto[]
+  skills: string[]
+}
+
+export interface SkillMetaDto {
+  name: string
+  description: string
+  /** 用户在设置里注入的技能 */
+  custom?: boolean
+}
+
+export interface SkillContentDto {
+  name: string
+  description: string
+  content: string
 }

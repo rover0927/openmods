@@ -1,7 +1,7 @@
 // openmods server：REST + SSE + 静态托管（web 构建 / /bb/ 无头 Blockbench）
 import Fastify from 'fastify'
 import fastifyStatic from '@fastify/static'
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -140,10 +140,19 @@ tools.push({
     properties: { name: { type: 'string', description: '技能名，如 blockbench-modeling' } },
     required: ['name'],
   },
-  async execute(args) {
+  async execute(args, exec) {
     const name = String(args.name ?? '').trim()
+    // 技能按角色分配（设置 → 代理与技能）：不在本角色清单里的拒绝加载
+    const entry = sessions.get(exec.sessionId)
+    const allowed = entry ? effectiveSkills(entry.profile) : undefined
     for (const provider of skillProviders) {
       if (provider.list().some(m => m.name === name)) {
+        if (allowed && !allowed.includes(name)) {
+          return {
+            forModel: `技能 "${name}" 未分配给当前角色（${entry?.profile ?? 'default'}）。可用: ${allowed.join(', ') || '无'}。`,
+            isError: true,
+          }
+        }
         return { forModel: await provider.load(name) }
       }
     }
@@ -164,6 +173,27 @@ const WORKSPACE_TOOLS = [
   'ask_user_question', 'todo_write', 'exit_plan_mode',
 ]
 
+// 各角色的默认技能分配（设置 → 代理与技能 可改，覆盖写进 data/agent-skills.json）。
+// mcmod 只吃 Forge 技能；modeling 只吃画布三件套；lead 全量。
+const PROFILE_SKILLS: Record<string, string[]> = {
+  lead: ['blockbench-modeling', 'blockbench-texturing', 'blockbench-use', 'minecraft-forge-1.20.1'],
+  mcmod: ['minecraft-forge-1.20.1'],
+  modeling: ['blockbench-modeling', 'blockbench-texturing', 'blockbench-use'],
+}
+const SKILLS_OVERRIDES_PATH = join(ROOT, 'data', 'agent-skills.json')
+let profileSkillsOverrides: Record<string, string[]> = {}
+try {
+  profileSkillsOverrides = JSON.parse(readFileSync(SKILLS_OVERRIDES_PATH, 'utf8'))
+} catch { /* 首次运行没有覆盖文件 */ }
+/** 生效的技能分配：持久化覆盖 > 代码内默认 */
+function effectiveSkills(profileId: string): string[] {
+  return profileSkillsOverrides[profileId] ?? PROFILE_SKILLS[profileId] ?? []
+}
+function saveSkillsOverrides() {
+  mkdirSync(dirname(SKILLS_OVERRIDES_PATH), { recursive: true })
+  writeFileSync(SKILLS_OVERRIDES_PATH, JSON.stringify(profileSkillsOverrides, null, 2))
+}
+
 // 代理角色档案（复刻 dsh agentPreset 的简化版）：lead=主代理，modeling=建模子代理
 const AGENT_PROFILES: Record<string, import('@openmods/agent-core').AgentProfile> = {
   lead: {
@@ -178,6 +208,7 @@ const AGENT_PROFILES: Record<string, import('@openmods/agent-core').AgentProfile
       + '主会话会进入等待态（这期间用户不能插话），最后一只子代理结算时系统会自动开一轮汇总回合，把各子代理的收尾汇报交给你。'
       + '到了汇总回合，你必须先核对画布（list_outline / list_animations）、修补缺口或冲突，再向用户汇报成果，不能只说"已完成"。',
     toolFilter: ['load_skill', 'spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOLS],
+    skills: PROFILE_SKILLS.lead,
   },
   // 1.20.1 Forge 模组开发主代理：工程面工具（mcdev 插件）+ 完整工作台 + 建模委派。
   // 只做 Java + 1.20.1：越界的需求要在第一轮就说清不适用，不要自己改平台。
@@ -204,6 +235,7 @@ const AGENT_PROFILES: Record<string, import('@openmods/agent-core').AgentProfile
       'load_skill', 'mc_scaffold', 'mc_list', 'mc_read', 'mc_write', 'mc_gradle', 'mc_log', 'mc_export_model',
       'spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOLS,
     ],
+    skills: PROFILE_SKILLS.mcmod,
   },
   modeling: {
     id: 'modeling',
@@ -213,6 +245,7 @@ const AGENT_PROFILES: Record<string, import('@openmods/agent-core').AgentProfile
     toolExclude: [
       'spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOLS,
     ],
+    skills: PROFILE_SKILLS.modeling,
   },
 }
 
@@ -1090,6 +1123,114 @@ app.get('/api/profiles', async () => ({
     .filter(p => p.id !== 'modeling')
     .map(p => ({ id: p.id, name: p.name })),
 }))
+
+// ---- 设置 → 代理与技能 ----
+
+/** 按角色解析生效工具（与 runtime 的 selectTools 同一语义：白名单 ∩ 非排除） */
+function resolveProfileTools(profileId: string): { name: string; description: string }[] {
+  const p = AGENT_PROFILES[profileId]
+  if (!p) return []
+  let list = tools
+  if (p.toolFilter) list = list.filter(t => p.toolFilter!.includes(t.name))
+  if (p.toolExclude) list = list.filter(t => !p.toolExclude!.includes(t.name))
+  return list.map(t => ({ name: t.name, description: t.description.split('\n')[0] }))
+}
+
+/** 设置页看全三个角色（含 modeling 子代理）：工具清单 + 技能分配 */
+app.get('/api/agents/detail', async () => ({
+  agents: Object.values(AGENT_PROFILES).map(p => ({
+    id: p.id,
+    name: p.name,
+    prompt: p.prompt,
+    tools: resolveProfileTools(p.id),
+    skills: effectiveSkills(p.id),
+  })),
+  allSkills: skillProviders.flatMap(p => p.list()),
+}))
+
+/** 改某角色的技能分配（持久化覆盖默认值） */
+app.patch('/api/agents/:id/skills', async (req, reply) => {
+  const { id } = req.params as { id: string }
+  if (!AGENT_PROFILES[id]) return reply.code(404).send({ error: `角色不存在: ${id}` })
+  const { skills } = req.body as { skills?: unknown }
+  if (!Array.isArray(skills) || skills.some(s => typeof s !== 'string')) {
+    return reply.code(400).send({ error: 'skills 必须是字符串数组' })
+  }
+  const known = new Set(skillProviders.flatMap(p => p.list().map(m => m.name)))
+  profileSkillsOverrides[id] = [...new Set(skills.map(String))].filter(s => known.has(s))
+  saveSkillsOverrides()
+  return { ok: true, skills: profileSkillsOverrides[id] }
+})
+
+const CUSTOM_SKILLS_PATH = join(ROOT, 'data', 'custom-skills.json')
+function readCustomSkills(): string[] {
+  try { return JSON.parse(readFileSync(CUSTOM_SKILLS_PATH, 'utf8')) } catch { return [] }
+}
+function writeCustomSkills(names: string[]) {
+  mkdirSync(dirname(CUSTOM_SKILLS_PATH), { recursive: true })
+  writeFileSync(CUSTOM_SKILLS_PATH, JSON.stringify(names, null, 2))
+}
+const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/
+
+/** 技能列表（custom 标记用户注入的） */
+app.get('/api/skills', async () => {
+  const custom = new Set(readCustomSkills())
+  return { skills: skillProviders.flatMap(p => p.list()).map(s => ({ ...s, custom: custom.has(s.name) })) }
+})
+
+/** 读技能全文（编辑用） */
+app.get('/api/skills/:name', async (req, reply) => {
+  const { name } = req.params as { name: string }
+  const meta = skillProviders.flatMap(p => p.list()).find(s => s.name === name)
+  if (!meta) return reply.code(404).send({ error: `技能不存在: ${name}` })
+  try {
+    return { name, description: meta.description, content: readFileSync(join(SKILLS_DIR, name, 'SKILL.md'), 'utf8') }
+  } catch (e: any) {
+    return reply.code(500).send({ error: e?.message ?? String(e) })
+  }
+})
+
+/** 注入/更新技能：写 skills/<name>/SKILL.md（热扫描，下一次会话即生效） */
+app.put('/api/skills/:name', async (req, reply) => {
+  const { name } = req.params as { name: string }
+  if (!SKILL_NAME_RE.test(name)) return reply.code(400).send({ error: '技能名只能用小写字母/数字/连字符（2-64 位）' })
+  const { description, content } = req.body as { description?: unknown; content?: unknown }
+  const desc = String(description ?? '').trim().slice(0, 300)
+  const body = String(content ?? '').slice(0, 400_000)
+  if (!desc) return reply.code(400).send({ error: 'description 不能为空（会进系统提示，模型靠它决定是否加载）' })
+  if (!body.trim()) return reply.code(400).send({ error: 'content 不能为空' })
+  // 内置技能只读：磁盘上已存在且不在 custom 清单里的名字不允许覆盖（保护随项目分发的技能）
+  if (existsSync(join(SKILLS_DIR, name, 'SKILL.md')) && !readCustomSkills().includes(name)) {
+    return reply.code(400).send({ error: '内置技能只读，不能覆盖；请换个名字注入' })
+  }
+  const dir = join(SKILLS_DIR, name)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${desc}\n---\n\n${body}\n`)
+  const custom = readCustomSkills()
+  if (!custom.includes(name)) writeCustomSkills([...custom, name])
+  return { ok: true, name, description: desc }
+})
+
+/** 删除技能（含目录）；仍被角色分配引用时先从分配里摘除 */
+app.delete('/api/skills/:name', async (req, reply) => {
+  const { name } = req.params as { name: string }
+  const dir = join(SKILLS_DIR, name)
+  if (!existsSync(join(dir, 'SKILL.md'))) return reply.code(404).send({ error: `技能不存在: ${name}` })
+  // 内置技能不可删除（只能删用户注入的）
+  if (!readCustomSkills().includes(name)) {
+    return reply.code(400).send({ error: '内置技能不可删除（随项目分发，仅可查看）' })
+  }
+  rmSync(dir, { recursive: true, force: true })
+  writeCustomSkills(readCustomSkills().filter(n => n !== name))
+  for (const id of Object.keys(AGENT_PROFILES)) {
+    if (profileSkillsOverrides[id]) {
+      profileSkillsOverrides[id] = profileSkillsOverrides[id].filter(s => s !== name)
+    }
+  }
+  saveSkillsOverrides()
+  return { ok: true }
+})
+
 
 // 模型目录：settings 动态合成（供应商 + 模型，含 key 状态）
 app.get('/api/models', async () => {

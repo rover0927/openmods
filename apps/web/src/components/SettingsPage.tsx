@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api.js'
 import type { PrefsDto, WakeEntry } from '../types.js'
+import { AgentsSkillsPane } from './AgentSkillsPane.js'
 
-export type SettingsSectionId = 'general' | 'models' | 'subagent' | 'automation'
+export type SettingsSectionId = 'general' | 'models' | 'agents' | 'subagent' | 'automation'
 
 interface DraftModel {
   id: string
@@ -27,6 +28,7 @@ const ROUTE_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 
 const DEFAULT_PREFS: PrefsDto = {
   fontSize: 14,
+  theme: 'dark',
   enterToSend: true,
   maxActiveSubagents: 4,
   autoWake: true,
@@ -287,11 +289,11 @@ export function SettingsPage(props: {
 
         <div className="setting-group">
           <div className="setting-group-title">外观</div>
-          <Row label="主题" hint="当前构建只带深色主题（dsh design-platform 的 dark alias）">
-            <Seg
-              value="dark"
-              options={[{ value: 'dark', label: '深色' }, { value: 'light', label: '浅色', disabled: true }]}
-              onChange={() => {}}
+          <Row label="主题" hint="深色 / 浅色，切换即时生效（建模画布与终端保持深色）">
+            <Seg<'dark' | 'light'>
+              value={prefs.theme}
+              options={[{ value: 'dark', label: '深色' }, { value: 'light', label: '浅色' }]}
+              onChange={v => void patchPrefs({ theme: v })}
             />
           </Row>
           <Row label="字号" hint="对话正文与输入框的字号，行高保持 24px 节奏">
@@ -344,6 +346,11 @@ export function SettingsPage(props: {
         </div>
       </div>
     )
+  }
+
+  // ---- 代理与技能 ----
+  if (props.section === 'agents') {
+    return <AgentsSkillsPane onToast={props.onToast} />
   }
 
   // ---- 子代理 ----
