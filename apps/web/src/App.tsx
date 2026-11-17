@@ -11,6 +11,7 @@ import { MainPanel } from './components/MainPanel.js'
 import { DOCK_TABS, RightDock, useDockDrag, type DockTabId } from './components/RightDock.js'
 import { SettingsWindow } from './components/SettingsWindow.js'
 import { AskDialog, type InteractionReplyBody } from './components/AskDialog.js'
+import { playToastSound, setUiSoundEnabled } from './ui-sound.js'
 
 
 const MODELING_SUGGESTIONS = [
@@ -267,6 +268,7 @@ export default function App() {
 
   /** 提示条：可带一个操作按钮（dsh 的「会话已归档，可 撤销」同款） */
   const showToast = useCallback((msg: string, action?: { label: string; run: () => void }) => {
+    playToastSound()
     setToast({ text: msg, action })
     setTimeout(() => setToast(null), action ? 8000 : 5000)
   }, [])
@@ -386,8 +388,10 @@ export default function App() {
   const applyPrefs = useCallback((p: PrefsDto) => {
     setPrefs(p)
     document.documentElement.style.setProperty('--content-font', `${p.fontSize}px`)
-    // 主题切换：styles.css 的 [data-theme='light'] 分支整体换 token（画布/终端保持深色）
+    // MC 主题：写 documentElement[data-theme]，mc-theme.css 按主题覆盖 --mc-* 令牌（画布/终端保持深色）
     document.documentElement.dataset.theme = p.theme
+    // 界面音效：点击 / 切换到提示音的总开关
+    setUiSoundEnabled(p.uiSound !== false)
   }, [])
 
   useEffect(() => {
@@ -772,10 +776,13 @@ export default function App() {
       const assetId = page.assetId
       lastModelRef.current = null // 素材页签不影响画布页的缓存
       setCanvasLoading(true)
+      // 素材页按素材自身的数据显示状态条（不写画布缓存，切回画布页会还原）
+      setCanvas({ ...emptyCanvas(), modelName: page.assetName ?? '' })
       sendToBridge({ type: 'load_bbmodel', model: null })
       api.libraryModel(assetId).then(model => {
         if (activeCanvasPageRef.current !== page.key) return
         setAssetAnims(prev => ({ ...prev, [assetId]: toAnims(model) }))
+        setCanvas(modelToCanvasState(model))
         setCanvasLoading(false)
         sendToBridge({ type: 'load_bbmodel', model })
       }).catch(e => { setCanvasLoading(false); showToast(`打开素材失败：${e.message}`) })

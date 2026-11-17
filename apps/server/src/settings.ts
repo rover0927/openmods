@@ -60,6 +60,10 @@ export interface BridgeConfig {
   modelId?: string
 }
 
+/** MC 主题 id：前端写到 documentElement[data-theme]，mc-theme.css 按主题覆盖 --mc-* 令牌 */
+export const MC_THEMES = ['mc-grass', 'mc-cherry', 'mc-ocean', 'mc-nether', 'mc-end'] as const
+export type McTheme = typeof MC_THEMES[number]
+
 /**
  * 偏好：对应 dsh 设置里那些"行为开关"（general / subagent / 自动唤醒）。
  * 与 providers 分开存，但同一条 revision 乐观锁——一次保存是一个事务。
@@ -67,8 +71,8 @@ export interface BridgeConfig {
 export interface PrefsConfig {
   /** 对话正文字号（dsh ui-theme FontSizeRow）：13 / 14 / 15 */
   fontSize: number
-  /** 主题：dark / light。前端写到 documentElement[data-theme]，styles.css 两套 token 分支切换 */
-  theme: 'dark' | 'light'
+  /** MC 主题（mc-grass / mc-cherry / mc-ocean / mc-nether / mc-end） */
+  theme: McTheme
   /** 发送键（dsh EnterBehaviorRow）：true = Enter 发送、Shift+Enter 换行 */
   enterToSend: boolean
   /** 同时运行的子代理上限（dsh SubagentLimitsFields） */
@@ -79,6 +83,8 @@ export interface PrefsConfig {
   canvasAutoWake: boolean
   /** 把运行中的子代理显示在当前对话里（而不是右上角浮层） */
   inlineSubagents: boolean
+  /** 界面音效：点击 / 切换 / 提示条播放 MC 原版 UI 音效 */
+  uiSound: boolean
   /** mod-output：jar 导出保存目录（构建产物一键复制到这里；空 = 未配置，走浏览器下载） */
   modOutput: string
   /** 功能开关：canvas / mc / library（改动需重启，服务启动时按它决定加载哪些插件） */
@@ -87,12 +93,13 @@ export interface PrefsConfig {
 
 export const DEFAULT_PREFS: PrefsConfig = {
   fontSize: 14,
-  theme: 'dark',
+  theme: 'mc-grass',
   enterToSend: true,
   maxActiveSubagents: 4,
   autoWake: true,
   canvasAutoWake: true,
   inlineSubagents: true,
+  uiSound: true,
   modOutput: '',
   features: {},
 }
@@ -113,12 +120,13 @@ export function normalizePrefs(raw: any): PrefsConfig {
   }
   return {
     fontSize: num(p.fontSize, 12, 18, DEFAULT_PREFS.fontSize),
-    theme: p.theme === 'light' ? 'light' : 'dark',
+    theme: (MC_THEMES as readonly string[]).includes(p.theme) ? p.theme as McTheme : DEFAULT_PREFS.theme,
     enterToSend: typeof p.enterToSend === 'boolean' ? p.enterToSend : DEFAULT_PREFS.enterToSend,
     maxActiveSubagents: num(p.maxActiveSubagents, 1, 8, DEFAULT_PREFS.maxActiveSubagents),
     autoWake: typeof p.autoWake === 'boolean' ? p.autoWake : DEFAULT_PREFS.autoWake,
     canvasAutoWake: typeof p.canvasAutoWake === 'boolean' ? p.canvasAutoWake : DEFAULT_PREFS.canvasAutoWake,
     inlineSubagents: typeof p.inlineSubagents === 'boolean' ? p.inlineSubagents : DEFAULT_PREFS.inlineSubagents,
+    uiSound: typeof p.uiSound === 'boolean' ? p.uiSound : DEFAULT_PREFS.uiSound,
     modOutput: typeof p.modOutput === 'string' ? p.modOutput.trim().slice(0, 500) : DEFAULT_PREFS.modOutput,
     features: (() => {
       const raw = p.features && typeof p.features === 'object' ? p.features : {}

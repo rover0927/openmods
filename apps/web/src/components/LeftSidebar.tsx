@@ -372,7 +372,7 @@ export function LeftSidebar(props: {
 
       {rail ? (
         <div className="sb-rail-list">
-          <button className="sb-rail-btn" title="新建项目" onClick={() => { setRail(false); setCreating(true); setNewTitle(''); setNewCwd('') }}><McIcon name="newGroup" size={16} /></button>
+          {/* 新建项目已由上方 .sb-new（图标态）承担，这里不再重复一个同图标按钮 */}
           {props.libraryEnabled !== false && (
             <button className="sb-rail-btn" title="文档素材库" onClick={props.onOpenLibrary}><McIcon name="library" size={16} /></button>
           )}

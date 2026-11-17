@@ -33,6 +33,9 @@
         grid-template-areas: "center" !important;
       }
       html, body { overflow: hidden !important; background: #060806; }
+      /* kiosk 没有菜单栏：#page_wrapper 原本 height:calc(100% - 30px) 会留出一条黑边，归零并兜底 100% */
+      html.bb-kiosk body { --menu-bar-height: 0px !important; }
+      html.bb-kiosk #page_wrapper { height: 100% !important; border: 0 !important; }
       #page_wrapper, #work_screen, #center { position: absolute; inset: 0; }
       #center { width: 100% !important; margin: 0 !important; }
       #preview { position: absolute !important; inset: 0 !important; height: 100% !important; width: 100% !important; }

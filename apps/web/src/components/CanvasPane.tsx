@@ -8,9 +8,11 @@ interface Props {
   /** 重新拉一次当前画布的模型（非活跃画布没有缓存时用；不阻塞界面） */
   onReload?: () => void
   reloadEnabled?: boolean
+  /** 空态提示只属于会话画布：素材预览 / 加载中不显示「画布还是空的」 */
+  emptyHint?: boolean
 }
 
-export function CanvasPane({ canvas, iframeRef, onIframeReady, onReload, reloadEnabled }: Props) {
+export function CanvasPane({ canvas, iframeRef, onIframeReady, onReload, reloadEnabled, emptyHint }: Props) {
   const readySent = useRef(false)
 
   useEffect(() => {
@@ -28,7 +30,7 @@ export function CanvasPane({ canvas, iframeRef, onIframeReady, onReload, reloadE
     <section className="canvas-pane">
       <div className="canvas-area">
         <iframe ref={iframeRef} className="bb-iframe" src="/bb/index.html" title="Blockbench 只读画布" />
-        {!canvas.hasModel && (
+        {emptyHint && !canvas.hasModel && (
           <div className="canvas-empty">
             <div className="canvas-empty-title">画布还是空的</div>
             <div className="canvas-empty-sub">在右边描述你想要的模型，AI 会在这里一步步做出来。</div>

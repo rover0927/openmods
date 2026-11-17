@@ -28,15 +28,25 @@ const ROUTE_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 
 const DEFAULT_PREFS: PrefsDto = {
   fontSize: 14,
-  theme: 'dark',
+  theme: 'mc-grass',
   enterToSend: true,
   maxActiveSubagents: 4,
   autoWake: true,
   canvasAutoWake: true,
   inlineSubagents: true,
+  uiSound: true,
   modOutput: '',
   features: {},
 }
+
+/** 可选 MC 主题：swatch 用对应方块贴图平铺，底部压一条强调色 */
+const THEMES: { id: PrefsDto['theme']; name: string; tex: string; accent: string }[] = [
+  { id: 'mc-grass', name: '草方块', tex: '/mc/block/grass_block_top.png', accent: '#8bdc5a' },
+  { id: 'mc-cherry', name: '樱花原野', tex: '/mc/block/cherry_planks.png', accent: '#f2a0b8' },
+  { id: 'mc-ocean', name: '深海海晶', tex: '/mc/block/prismarine.png', accent: '#4fd6c8' },
+  { id: 'mc-nether', name: '下界绯红', tex: '/mc/block/crimson_planks.png', accent: '#ff7a45' },
+  { id: 'mc-end', name: '末地砂石英', tex: '/mc/block/quartz_block_side.png', accent: '#b98cf0' },
+]
 
 // ---- 设置控件（dsh SettingsRow / Switch / Segmented / Stepper 的对应物） ----
 
@@ -315,12 +325,25 @@ export function SettingsPage(props: {
 
         <div className="setting-group">
           <div className="setting-group-title">外观</div>
-          <Row label="主题" hint="MC 像素皮肤固定深色，主题切换已停用">
-            <Seg<'dark' | 'light'>
-              value="dark"
-              options={[{ value: 'dark', label: 'MC 像素（固定深色）', disabled: true }, { value: 'light', label: '浅色', disabled: true }]}
-              onChange={() => {}}
-            />
+          <Row label="主题" hint="MC 像素皮肤：点卡片即选即生效（画布与终端保持深色）">
+            <div className="theme-cards">
+              {THEMES.map(t => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`theme-card ${prefs.theme === t.id ? 'active' : ''}`}
+                  onClick={() => void patchPrefs({ theme: t.id })}
+                  title={`切换到「${t.name}」主题`}
+                  aria-pressed={prefs.theme === t.id}
+                >
+                  <span
+                    className="theme-card-swatch"
+                    style={{ backgroundImage: `url(${t.tex})`, ['--theme-accent' as any]: t.accent }}
+                  />
+                  <span className="theme-card-name">{t.name}</span>
+                </button>
+              ))}
+            </div>
           </Row>
           <Row label="字号" hint="对话正文与输入框的字号，行高保持 24px 节奏">
             <Seg
@@ -328,6 +351,9 @@ export function SettingsPage(props: {
               options={[{ value: 13, label: '小' }, { value: 14, label: '标准' }, { value: 15, label: '大' }]}
               onChange={v => void patchPrefs({ fontSize: v })}
             />
+          </Row>
+          <Row label="界面音效" hint="点击按钮、切换页签与提示条播放 MC 原版 UI 音效">
+            <Switch on={prefs.uiSound !== false} onChange={v => void patchPrefs({ uiSound: v })} />
           </Row>
         </div>
 

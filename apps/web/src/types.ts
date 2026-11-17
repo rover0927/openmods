@@ -373,8 +373,8 @@ export interface BridgeConfigDto {
 /** 行为偏好（设置里的 通用 / 子代理 / 自动化 三页写的就是它） */
 export interface PrefsDto {
   fontSize: number
-  /** 主题：dark / light（写 documentElement[data-theme]） */
-  theme: 'dark' | 'light'
+  /** MC 主题 id（写 documentElement[data-theme]，mc-theme.css 按主题覆盖令牌） */
+  theme: 'mc-grass' | 'mc-cherry' | 'mc-ocean' | 'mc-nether' | 'mc-end'
   enterToSend: boolean
   maxActiveSubagents: number
   /** 子代理全部结算后自动唤醒主会话汇总 */
@@ -383,6 +383,8 @@ export interface PrefsDto {
   canvasAutoWake: boolean
   /** 运行中的子代理显示在当前对话里 */
   inlineSubagents: boolean
+  /** 界面音效：点击 / 切换 / 提示条播放 MC 原版 UI 音效 */
+  uiSound: boolean
   /** mod-output：jar 导出保存目录（空 = 未配置，jar 按钮回退浏览器下载） */
   modOutput: string
   /** 功能开关（canvas / mc / library …）；改动需重启生效 */

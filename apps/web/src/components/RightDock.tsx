@@ -304,6 +304,7 @@ export function RightDock(props: {
                   onIframeReady={props.onIframeReady}
                   onReload={props.onReloadCanvas}
                   reloadEnabled={activePage?.kind === 'canvas' && !props.canvas.hasModel}
+                  emptyHint={activePage?.kind === 'canvas' && !props.canvasLoading}
                 />
               </div>
             )}
@@ -330,7 +331,7 @@ export function RightDock(props: {
             )}
             {!showPicker && (
               <div className="dock-composer">
-                {!props.canvas.hasModel && (
+                {!props.canvas.hasModel && activePage?.kind === 'canvas' && (
                   <div className="suggestions">
                     {props.suggestions.map(s => (
                       <button key={s} className="suggestion" disabled={props.busy} onClick={() => props.onSuggestion(s)}>{s}</button>

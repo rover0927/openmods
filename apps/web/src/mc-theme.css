@@ -1,14 +1,14 @@
-/* ==========================================================================
+﻿/* ==========================================================================
    openmods · Minecraft 像素皮肤
    在 styles.css 之后加载：只覆盖令牌与组件选择器，不改原有布局规则。
    素材：物品图标 / 方块贴图来自 Minecraft 官方资源（public/mc），仅本地原型用途。
    ========================================================================== */
 
-/* ---- A. 令牌覆盖：强制 MC 深色 ---------------------------------------- */
-/* 同时匹配 light/dark 主题块，避免被 styles.css 里更高特异性的浅色令牌覆盖 */
+/* ---- A. 令牌覆盖：MC 主题（默认草方块） -------------------------------- */
+/* 默认主题同时匹配「未写 data-theme」与 data-theme='mc-grass'；
+   其它主题在文件末尾 section M 覆盖同一组 --mc-* 令牌即可换肤。 */
 :root,
-:root[data-theme='light'],
-:root[data-theme='dark'] {
+:root[data-theme='mc-grass'] {
   --bg-base: #1b1712;
   --bg-layer-1: #231d16;
   --bg-layer-2: #2a231b;
@@ -23,7 +23,7 @@
   --label-primary: #efe9dd;
   --label-secondary: #cec3b2;
   --label-tertiary: #9b8c78;
-  --accent: #8bdc5a;
+  --accent: var(--mc-accent);
   --accent-hover: #63b83f;
   --success: #8bdc5a;
   --warn: #e0a020;
@@ -31,11 +31,39 @@
   --interactive-hover: #3a3024;
   --interactive-active: #2f271d;
 
-  --mc-bevel-light: #6b5a44;
-  --mc-bevel-dark: #0f0c08;
+  /* MC 换肤令牌：主题块只覆盖这一组 */
+  --mc-deep: #231d16;
   --mc-face: #2a231b;
   --mc-face-raised: #382f24;
+  --mc-panel-2: #332b21;
+  --mc-title: #2c241a;
   --mc-slot: #16110c;
+  --mc-bevel-light: #6b5a44;
+  --mc-bevel-hi: #8a7458;
+  --mc-bevel-dark: #0f0c08;
+  --mc-slot-light: #5c4c38;
+  --mc-slot-dark: #0a0806;
+  --mc-groove: #14100b;
+  --mc-hover: #3a3024;
+  --mc-hover-2: #3a3a3a;
+  --mc-line: #5d8c2f;
+  --mc-line-dark: #2f4a18;
+  --mc-accent: #8bdc5a;
+  --mc-accent-rgb: 139, 220, 90;
+  --mc-accent-hi: #8ee06b;
+  --mc-accent-soft: #b8f49c;
+  --mc-accent-deep: #1f3d16;
+  --mc-accent-dim: #26361e;
+  --mc-accent-text: #b6f09b;
+  --mc-accent-ink: #10240a;
+  --mc-primary-1: #8fd96b;
+  --mc-primary-2: #5aa83e;
+  --mc-primary-1-hi: #a2e57f;
+  --mc-primary-2-hi: #6cbb4c;
+  /* 主操作按钮贴图（草方块=草皮顶面）；主题块换成对应木板/石料 */
+  --mc-primary-tint: linear-gradient(rgba(86, 150, 58, 0.5), rgba(86, 150, 58, 0.5));
+  --mc-primary-tint-hover: linear-gradient(rgba(110, 180, 76, 0.5), rgba(110, 180, 76, 0.5));
+  --mc-tex-primary: var(--mc-tex-grass-top);
 
   --radius-xs: 0px;
   --radius-sm: 0px;
@@ -45,7 +73,7 @@
 }
 
 body {
-  background-color: #191410;
+  background-color: var(--mc-deep);
   background-image:
     repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.022) 0 2px, transparent 2px 16px),
     repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.07) 0 2px, transparent 2px 16px);
@@ -54,16 +82,16 @@ body {
 
 /* 草方块主题：品牌头做「草皮在上、泥土在下」的分界，名字用草绿 */
 .sb-brand {
-  background: linear-gradient(#3a3025, var(--mc-face));
-  border-bottom: 3px solid #5d8c2f;
-  box-shadow: inset 0 -1px 0 #2f4a18;
+  background: linear-gradient(var(--mc-title), var(--mc-face));
+  border-bottom: 3px solid var(--mc-line);
+  box-shadow: inset 0 -1px 0 var(--mc-line-dark);
 }
 .sb-brand-main { gap: 12px; }
 .sb-name {
   color: var(--accent);
-  text-shadow: 2px 2px 0 #10240a;
+  text-shadow: 2px 2px 0 var(--mc-accent-ink);
 }
-.chat-head { border-bottom: 3px solid #5d8c2f; }
+.chat-head { border-bottom: 3px solid var(--mc-line); }
 
 /* 标题类文字：MC 的硬阴影，不做平滑发光 */
 .sb-name,
@@ -180,25 +208,25 @@ body {
 .model-chip.on,
 .model-chip.auto,
 .lib-chip.active {
-  background: linear-gradient(#5fbb46, #468a33);
-  border-color: #8ee06b #1f3d16 #1f3d16 #8ee06b;
+  background: linear-gradient(var(--mc-accent), var(--mc-accent-deep));
+  border-color: var(--mc-accent-hi) var(--mc-accent-deep) var(--mc-accent-deep) var(--mc-accent-hi);
   color: #f2fff0;
 }
 
 /* 发送键：草绿凸起，带箭头的像素跳动 */
 .send-btn {
-  background: linear-gradient(#7ed957, #56a33c);
+  background: linear-gradient(var(--mc-primary-1), var(--mc-primary-2));
   border: 2px solid;
-  border-color: #a8f08a #1f3d16 #1f3d16 #a8f08a;
+  border-color: var(--mc-accent-soft) var(--mc-accent-deep) var(--mc-accent-deep) var(--mc-accent-soft);
   border-radius: 0;
   color: #14270d;
   text-shadow: none;
   transition: background 0.1s steps(1), transform 0.05s steps(1);
 }
-.send-btn:hover:not(:disabled) { background: linear-gradient(#8ee06b, #5fbb46); }
+.send-btn:hover:not(:disabled) { background: linear-gradient(var(--mc-accent-hi), var(--mc-accent)); }
 .send-btn:active:not(:disabled) {
   transform: translateY(2px);
-  border-color: #1f3d16 #a8f08a #a8f08a #1f3d16;
+  border-color: var(--mc-accent-deep) var(--mc-accent-soft) var(--mc-accent-soft) var(--mc-accent-deep);
 }
 
 /* 输入：内凹槽位 */
@@ -211,7 +239,7 @@ select.model-chip,
   background: var(--mc-slot);
   color: var(--label-primary);
   border: 2px solid;
-  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
   border-radius: 0;
   box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.45);
   caret-color: var(--accent);
@@ -227,9 +255,9 @@ select.model-chip:focus {
 /* 输入区：MC GUI 窗口（凸起外框）+ 底部物品栏工具条（深色槽位） */
 .input-card,
 .composer-wrap > .input-card {
-  background: #2f2f2f;
+  background: var(--mc-panel-2);
   border: 2px solid;
-  border-color: #7a7a7a #141414 #141414 #7a7a7a;
+  border-color: #7a7a7a var(--mc-groove) var(--mc-groove) #7a7a7a;
   border-radius: 0;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 3px 0 rgba(0, 0, 0, 0.4);
 }
@@ -238,7 +266,7 @@ select.model-chip:focus {
   margin-top: 2px;
   padding: 6px 8px 0;
   gap: 6px;
-  border-top: 2px solid #141414;
+  border-top: 2px solid var(--mc-groove);
 }
 .input-row .icon-btn,
 .input-row .model-chip,
@@ -248,7 +276,7 @@ select.model-chip:focus {
   max-width: 220px;
   background: var(--mc-slot);
   border: 2px solid;
-  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
   border-radius: 0;
   color: #c6c6c6;
   text-shadow: none;
@@ -259,16 +287,16 @@ select.model-chip:focus {
 .input-row .icon-btn:hover,
 .input-row .model-chip:hover,
 .input-row .btn.stop:hover {
-  background: #2a2a2a;
+  background: var(--mc-hover-2);
   color: #ffffff;
-  border-color: #0d0d0d #5a5a5a #5a5a5a #0d0d0d;
+  border-color: var(--mc-slot-dark) #5a5a5a #5a5a5a var(--mc-slot-dark);
   transform: none;
 }
 .input-row .model-chip.on,
 .input-row .model-chip.auto {
-  background: #26361e;
-  border-color: #1f3d16 #8ee06b #8ee06b #1f3d16;
-  color: #b6f09b;
+  background: var(--mc-accent-dim);
+  border-color: var(--mc-accent-deep) var(--mc-accent-hi) var(--mc-accent-hi) var(--mc-accent-deep);
+  color: var(--mc-accent-text);
 }
 .input-row .model-chip:active,
 .input-row .icon-btn:active {
@@ -285,16 +313,16 @@ select.model-chip:focus {
 /* 右侧标签：物品栏页签；激活页签与面板连成一体 */
 .dock-head { border-bottom: 2px solid var(--mc-bevel-dark); }
 .dock-tab {
-  background: #232323;
+  background: var(--mc-title);
   border: 2px solid;
-  border-color: #4a4a4a #141414 #141414 #4a4a4a;
+  border-color: #4a4a4a var(--mc-groove) var(--mc-groove) #4a4a4a;
   border-bottom: 0;
   border-radius: 0;
   margin-right: 2px;
 }
 .dock-tab.active {
   background: var(--mc-face);
-  border-color: #7a7a7a #141414 transparent #7a7a7a;
+  border-color: #7a7a7a var(--mc-groove) transparent #7a7a7a;
   box-shadow: inset 0 2px 0 var(--accent);
 }
 .dock-tab.active .dock-tab-btn { background: transparent; border: 0; color: #fff; }
@@ -303,16 +331,16 @@ select.model-chip:focus {
 /* 菜单项 / 列表行：悬停草绿 */
 .dock-menu-item:hover,
 .menu-item:hover {
-  background: #3a3a3a;
+  background: var(--mc-hover-2);
   color: var(--accent);
 }
 .menu-backdrop { backdrop-filter: none; }
 
 /* 消息：用户气泡是深灰面板，助手保持无底 */
 .user-bubble {
-  background: #3a3a3a;
+  background: var(--mc-hover-2);
   border: 2px solid;
-  border-color: #5a5a5a #141414 #141414 #5a5a5a;
+  border-color: #5a5a5a var(--mc-groove) var(--mc-groove) #5a5a5a;
   border-radius: 0;
 }
 .assistant-bubble { background: transparent; border: 0; }
@@ -325,21 +353,21 @@ select.model-chip:focus {
 /* 代码块：黑底 + 草绿左边框 */
 pre,
 code {
-  background: #141414;
+  background: var(--mc-groove);
   border-radius: 0;
 }
 pre {
-  border: 2px solid #0d0d0d;
+  border: 2px solid var(--mc-slot-dark);
   border-left: 4px solid var(--accent);
 }
 
 /* 滚动条：12px 像素轨道 */
 ::-webkit-scrollbar { width: 12px; height: 12px; }
-::-webkit-scrollbar-track { background: #1a1a1a; border-left: 1px solid #0d0d0d; }
+::-webkit-scrollbar-track { background: #1a1a1a; border-left: 1px solid var(--mc-slot-dark); }
 ::-webkit-scrollbar-thumb {
   background: #6f6f6f;
   border: 2px solid;
-  border-color: #9d9d9d #3a3a3a #3a3a3a #9d9d9d;
+  border-color: #9d9d9d var(--mc-hover-2) var(--mc-hover-2) #9d9d9d;
 }
 ::-webkit-scrollbar-thumb:hover { background: #8b8b8b; }
 ::-webkit-scrollbar-corner { background: #1a1a1a; }
@@ -355,13 +383,13 @@ pre {
 
 /* 设置窗口 */
 .settings-title {
-  background: #3a3a3a;
+  background: var(--mc-hover-2);
   border-bottom: 2px solid var(--mc-bevel-dark);
   letter-spacing: 0.08em;
 }
 .settings-nav-cell { background: transparent; border: 0; border-radius: 0; }
 .settings-nav-cell.active {
-  background: linear-gradient(#5fbb46, #468a33);
+  background: linear-gradient(var(--mc-accent), var(--mc-accent-deep));
   color: #f2fff0;
 }
 .settings-nav-icon { color: inherit; }
@@ -375,7 +403,7 @@ pre {
   height: 24px;
   background: var(--mc-slot);
   border: 2px solid;
-  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
 }
 
 /* 旧品牌色块退役（品牌位已换成草方块） */
@@ -430,7 +458,7 @@ pre {
 .sb-brand-main:focus-visible .mc-iso-tilt { transform: rotateX(-20deg) rotateY(-30deg) scale(1); }
 .sb-brand-main:hover .mc-brand-cube .face,
 .sb-brand-main:focus-visible .mc-brand-cube .face {
-  filter: drop-shadow(0 0 5px rgba(126, 217, 87, 0.6));
+  filter: drop-shadow(0 0 5px rgba(var(--mc-accent-rgb), 0.6));
 }
 .sb-brand-main:focus-visible {
   outline: 2px solid var(--accent);
@@ -450,11 +478,11 @@ pre {
   border: 0;
   border-left: 3px solid var(--accent);
   border-radius: 0;
-  box-shadow: inset 0 0 0 1px rgba(126, 217, 87, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(var(--mc-accent-rgb), 0.16);
   transform: none;
 }
 .sb-row.sb-session.selected:hover {
-  background-color: #3a2f20;
+  background-color: var(--mc-hover);
 }
 .sb-row.sb-session.selected .sb-time { color: #bdbdbd; }
 
@@ -510,13 +538,13 @@ pre {
 
 /* ---- D2. 右侧拓展内部分区 --------------------------------------------- */
 .canvas-tabs {
-  background: #232323;
-  border-bottom: 2px solid #141414;
+  background: var(--mc-title);
+  border-bottom: 2px solid var(--mc-groove);
 }
 .canvas-tab {
-  background: #232323;
+  background: var(--mc-title);
   border: 2px solid;
-  border-color: #4a4a4a #141414 #141414 #4a4a4a;
+  border-color: #4a4a4a var(--mc-groove) var(--mc-groove) #4a4a4a;
   border-bottom: 0;
   border-radius: 0;
   color: var(--label-secondary);
@@ -527,7 +555,7 @@ pre {
   box-shadow: inset 0 2px 0 var(--accent);
 }
 .canvas-tab.add { color: var(--label-tertiary); }
-.canvas-tab.add:hover { background: #2f2f2f; color: var(--accent); }
+.canvas-tab.add:hover { background: var(--mc-panel-2); color: var(--accent); }
 .canvas-tab-close:hover { color: var(--danger); }
 .canvas-empty-title { text-shadow: 2px 2px 0 #000; }
 
@@ -535,33 +563,33 @@ pre {
 .canvas-status,
 .anim-strip,
 .dock-composer {
-  background: #232323;
-  border-top: 2px solid #141414;
+  background: var(--mc-title);
+  border-top: 2px solid var(--mc-groove);
 }
 .anim-chip {
   background: var(--mc-slot);
   border: 2px solid;
-  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
   border-radius: 0;
   color: var(--label-secondary);
 }
-.anim-chip:hover:not(:disabled) { background: #2a2a2a; color: #ffffff; }
-.anim-chip.playing { border-color: #1f3d16 #8ee06b #8ee06b #1f3d16; color: #b6f09b; }
+.anim-chip:hover:not(:disabled) { background: var(--mc-hover-2); color: #ffffff; }
+.anim-chip.playing { border-color: var(--mc-accent-deep) var(--mc-accent-hi) var(--mc-accent-hi) var(--mc-accent-deep); color: var(--mc-accent-text); }
 .input-foot,
 .dock-owner { color: var(--label-tertiary); }
 
 /* 文件 / 网页预览：工具条与控件同皮肤 */
 .file-bar,
 .web-bar {
-  background: #232323;
-  border-bottom: 2px solid #141414;
+  background: var(--mc-title);
+  border-bottom: 2px solid var(--mc-groove);
 }
 .file-crumb,
 .web-nav,
 .web-notice-btn {
-  background: #3a3a3a;
+  background: var(--mc-hover-2);
   border: 2px solid;
-  border-color: #5a5a5a #141414 #141414 #5a5a5a;
+  border-color: #5a5a5a var(--mc-groove) var(--mc-groove) #5a5a5a;
   border-radius: 0;
   color: var(--label-secondary);
 }
@@ -574,12 +602,12 @@ pre {
 .web-url {
   background: var(--mc-slot);
   border: 2px solid;
-  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
   border-radius: 0;
 }
 .img-cell {
   border: 2px solid;
-  border-color: #141414 #5a5a5a #5a5a5a #141414;
+  border-color: var(--mc-groove) #5a5a5a #5a5a5a var(--mc-groove);
   border-radius: 0;
 }
 .web-start-icon,
@@ -593,9 +621,9 @@ pre {
 .modal,
 .dialog,
 .ask-card {
-  background: #2f2f2f;
+  background: var(--mc-panel-2);
   border: 2px solid;
-  border-color: #7a7a7a #141414 #141414 #7a7a7a;
+  border-color: #7a7a7a var(--mc-groove) var(--mc-groove) #7a7a7a;
   border-radius: 0;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 6px 0 rgba(0, 0, 0, 0.45);
 }
@@ -603,8 +631,8 @@ pre {
 .dialog-title,
 .dialog-title-row,
 .ask-head {
-  background: #232323;
-  border-bottom: 2px solid #141414;
+  background: var(--mc-title);
+  border-bottom: 2px solid var(--mc-groove);
   text-shadow: 2px 2px 0 #000;
 }
 
@@ -619,7 +647,7 @@ pre {
 .model-edit-row input {
   background: var(--mc-slot);
   border: 2px solid;
-  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
   border-radius: 0;
   color: var(--label-primary);
 }
@@ -643,9 +671,9 @@ pre {
 }
 .dialog-btn.primary,
 .btn.primary {
-  background: linear-gradient(#8fd96b, #5aa83e);
-  border-color: #b8f49c #2c5a1c #2c5a1c #b8f49c;
-  color: #10240a;
+  background: linear-gradient(var(--mc-primary-1), var(--mc-primary-2));
+  border-color: var(--mc-accent-soft) var(--mc-accent-deep) var(--mc-accent-deep) var(--mc-accent-soft);
+  color: var(--mc-accent-ink);
   text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.25);
 }
 .dialog-btn.danger,
@@ -660,20 +688,20 @@ pre {
 .setting-group {
   background: #2b2b2b;
   border: 2px solid;
-  border-color: #4a4a4a #141414 #141414 #4a4a4a;
+  border-color: #4a4a4a var(--mc-groove) var(--mc-groove) #4a4a4a;
   border-radius: 0;
 }
 .setting-group-title {
   color: var(--accent);
   text-shadow: 2px 2px 0 #000;
 }
-.setting-row + .setting-row { border-top: 1px dashed #3a3a3a; }
+.setting-row + .setting-row { border-top: 1px dashed var(--mc-hover-2); }
 .setting-row-hint { color: var(--label-tertiary); }
 .settings-section-head { text-shadow: 2px 2px 0 #000; }
 .switch {
   background: var(--mc-slot);
   border: 2px solid;
-  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
   border-radius: 0;
 }
 .switch-thumb {
@@ -682,12 +710,12 @@ pre {
   border-color: #b9b9b9 #2b2b2b #2b2b2b #b9b9b9;
   border-radius: 0;
 }
-.switch.on { background: #26361e; border-color: #1f3d16 #8ee06b #8ee06b #1f3d16; }
-.switch.on .switch-thumb { background: #7ed957; border-color: #b8f49c #2c5a1c #2c5a1c #b8f49c; }
+.switch.on { background: var(--mc-accent-dim); border-color: var(--mc-accent-deep) var(--mc-accent-hi) var(--mc-accent-hi) var(--mc-accent-deep); }
+.switch.on .switch-thumb { background: var(--mc-primary-1); border-color: var(--mc-accent-soft) var(--mc-accent-deep) var(--mc-accent-deep) var(--mc-accent-soft); }
 .seg {
   background: var(--mc-slot);
   border: 2px solid;
-  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
   border-radius: 0;
   padding: 2px;
 }
@@ -702,7 +730,7 @@ pre {
 .num-field {
   background: var(--mc-slot);
   border: 2px solid;
-  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
   border-radius: 0;
 }
 .num-btn { border-radius: 0; }
@@ -711,7 +739,7 @@ pre {
 .model-row { border-radius: 0; }
 .model-row:hover { background: #383838; }
 .model-row.selected {
-  background: #26361e;
+  background: var(--mc-accent-dim);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
@@ -719,34 +747,34 @@ pre {
 .ask-option {
   background: #2b2b2b;
   border: 2px solid;
-  border-color: #4a4a4a #141414 #141414 #4a4a4a;
+  border-color: #4a4a4a var(--mc-groove) var(--mc-groove) #4a4a4a;
   border-radius: 0;
 }
 .ask-option:hover,
 .ask-option.selected {
-  background: #26361e;
-  border-color: #1f3d16 #8ee06b #8ee06b #1f3d16;
+  background: var(--mc-accent-dim);
+  border-color: var(--mc-accent-deep) var(--mc-accent-hi) var(--mc-accent-hi) var(--mc-accent-deep);
 }
 
 /* 素材抽屉 */
 .lib-chip {
-  background: #3a3a3a;
+  background: var(--mc-hover-2);
   border: 2px solid;
-  border-color: #5a5a5a #141414 #141414 #5a5a5a;
+  border-color: #5a5a5a var(--mc-groove) var(--mc-groove) #5a5a5a;
   border-radius: 0;
   color: var(--label-secondary);
 }
 .lib-chip:hover { background: #4a4a4a; color: #ffffff; }
-.lib-chip.on { background: #26361e; border-color: #1f3d16 #8ee06b #8ee06b #1f3d16; color: #b6f09b; }
+.lib-chip.on { background: var(--mc-accent-dim); border-color: var(--mc-accent-deep) var(--mc-accent-hi) var(--mc-accent-hi) var(--mc-accent-deep); color: var(--mc-accent-text); }
 .lib-card {
   border: 2px solid;
-  border-color: #141414 #5a5a5a #5a5a5a #141414;
+  border-color: var(--mc-groove) #5a5a5a #5a5a5a var(--mc-groove);
   border-radius: 0;
 }
-.lib-card.editing { border-color: #1f3d16 #8ee06b #8ee06b #1f3d16; }
+.lib-card.editing { border-color: var(--mc-accent-deep) var(--mc-accent-hi) var(--mc-accent-hi) var(--mc-accent-deep); }
 .lib-thumb { background: var(--mc-slot); border-radius: 0; }
 .lib-drop-hint {
-  background: rgba(126, 217, 87, 0.08);
+  background: rgba(var(--mc-accent-rgb), 0.08);
   border: 2px dashed var(--accent);
   color: var(--accent);
 }
@@ -762,15 +790,15 @@ pre {
 /* ---- G. 草方块配色收口：泥土色面 + 草绿主操作 ------------------------- */
 /* 主操作（新建会话）用草皮绿，和草方块呼应 */
 .sb-new {
-  background: linear-gradient(#8fd96b, #5aa83e);
-  border-color: #b8f49c #2c5a1c #2c5a1c #b8f49c;
-  color: #10240a;
+  background: linear-gradient(var(--mc-primary-1), var(--mc-primary-2));
+  border-color: var(--mc-accent-soft) var(--mc-accent-deep) var(--mc-accent-deep) var(--mc-accent-soft);
+  color: var(--mc-accent-ink);
   text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.25);
 }
-.sb-new:hover { background: linear-gradient(#a2e57f, #6cbb4c); }
+.sb-new:hover { background: linear-gradient(var(--mc-primary-1-hi), var(--mc-primary-2-hi)); }
 .sb-new:active {
   transform: translateY(1px);
-  border-color: #2c5a1c #b8f49c #b8f49c #2c5a1c;
+  border-color: var(--mc-accent-deep) var(--mc-accent-soft) var(--mc-accent-soft) var(--mc-accent-deep);
 }
 
 /* 硬编码灰阶统一到泥土色，避免和面板令牌色打架 */
@@ -779,8 +807,8 @@ pre {
 .modal,
 .dialog,
 .ask-card {
-  background: #332b21;
-  border-color: #8a7458 #0f0c08 #0f0c08 #8a7458;
+  background: var(--mc-panel-2);
+  border-color: var(--mc-bevel-hi) var(--mc-bevel-dark) var(--mc-bevel-dark) var(--mc-bevel-hi);
 }
 .canvas-tabs,
 .canvas-status,
@@ -792,17 +820,17 @@ pre {
 .dialog-title,
 .dialog-title-row,
 .ask-head {
-  background: #221c15;
-  border-color: #0f0c08;
+  background: var(--mc-title);
+  border-color: var(--mc-bevel-dark);
 }
 .canvas-tab,
 .lib-card,
 .setting-group,
 .ask-option {
-  background: #2a231b;
-  border-color: #6b5a44 #0f0c08 #0f0c08 #6b5a44;
+  background: var(--mc-face);
+  border-color: var(--mc-bevel-light) var(--mc-bevel-dark) var(--mc-bevel-dark) var(--mc-bevel-light);
 }
-.canvas-tab.active { background: #332b21; }
+.canvas-tab.active { background: var(--mc-panel-2); }
 .input-row .icon-btn,
 .input-row .model-chip,
 .input-row select.model-chip,
@@ -822,8 +850,121 @@ pre {
 .seg,
 .num-field {
   background: var(--mc-slot);
-  border-color: #0a0806 #5c4c38 #5c4c38 #0a0806;
+  border-color: var(--mc-slot-dark) var(--mc-slot-light) var(--mc-slot-light) var(--mc-slot-dark);
 }
+
+/* ---- K. 左栏收窄 rail：MC 物品栏竖条 -------------------------------- */
+/* 56px 宽：品牌方块 + 展开键纵向排列，下面一排 40×40 物品槽，全部居中 */
+.left-sidebar.rail {
+  padding: 0 8px 10px;
+  align-items: center;
+}
+/* 品牌头：深色橡木 + 底部像素凹槽，去掉原来的草皮分界线（窄条里太抢眼） */
+.left-sidebar.rail .sb-brand {
+  width: 100%;
+  height: 60px;
+  margin: 0 0 10px;
+  padding: 7px 0 6px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  background-color: var(--mc-deep);
+  background-image: var(--mc-tex-scrim-soft), var(--mc-tex-dark-oak);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  border-bottom: 2px solid var(--mc-groove);
+  box-shadow: inset 0 -1px 0 rgba(107, 90, 68, 0.55);
+}
+.left-sidebar.rail .sb-brand-main { width: 24px; height: 24px; }
+/* 展开键：小号凹槽，悬停草绿 */
+.left-sidebar.rail .sb-toggle {
+  width: 26px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) var(--mc-slot-light) var(--mc-slot-light) var(--mc-slot-dark);
+  border-radius: 0;
+  color: var(--label-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  text-shadow: none;
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.4);
+}
+.left-sidebar.rail .sb-toggle:hover {
+  background: var(--mc-accent-dim);
+  border-color: var(--mc-accent-deep) var(--mc-accent-hi) var(--mc-accent-hi) var(--mc-accent-deep);
+  color: var(--accent);
+}
+.left-sidebar.rail .sb-toggle:active {
+  transform: translateY(1px);
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.55);
+}
+
+/* 新建项目：40×40 主操作槽（草绿凸起），和下面的普通物品槽同尺寸 */
+.left-sidebar.rail .sb-new {
+  width: 40px;
+  height: 40px;
+  margin: 0 0 8px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--mc-accent-dim);
+  background-image: none;
+  border: 2px solid;
+  border-color: var(--mc-accent-hi) var(--mc-accent-deep) var(--mc-accent-deep) var(--mc-accent-hi);
+  border-radius: 0;
+  color: var(--mc-accent-text);
+  box-shadow: inset 0 0 0 1px rgba(var(--mc-accent-rgb), 0.16);
+}
+.left-sidebar.rail .sb-new:hover {
+  background-color: #2f4524;
+  border-color: var(--mc-accent-soft) var(--mc-accent-deep) var(--mc-accent-deep) var(--mc-accent-soft);
+  color: #ffffff;
+}
+.left-sidebar.rail .sb-new:active {
+  transform: translateY(1px);
+  border-color: var(--mc-accent-deep) var(--mc-accent-hi) var(--mc-accent-hi) var(--mc-accent-deep);
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+/* 快捷入口：物品槽 + 草绿悬停，间距 8px */
+.left-sidebar.rail .sb-rail-list {
+  width: 100%;
+  gap: 8px;
+  padding-top: 2px;
+  align-items: center;
+}
+.left-sidebar.rail .sb-rail-btn {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) var(--mc-slot-light) var(--mc-slot-light) var(--mc-slot-dark);
+  border-radius: 0;
+  color: var(--label-secondary);
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+.left-sidebar.rail .sb-rail-btn:hover {
+  background: var(--mc-accent-dim);
+  border-color: var(--mc-accent-deep) var(--mc-accent-hi) var(--mc-accent-hi) var(--mc-accent-deep);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(var(--mc-accent-rgb), 0.25);
+}
+.left-sidebar.rail .sb-rail-btn:active {
+  transform: translateY(1px);
+  border-color: var(--mc-accent-deep) var(--mc-accent-hi) var(--mc-accent-hi) var(--mc-accent-deep);
+  box-shadow: inset 3px 3px 0 rgba(0, 0, 0, 0.6);
+}
+.left-sidebar.rail .sb-rail-btn:hover .mc-ico { transform: translateY(-2px) scale(1.05); }
 
 /* ---- E. 无障碍：尊重减少动态效果 -------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
@@ -841,8 +982,7 @@ pre {
 /* ---- H. 方块材质层：结构表面改用原版方块贴图铺底 ---------------------- */
 /* 只叠 background-*，不动边框/阴影/布局；不加 filter / backdrop-filter，避免拍平 3D 方块 */
 :root,
-:root[data-theme='light'],
-:root[data-theme='dark'] {
+:root[data-theme='mc-grass'] {
   --mc-tex-stone: url('/mc/block/stone.png');
   --mc-tex-bricks: url('/mc/block/stone_bricks.png');
   --mc-tex-cobble: url('/mc/block/cobblestone.png');
@@ -856,13 +996,12 @@ pre {
   --mc-tex-scrim: linear-gradient(rgba(14, 12, 9, 0.76), rgba(14, 12, 9, 0.76));
   --mc-tex-scrim-soft: linear-gradient(rgba(14, 12, 9, 0.6), rgba(14, 12, 9, 0.6));
   --mc-tex-scrim-strong: linear-gradient(rgba(10, 8, 6, 0.88), rgba(10, 8, 6, 0.88));
-  --mc-tex-grass-tint: linear-gradient(rgba(86, 150, 58, 0.5), rgba(86, 150, 58, 0.5));
 }
 
 /* 主画布 / 中央面板：石头 */
 body,
 .main-panel {
-  background-color: #191410;
+  background-color: var(--mc-deep);
   background-image: var(--mc-tex-scrim), var(--mc-tex-stone);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
@@ -871,7 +1010,7 @@ body,
 
 /* 左侧栏：深色橡木 */
 .left-sidebar {
-  background-color: #231d16;
+  background-color: var(--mc-deep);
   background-image: var(--mc-tex-scrim), var(--mc-tex-dark-oak);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
@@ -880,12 +1019,12 @@ body,
 
 /* 品牌头：草方块侧面（草皮线保留在顶部，底边草绿分界不变） */
 .sb-brand {
-  background-color: #3a3025;
+  background-color: var(--mc-title);
   background-image: var(--mc-tex-scrim-soft), var(--mc-tex-grass-side);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
   image-rendering: pixelated;
-  border-bottom: 3px solid #5d8c2f;
+  border-bottom: 3px solid var(--mc-line);
 }
 
 /* 右侧拓展面板：圆石 */
@@ -910,7 +1049,7 @@ body,
 /* 输入区 / 弹窗：橡木 */
 .input-card,
 .composer-wrap > .input-card {
-  background-color: #332b21;
+  background-color: var(--mc-panel-2);
   background-image: var(--mc-tex-scrim), var(--mc-tex-oak);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
@@ -920,7 +1059,7 @@ body,
 .modal,
 .dialog,
 .ask-card {
-  background-color: #332b21;
+  background-color: var(--mc-panel-2);
   background-image: var(--mc-tex-scrim), var(--mc-tex-oak);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
@@ -929,7 +1068,7 @@ body,
 
 /* 设置：面板深色橡木，左侧导航石砖 */
 .settings-panel {
-  background-color: #231d16;
+  background-color: var(--mc-deep);
   background-image: var(--mc-tex-scrim), var(--mc-tex-dark-oak);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
@@ -937,7 +1076,7 @@ body,
 }
 
 .settings-nav {
-  background-color: #231d16;
+  background-color: var(--mc-deep);
   background-image: var(--mc-tex-scrim-soft), var(--mc-tex-bricks);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
@@ -950,7 +1089,7 @@ body,
 .dialog-title,
 .dialog-title-row,
 .ask-head {
-  background-color: #221c15;
+  background-color: var(--mc-title);
   background-image: var(--mc-tex-scrim-strong), var(--mc-tex-dark-oak);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
@@ -959,7 +1098,7 @@ body,
 
 /* 素材抽屉：深色橡木 */
 .lib-drawer {
-  background-color: #231d16;
+  background-color: var(--mc-deep);
   background-image: var(--mc-tex-scrim), var(--mc-tex-dark-oak);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
@@ -978,30 +1117,28 @@ body,
 /* 素材卡片预览区原本没有描边，补一条内凹边和左侧栏槽位对齐 */
 .lib-thumb {
   border: 2px solid;
-  border-color: #0a0806 #5c4c38 #5c4c38 #0a0806;
+  border-color: var(--mc-slot-dark) var(--mc-slot-light) var(--mc-slot-light) var(--mc-slot-dark);
 }
 
-/* 主操作按钮：草方块顶面 + 草绿遮罩 */
+/* 主操作按钮：主题材质 + 主题色遮罩 */
 .sb-new,
 .send-btn,
 .dialog-btn.primary,
 .btn.primary {
-  background-color: #4a8a30;
-  background-image: var(--mc-tex-grass-tint), var(--mc-tex-grass-top);
+  background-color: var(--mc-primary-2);
+  background-image: var(--mc-primary-tint), var(--mc-tex-primary);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
   image-rendering: pixelated;
 }
 
-/* 悬停：同一草皮贴图 + 稍亮的草绿遮罩，避免退回纯灰 */
+/* 悬停：同一材质 + 稍亮的主题色遮罩，避免退回纯灰 */
 .sb-new:hover,
 .send-btn:hover:not(:disabled),
 .dialog-btn.primary:hover:not(:disabled),
 .btn.primary:hover:not(:disabled) {
-  background-color: #5aa83c;
-  background-image:
-    linear-gradient(rgba(110, 180, 76, 0.5), rgba(110, 180, 76, 0.5)),
-    var(--mc-tex-grass-top);
+  background-color: var(--mc-primary-2-hi);
+  background-image: var(--mc-primary-tint-hover), var(--mc-tex-primary);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
   image-rendering: pixelated;
@@ -1021,7 +1158,7 @@ img { image-rendering: auto; }
 /* ---- I. 左栏层次：项目条 / 会话行 / 底部入口 --------------------------- */
 /* 项目行：深色橡木木板条 + 草绿左侧标识，作为分组标题，不再是灰色按钮 */
 .sb-group .sb-project {
-  background-color: #2a231b;
+  background-color: var(--mc-face);
   background-image:
     linear-gradient(rgba(16, 13, 10, 0.5), rgba(16, 13, 10, 0.5)),
     var(--mc-tex-dark-oak);
@@ -1029,16 +1166,16 @@ img { image-rendering: auto; }
   background-repeat: repeat, repeat;
   image-rendering: pixelated;
   border: 0;
-  border-left: 3px solid #5d8c2f;
-  border-bottom: 2px solid #14100b;
+  border-left: 3px solid var(--mc-line);
+  border-bottom: 2px solid var(--mc-groove);
   border-radius: 0;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   color: var(--label-primary);
   font-weight: 500;
 }
 .sb-group .sb-project:hover {
-  background-color: #332b21;
-  border-left-color: #8bdc5a;
+  background-color: var(--mc-panel-2);
+  border-left-color: var(--mc-accent);
 }
 .sb-group .sb-project:active { transform: none; }
 .sb-project .sb-folder { font-size: 10px; }
@@ -1053,8 +1190,8 @@ img { image-rendering: auto; }
   color: var(--label-secondary);
 }
 .sb-session:hover {
-  background: rgba(126, 217, 87, 0.1);
-  border-left-color: rgba(93, 140, 47, 0.55);
+  background: rgba(var(--mc-accent-rgb), 0.1);
+  border-left-color: rgba(var(--mc-accent-rgb), 0.55);
   color: var(--label-primary);
 }
 .sb-session:active { transform: none; }
@@ -1070,7 +1207,7 @@ img { image-rendering: auto; }
 }
 .sb-settings:hover {
   background: rgba(255, 255, 255, 0.07);
-  border-left-color: rgba(93, 140, 47, 0.45);
+  border-left-color: rgba(var(--mc-accent-rgb), 0.45);
 }
 .sb-settings:active { transform: none; }
 
@@ -1086,7 +1223,7 @@ img { image-rendering: auto; }
   line-height: 1;
 }
 .sb-icon-btn:hover {
-  background: rgba(126, 217, 87, 0.14);
+  background: rgba(var(--mc-accent-rgb), 0.14);
   color: var(--accent);
 }
 .sb-icon-btn:active { transform: none; }
@@ -1102,3 +1239,812 @@ img { image-rendering: auto; }
 }
 .sb-scroll::-webkit-scrollbar-thumb:hover { background: rgba(22, 18, 13, 0.78); }
 .sb-scroll::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---- J. 点击手感：按压 / 悬停 / 聚焦 -------------------------------- */
+/* 交互元素统一指针；键盘聚焦用草绿像素环，鼠标点击不出现 */
+button:not(:disabled),
+[role='button'],
+[role='tab'],
+[role='treeitem'],
+[role='option'],
+[role='switch'],
+select,
+summary,
+.sb-row,
+.sb-project,
+.sb-settings,
+.canvas-tab,
+.canvas-pick-row,
+.model-row,
+.lib-card,
+.ask-option,
+.think-toggle,
+.process-toggle {
+  cursor: pointer;
+}
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+summary:focus-visible,
+[role='button']:focus-visible,
+[role='tab']:focus-visible,
+[role='option']:focus-visible,
+[role='switch']:focus-visible,
+.sb-row:focus-visible,
+.canvas-tab:focus-visible,
+.canvas-pick-row:focus-visible,
+.model-row:focus-visible,
+.lib-card:focus-visible,
+.ask-option:focus-visible,
+.think-toggle:focus-visible,
+.process-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* 凸起按钮按下：除了斜面翻转，再压一层内阴影，像真的被按进木框里 */
+.btn:active:not(:disabled),
+.icon-btn:active:not(:disabled),
+.sb-new:active,
+.sb-rail-btn:active,
+.sb-toggle:active,
+.dock-act:active,
+.dock-add:active,
+.dock-tab-btn:active,
+.dock-expand:active,
+.seg-btn:active:not(:disabled),
+.model-chip:active,
+.suggestion:active:not(:disabled),
+.lib-chip:active,
+.ds-stop:active,
+.attach-remove:active,
+.settings-link:active,
+.settings-close:active,
+.settings-nav-cell:active,
+.dialog-btn:active:not(:disabled),
+.btn.ghost:active:not(:disabled),
+.num-btn:active:not(:disabled) {
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.42);
+  filter: brightness(0.95);
+}
+
+/* 列表行 / 卡片 / 菜单项按下：下沉 1px + 顶部内阴影（MC 列表的"按下去"手感） */
+.sb-session:active,
+.sb-settings:active,
+.sb-project:active,
+.sb-icon-btn:active,
+.menu-item:active,
+.dock-menu-item:active,
+.model-row:active,
+.lib-card:active,
+.ask-option:active,
+.canvas-pick-row:active,
+.canvas-pick-new:active:not(:disabled),
+.canvas-reload:active,
+.think-toggle:active,
+.process-toggle:active,
+.file-crumb:active:not(:disabled),
+.web-nav:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* 页签按下：只做 1px 下沉，保留激活页签的草绿顶线/石砖底 */
+.canvas-tab:active,
+.dock-tab:active {
+  transform: translateY(1px);
+  filter: brightness(1.08);
+}
+
+/* 悬停：行/卡片的描边与底色提亮，和按下的草绿内闪拉开层次 */
+.sb-session:not(.selected):hover {
+  box-shadow: inset 0 0 0 1px rgba(var(--mc-accent-rgb), 0.1);
+}
+.sb-project:hover {
+  box-shadow: inset 0 0 0 1px rgba(var(--mc-accent-rgb), 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.sb-icon-btn:active {
+  background: rgba(var(--mc-accent-rgb), 0.22);
+  color: var(--accent);
+}
+.canvas-tab:hover,
+.dock-tab:hover {
+  border-color: var(--mc-bevel-light) var(--mc-bevel-dark) var(--mc-bevel-dark) var(--mc-bevel-light);
+  color: var(--label-primary);
+}
+.canvas-tab.active:hover,
+.dock-tab.active:hover {
+  border-color: var(--mc-bevel-hi) var(--mc-groove) transparent var(--mc-bevel-hi);
+}
+.canvas-tab-close:hover,
+.dock-tab-close:hover {
+  background: rgba(214, 69, 69, 0.2);
+  color: #ff9c9c;
+}
+.think-toggle:hover,
+.process-toggle:hover {
+  background: rgba(var(--mc-accent-rgb), 0.12);
+  color: var(--accent);
+  border-radius: 0;
+}
+.think-caret,
+.process-toggle span:first-child { color: var(--accent); }
+.lib-card:hover {
+  border-color: var(--mc-bevel-hi) var(--mc-bevel-dark) var(--mc-bevel-dark) var(--mc-bevel-hi);
+  background-color: var(--mc-panel-2);
+}
+.msg-img:hover,
+.img-cell:hover {
+  border-color: var(--mc-bevel-hi) var(--mc-bevel-dark) var(--mc-bevel-dark) var(--mc-bevel-hi);
+  filter: brightness(1.08);
+}
+
+/* 右键菜单：像素描边 + 草绿悬停，危险项红色内闪 */
+.float-menu,
+.dock-menu { box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45); }
+.menu-item,
+.dock-menu-item {
+  border-radius: 0;
+  color: var(--label-secondary);
+}
+.menu-item:hover,
+.dock-menu-item:hover {
+  background: var(--mc-hover);
+  color: var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.menu-item.danger:hover {
+  background: rgba(214, 69, 69, 0.16);
+  color: #ff9c9c;
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+
+/* 画布选择列表：空白页里选画布，按钮与行都套 MC 的凹槽 / 凸起样式 */
+.canvas-pick-row {
+  background: var(--mc-face);
+  border: 2px solid;
+  border-color: #4a4a4a var(--mc-groove) var(--mc-groove) #4a4a4a;
+  border-radius: 0;
+}
+.canvas-pick-row:hover {
+  background: var(--mc-panel-2);
+  border-color: var(--mc-bevel-light) var(--mc-bevel-dark) var(--mc-bevel-dark) var(--mc-bevel-light);
+}
+.canvas-pick-name { text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.55); }
+.canvas-pick-new {
+  background: linear-gradient(#8b8b8b, #6f6f6f);
+  border: 2px solid;
+  border-color: #b9b9b9 #2b2b2b #2b2b2b #b9b9b9;
+  border-radius: 0;
+  color: #f4f4f4;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.55);
+}
+.canvas-pick-new:hover:not(:disabled) {
+  background: linear-gradient(#9d9d9d, #7d7d7d);
+  color: #ffffff;
+}
+.canvas-pick-new:disabled {
+  background: linear-gradient(#4a4a4a, #3f3f3f);
+  border-color: #5a5a5a #222 #222 #5a5a5a;
+  color: #8f8f8f;
+}
+
+/* 开关 / 分段 / 步进：按下时轻微压暗，滑块本身保持像素块 */
+.switch:active:not(:disabled) { filter: brightness(1.12); }
+.switch.on:active:not(:disabled) { filter: brightness(1.05); }
+.num-btn:active:not(:disabled) {
+  background: var(--mc-slot);
+  color: var(--accent);
+}
+
+/* 选中文本：草绿高亮（MC 里选中文字也是这一挂） */
+::selection {
+  background: rgba(var(--mc-accent-rgb), 0.34);
+  color: #ffffff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-session:active,
+  .sb-settings:active,
+  .sb-project:active,
+  .sb-icon-btn:active,
+  .menu-item:active,
+  .dock-menu-item:active,
+  .model-row:active,
+  .lib-card:active,
+  .ask-option:active,
+  .canvas-pick-row:active,
+  .canvas-pick-new:active,
+  .canvas-reload:active,
+  .think-toggle:active,
+  .process-toggle:active,
+  .canvas-tab:active,
+  .dock-tab:active,
+  .file-crumb:active,
+  .web-nav:active {
+    transform: none;
+  }
+}
+
+/* ---- L. 设置窗口：MC 选项界面 ---------------------------------------- */
+/* 外框：3px 黑边 + 上左亮 / 下右暗双层斜面 + 内高光，像 MC 的 GUI 容器 */
+.settings-panel {
+  width: 820px;
+  height: min(820px, calc(100vh - 40px));
+  background-color: var(--mc-deep);
+  background-image: var(--mc-tex-scrim), var(--mc-tex-dark-oak);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+  border: 3px solid;
+  border-color: var(--mc-bevel-hi) var(--mc-bevel-dark) var(--mc-bevel-dark) var(--mc-bevel-hi);
+  border-radius: 0;
+  box-shadow:
+    inset 0 0 0 2px #1b1610,
+    inset 0 0 0 3px rgba(255, 255, 255, 0.05),
+    0 16px 0 rgba(0, 0, 0, 0.3),
+    0 32px 80px rgba(0, 0, 0, 0.6);
+}
+
+/* 标题条：深色橡木 + 草绿分隔线，书名图标 + 金色标题 */
+.settings-title,
+.settings-header {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  background-color: var(--mc-title);
+  background-image: var(--mc-tex-scrim-strong), var(--mc-tex-dark-oak);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+  border-bottom: 3px solid var(--mc-line);
+  box-shadow: inset 0 -1px 0 var(--mc-line-dark);
+}
+.settings-title {
+  padding: 0 12px 0 18px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffe9a8;
+  letter-spacing: 0.08em;
+  text-shadow: 2px 2px 0 #000;
+}
+.settings-title::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  background: url('/mc/item/book.png') center / 100% 100% no-repeat;
+  image-rendering: pixelated;
+}
+.settings-header { padding: 0 14px; justify-content: flex-end; }
+
+/* 右上操作：灰凸起按钮 + 红色关闭键 */
+.settings-header-actions { gap: 8px; }
+.settings-link {
+  height: 28px;
+  padding: 0 12px;
+  background: linear-gradient(#8b8b8b, #6f6f6f);
+  border: 2px solid;
+  border-color: #b9b9b9 #2b2b2b #2b2b2b #b9b9b9;
+  border-radius: 0;
+  color: #f4f4f4;
+  font-size: 12px;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.55);
+}
+.settings-link:hover { background: linear-gradient(#9d9d9d, #7d7d7d); color: #ffffff; }
+.settings-link:active {
+  transform: translateY(1px);
+  border-color: #2b2b2b #b9b9b9 #b9b9b9 #2b2b2b;
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.4);
+}
+.settings-close {
+  width: 30px;
+  height: 30px;
+  background: linear-gradient(#a84a4a, #8a3333);
+  border: 2px solid;
+  border-color: #d98a8a #4a1616 #4a1616 #d98a8a;
+  border-radius: 0;
+  color: #ffffff;
+  font-size: 13px;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
+}
+.settings-close:hover { background: linear-gradient(#c25a5a, #a03c3c); }
+.settings-close:active {
+  transform: translateY(1px);
+  border-color: #4a1616 #d98a8a #d98a8a #4a1616;
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+/* 左侧导航：石砖墙 + 物品图标；选中项是草绿凸起按钮 */
+.settings-nav {
+  padding: 12px;
+  background-color: #1f1a14;
+  background-image: var(--mc-tex-scrim-soft), var(--mc-tex-bricks);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+  border-right: 2px solid var(--mc-bevel-dark);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.04);
+}
+.settings-nav-list { gap: 6px; }
+.settings-nav-cell {
+  height: 38px;
+  padding: 0 12px;
+  gap: 10px;
+  background: rgba(12, 10, 7, 0.38);
+  border: 2px solid transparent;
+  border-radius: 0;
+  color: var(--label-secondary);
+  font-size: 13px;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.55);
+}
+.settings-nav-cell:hover {
+  background: rgba(var(--mc-accent-rgb), 0.1);
+  border-color: #4a3d2c transparent transparent #4a3d2c;
+  color: #ffffff;
+}
+.settings-nav-cell.active {
+  background: linear-gradient(var(--mc-primary-1), var(--mc-accent-deep));
+  border-color: var(--mc-accent-soft) var(--mc-accent-deep) var(--mc-accent-deep) var(--mc-accent-soft);
+  color: var(--mc-accent-ink);
+  text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.settings-nav-cell.active .settings-nav-icon { color: var(--mc-accent-ink); }
+.settings-nav-cell:active { transform: translateY(1px); }
+
+/* 内容区：MC 选项列表 —— 标题金色、分组是带凹槽的木板框 */
+.settings-options { padding: 16px 20px 24px; }
+.settings-section { gap: 18px; }
+.settings-section-head h2,
+.settings-section-title {
+  font-size: 18px;
+  color: #ffe9a8;
+  letter-spacing: 0.04em;
+  text-shadow: 2px 2px 0 #000;
+}
+.settings-section-head p,
+.settings-section-hint { color: var(--label-tertiary); }
+/* 分区头的操作按钮（如「注入技能」）不要拉满整行 */
+.settings-section-head .btn {
+  align-self: flex-start;
+  height: 28px;
+  padding: 0 12px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.setting-group {
+  background-color: var(--mc-face);
+  background-image: var(--mc-tex-scrim-strong), var(--mc-tex-dark-oak);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+  border: 2px solid;
+  border-color: var(--mc-bevel-light) var(--mc-bevel-dark) var(--mc-bevel-dark) var(--mc-bevel-light);
+  border-radius: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+.setting-group-title {
+  padding: 10px 14px 8px;
+  font-size: 12px;
+  color: var(--mc-accent-text);
+  letter-spacing: 0.08em;
+  border-bottom: 2px solid var(--mc-groove);
+  box-shadow: inset 0 -1px 0 rgba(107, 90, 68, 0.5);
+}
+.setting-group-title::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  background: var(--accent);
+  box-shadow: 1px 1px 0 var(--mc-accent-ink);
+  vertical-align: 1px;
+}
+.setting-row {
+  padding: 12px 14px;
+  gap: 16px;
+  border-top: 2px solid var(--mc-groove);
+  box-shadow: inset 0 1px 0 rgba(107, 90, 68, 0.18);
+}
+.setting-group-title + .setting-row { border-top: 0; box-shadow: none; }
+.setting-row-label { font-weight: 500; }
+.setting-row-hint { color: var(--label-tertiary); }
+
+/* 分段控件：凹槽里一排 MC 按钮，选中项草绿 */
+.seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+}
+.seg-btn {
+  height: 24px;
+  padding: 0 12px;
+  background: linear-gradient(#7b7b7b, #5f5f5f);
+  border: 2px solid;
+  border-color: #a8a8a8 #2b2b2b #2b2b2b #a8a8a8;
+  border-radius: 0;
+  color: #e8e8e8;
+  font-size: 12px;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
+}
+.seg-btn:hover:not(:disabled) {
+  background: linear-gradient(#8d8d8d, #707070);
+  color: #ffffff;
+}
+.seg-btn.active {
+  background: linear-gradient(var(--mc-primary-1), var(--mc-primary-2));
+  border-color: var(--mc-accent-soft) var(--mc-accent-deep) var(--mc-accent-deep) var(--mc-accent-soft);
+  color: var(--mc-accent-ink);
+  text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.25);
+}
+.seg-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  border-color: #2b2b2b #a8a8a8 #a8a8a8 #2b2b2b;
+}
+.seg-btn:disabled { opacity: 0.55; }
+
+/* 开关：凹槽轨道 + 方块滑块（开=草绿） */
+.switch {
+  width: 42px;
+  height: 22px;
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) var(--mc-slot-light) var(--mc-slot-light) var(--mc-slot-dark);
+  border-radius: 0;
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+.switch-thumb {
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: #9a9a9a;
+  border: 2px solid;
+  border-color: #c6c6c6 var(--mc-hover-2) var(--mc-hover-2) #c6c6c6;
+  border-radius: 0;
+}
+.switch.on {
+  background: var(--mc-accent-dim);
+  border-color: var(--mc-accent-deep) var(--mc-accent-hi) var(--mc-accent-hi) var(--mc-accent-deep);
+}
+.switch.on .switch-thumb {
+  transform: translateX(16px);
+  background: var(--mc-primary-1);
+  border-color: var(--mc-accent-soft) var(--mc-accent-deep) var(--mc-accent-deep) var(--mc-accent-soft);
+}
+
+/* 数字步进：小方块按钮 */
+.num-field {
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) var(--mc-slot-light) var(--mc-slot-light) var(--mc-slot-dark);
+  border-radius: 0;
+}
+.num-btn {
+  width: 22px;
+  height: 22px;
+  background: linear-gradient(#8b8b8b, #6f6f6f);
+  border: 2px solid;
+  border-color: #b9b9b9 #2b2b2b #2b2b2b #b9b9b9;
+  border-radius: 0;
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 1;
+}
+.num-btn:hover:not(:disabled) { background: linear-gradient(#9d9d9d, #7d7d7d); }
+.num-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  border-color: #2b2b2b #b9b9b9 #b9b9b9 #2b2b2b;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-nav-cell:active,
+  .seg-btn:active,
+  .settings-link:active,
+  .settings-close:active,
+  .num-btn:active {
+    transform: none;
+  }
+}
+
+/* ---- M. MC 换肤：樱花 / 深海 / 下界 / 末地 ---------------------------- */
+/* 只覆盖 --mc-* 与基础表面令牌；label 文字色、中性灰按钮保持共用 */
+
+/* 樱花原野：樱花木板 + 砂岩 + 苔藓，粉色强调 */
+:root[data-theme='mc-cherry'] {
+  --bg-base: #2e211d;
+  --bg-layer-1: #362823;
+  --bg-layer-2: #3a2a26;
+  --bg-layer-3: #46322c;
+  --bg-layer-4: #523a32;
+  --sidebar-fill: #2e211d;
+  --border-l1: #170f0c;
+  --border-l2: #170f0c;
+  --border-l3: #a8786a;
+  --border-l4: #c99a88;
+  --interactive-hover: #4a2e2a;
+  --interactive-active: #3d2622;
+  --accent-hover: #d87695;
+
+  --mc-deep: #2e211d;
+  --mc-face: #3a2a26;
+  --mc-face-raised: #46322c;
+  --mc-panel-2: #46322c;
+  --mc-title: #3a2a26;
+  --mc-slot: #1f1512;
+  --mc-bevel-light: #a8786a;
+  --mc-bevel-hi: #c99a88;
+  --mc-bevel-dark: #170f0c;
+  --mc-slot-light: #7a5448;
+  --mc-slot-dark: #0f0907;
+  --mc-groove: #1c1210;
+  --mc-hover: #4a2e2a;
+  --mc-hover-2: #4a2e2a;
+  --mc-line: #d87695;
+  --mc-line-dark: #6a2f42;
+  --mc-accent: #f2a0b8;
+  --mc-accent-rgb: 242, 160, 184;
+  --mc-accent-hi: #ffc2d4;
+  --mc-accent-soft: #ffd9e4;
+  --mc-accent-deep: #a85068;
+  --mc-accent-dim: #4a2430;
+  --mc-accent-text: #ffd4e0;
+  --mc-accent-ink: #3a1220;
+  --mc-primary-1: #f8b8cc;
+  --mc-primary-2: #d87695;
+  --mc-primary-1-hi: #ffd0de;
+  --mc-primary-2-hi: #e88aa6;
+  --mc-primary-tint: linear-gradient(rgba(216, 118, 149, 0.5), rgba(216, 118, 149, 0.5));
+  --mc-primary-tint-hover: linear-gradient(rgba(232, 138, 166, 0.5), rgba(232, 138, 166, 0.5));
+  --mc-tex-stone: url('/mc/block/moss_block.png');
+  --mc-tex-bricks: url('/mc/block/sandstone.png');
+  --mc-tex-cobble: url('/mc/block/sandstone.png');
+  --mc-tex-dark-oak: url('/mc/block/cherry_planks.png');
+  --mc-tex-oak: url('/mc/block/cherry_planks.png');
+  --mc-tex-dirt: url('/mc/block/sandstone.png');
+  --mc-tex-grass-top: url('/mc/block/cherry_planks.png');
+  --mc-tex-grass-side: url('/mc/block/cherry_planks.png');
+  --mc-tex-primary: var(--mc-tex-grass-top);
+  --mc-tex-scrim: linear-gradient(rgba(20, 12, 10, 0.74), rgba(20, 12, 10, 0.74));
+  --mc-tex-scrim-soft: linear-gradient(rgba(20, 12, 10, 0.58), rgba(20, 12, 10, 0.58));
+  --mc-tex-scrim-strong: linear-gradient(rgba(14, 8, 7, 0.86), rgba(14, 8, 7, 0.86));
+}
+
+/* 深海海晶：海晶石 + 暗海晶石 + 石英，青绿强调 */
+:root[data-theme='mc-ocean'] {
+  --bg-base: #162024;
+  --bg-layer-1: #1b272b;
+  --bg-layer-2: #1d2a2e;
+  --bg-layer-3: #26363a;
+  --bg-layer-4: #2f4145;
+  --sidebar-fill: #162024;
+  --border-l1: #081012;
+  --border-l2: #081012;
+  --border-l3: #4f7a7e;
+  --border-l4: #6f9a9e;
+  --interactive-hover: #254046;
+  --interactive-active: #1c3338;
+  --accent-hover: #3aa79c;
+
+  --mc-deep: #162024;
+  --mc-face: #1d2a2e;
+  --mc-face-raised: #26363a;
+  --mc-panel-2: #26363a;
+  --mc-title: #1f2e33;
+  --mc-slot: #0d1618;
+  --mc-bevel-light: #4f7a7e;
+  --mc-bevel-hi: #6f9a9e;
+  --mc-bevel-dark: #081012;
+  --mc-slot-light: #3a5c60;
+  --mc-slot-dark: #060d0f;
+  --mc-groove: #0c1416;
+  --mc-hover: #254046;
+  --mc-hover-2: #254046;
+  --mc-line: #3aa79c;
+  --mc-line-dark: #1f5a54;
+  --mc-accent: #4fd6c8;
+  --mc-accent-rgb: 79, 214, 200;
+  --mc-accent-hi: #8ef0e4;
+  --mc-accent-soft: #b8fff6;
+  --mc-accent-deep: #1f6a62;
+  --mc-accent-dim: #163a36;
+  --mc-accent-text: #b6f5ee;
+  --mc-accent-ink: #04231f;
+  --mc-primary-1: #7ee8dc;
+  --mc-primary-2: #3aa79c;
+  --mc-primary-1-hi: #a6f4ea;
+  --mc-primary-2-hi: #52c4b8;
+  --mc-primary-tint: linear-gradient(rgba(58, 167, 156, 0.5), rgba(58, 167, 156, 0.5));
+  --mc-primary-tint-hover: linear-gradient(rgba(82, 196, 184, 0.5), rgba(82, 196, 184, 0.5));
+  --mc-tex-stone: url('/mc/block/stone.png');
+  --mc-tex-bricks: url('/mc/block/prismarine.png');
+  --mc-tex-cobble: url('/mc/block/prismarine.png');
+  --mc-tex-dark-oak: url('/mc/block/dark_prismarine.png');
+  --mc-tex-oak: url('/mc/block/prismarine.png');
+  --mc-tex-dirt: url('/mc/block/dark_prismarine.png');
+  --mc-tex-grass-top: url('/mc/block/prismarine.png');
+  --mc-tex-grass-side: url('/mc/block/prismarine.png');
+  --mc-tex-primary: var(--mc-tex-grass-top);
+  --mc-tex-scrim: linear-gradient(rgba(8, 16, 18, 0.78), rgba(8, 16, 18, 0.78));
+  --mc-tex-scrim-soft: linear-gradient(rgba(8, 16, 18, 0.62), rgba(8, 16, 18, 0.62));
+  --mc-tex-scrim-strong: linear-gradient(rgba(4, 10, 11, 0.88), rgba(4, 10, 11, 0.88));
+}
+
+/* 下界绯红：绯红木板 + 红砖 + 熔岩橙红强调 */
+:root[data-theme='mc-nether'] {
+  --bg-base: #241512;
+  --bg-layer-1: #291815;
+  --bg-layer-2: #2e1c18;
+  --bg-layer-3: #3a2620;
+  --bg-layer-4: #46302a;
+  --sidebar-fill: #241512;
+  --border-l1: #120706;
+  --border-l2: #120706;
+  --border-l3: #7a4a3a;
+  --border-l4: #a06a55;
+  --interactive-hover: #46231c;
+  --interactive-active: #3a1b15;
+  --accent-hover: #d3562c;
+
+  --mc-deep: #241512;
+  --mc-face: #2e1c18;
+  --mc-face-raised: #3a2620;
+  --mc-panel-2: #3a2620;
+  --mc-title: #33201b;
+  --mc-slot: #180d0a;
+  --mc-bevel-light: #7a4a3a;
+  --mc-bevel-hi: #a06a55;
+  --mc-bevel-dark: #120706;
+  --mc-slot-light: #5c3226;
+  --mc-slot-dark: #0a0403;
+  --mc-groove: #170b08;
+  --mc-hover: #46231c;
+  --mc-hover-2: #3f2019;
+  --mc-line: #c0492a;
+  --mc-line-dark: #6a2310;
+  --mc-accent: #ff7a45;
+  --mc-accent-rgb: 255, 122, 69;
+  --mc-accent-hi: #ffa07a;
+  --mc-accent-soft: #ffc4a8;
+  --mc-accent-deep: #8a3418;
+  --mc-accent-dim: #3d1d12;
+  --mc-accent-text: #ffc9b0;
+  --mc-accent-ink: #2a0c04;
+  --mc-primary-1: #ff9a6b;
+  --mc-primary-2: #d3562c;
+  --mc-primary-1-hi: #ffb894;
+  --mc-primary-2-hi: #e8703f;
+  --mc-primary-tint: linear-gradient(rgba(211, 86, 44, 0.5), rgba(211, 86, 44, 0.5));
+  --mc-primary-tint-hover: linear-gradient(rgba(232, 112, 63, 0.5), rgba(232, 112, 63, 0.5));
+  --mc-tex-stone: url('/mc/block/stone.png');
+  --mc-tex-bricks: url('/mc/block/bricks.png');
+  --mc-tex-cobble: url('/mc/block/bricks.png');
+  --mc-tex-dark-oak: url('/mc/block/crimson_planks.png');
+  --mc-tex-oak: url('/mc/block/crimson_planks.png');
+  --mc-tex-dirt: url('/mc/block/bricks.png');
+  --mc-tex-grass-top: url('/mc/block/crimson_planks.png');
+  --mc-tex-grass-side: url('/mc/block/crimson_planks.png');
+  --mc-tex-primary: var(--mc-tex-grass-top);
+  --mc-tex-scrim: linear-gradient(rgba(18, 7, 5, 0.78), rgba(18, 7, 5, 0.78));
+  --mc-tex-scrim-soft: linear-gradient(rgba(18, 7, 5, 0.62), rgba(18, 7, 5, 0.62));
+  --mc-tex-scrim-strong: linear-gradient(rgba(11, 4, 3, 0.88), rgba(11, 4, 3, 0.88));
+}
+
+/* 末地砂石英：砂岩 + 石英 + 石砖，末影紫强调 */
+:root[data-theme='mc-end'] {
+  --bg-base: #23211c;
+  --bg-layer-1: #28251f;
+  --bg-layer-2: #2c2a24;
+  --bg-layer-3: #38342c;
+  --bg-layer-4: #443f34;
+  --sidebar-fill: #23211c;
+  --border-l1: #100f0a;
+  --border-l2: #100f0a;
+  --border-l3: #8a8268;
+  --border-l4: #b0a585;
+  --interactive-hover: #3f3a30;
+  --interactive-active: #35312a;
+  --accent-hover: #8f5fd0;
+
+  --mc-deep: #23211c;
+  --mc-face: #2c2a24;
+  --mc-face-raised: #38342c;
+  --mc-panel-2: #38342c;
+  --mc-title: #302d26;
+  --mc-slot: #17150f;
+  --mc-bevel-light: #8a8268;
+  --mc-bevel-hi: #b0a585;
+  --mc-bevel-dark: #100f0a;
+  --mc-slot-light: #6a6248;
+  --mc-slot-dark: #0a0906;
+  --mc-groove: #15130e;
+  --mc-hover: #3f3a30;
+  --mc-hover-2: #3a352c;
+  --mc-line: #8f5fd0;
+  --mc-line-dark: #4a2f6e;
+  --mc-accent: #b98cf0;
+  --mc-accent-rgb: 185, 140, 240;
+  --mc-accent-hi: #d4b0ff;
+  --mc-accent-soft: #e6d2ff;
+  --mc-accent-deep: #5f3f8a;
+  --mc-accent-dim: #2c2338;
+  --mc-accent-text: #e0ccff;
+  --mc-accent-ink: #1d1030;
+  --mc-primary-1: #cba8f8;
+  --mc-primary-2: #8f5fd0;
+  --mc-primary-1-hi: #ddc2ff;
+  --mc-primary-2-hi: #a878e0;
+  --mc-primary-tint: linear-gradient(rgba(143, 95, 208, 0.45), rgba(143, 95, 208, 0.45));
+  --mc-primary-tint-hover: linear-gradient(rgba(168, 120, 224, 0.5), rgba(168, 120, 224, 0.5));
+  --mc-tex-stone: url('/mc/block/sandstone.png');
+  --mc-tex-bricks: url('/mc/block/quartz_block_side.png');
+  --mc-tex-cobble: url('/mc/block/quartz_block_side.png');
+  --mc-tex-dark-oak: url('/mc/block/sandstone.png');
+  --mc-tex-oak: url('/mc/block/quartz_block_side.png');
+  --mc-tex-dirt: url('/mc/block/quartz_block_side.png');
+  --mc-tex-grass-top: url('/mc/block/quartz_block_side.png');
+  --mc-tex-grass-side: url('/mc/block/sandstone.png');
+  --mc-tex-primary: var(--mc-tex-grass-top);
+  --mc-tex-scrim: linear-gradient(rgba(16, 15, 10, 0.76), rgba(16, 15, 10, 0.76));
+  --mc-tex-scrim-soft: linear-gradient(rgba(16, 15, 10, 0.6), rgba(16, 15, 10, 0.6));
+  --mc-tex-scrim-strong: linear-gradient(rgba(10, 9, 6, 0.88), rgba(10, 9, 6, 0.88));
+}
+
+/* 主题卡片（设置 → 外观）：材质缩略 + 强调色条，点卡片即切换 */
+.theme-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.theme-card {
+  width: 56px;
+  padding: 3px 3px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) var(--mc-slot-light) var(--mc-slot-light) var(--mc-slot-dark);
+  border-radius: 0;
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.35);
+}
+.theme-card-swatch {
+  display: block;
+  width: 100%;
+  height: 28px;
+  background-size: 24px 24px;
+  background-repeat: repeat;
+  image-rendering: pixelated;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.45),
+    inset 0 -3px 0 var(--theme-accent, var(--mc-accent));
+}
+.theme-card-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  line-height: 13px;
+  color: var(--label-secondary);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+}
+.theme-card:hover {
+  border-color: var(--mc-bevel-light);
+  background: var(--mc-hover);
+}
+.theme-card.active {
+  background: var(--mc-accent-dim);
+  border-color: var(--mc-accent-soft) var(--mc-accent-deep) var(--mc-accent-deep) var(--mc-accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.theme-card.active .theme-card-name { color: var(--mc-accent-text); }
+.theme-card:active { transform: translateY(1px); box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.5); }
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-card:active { transform: none; }
+}
