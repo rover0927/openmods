@@ -125,6 +125,7 @@ export function SessionView(props: {
   const [text, setText] = useState('')
   const [slashIdx, setSlashIdx] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   /** 等待子代理时锁输入：会话还在跑这一轮，用户不能插话（服务端同样 409） */
   const waitingLocked = waiting.length > 0
 
@@ -149,6 +150,16 @@ export function SessionView(props: {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [turns, busy, waiting, streamChars, thinkTail, inlineSubagents])
+  // 输入框随内容自动长高：空内容回到单行，长文本最高到 CSS max-height，再多就内部滚动
+  useLayoutEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    const max = Number.parseFloat(getComputedStyle(el).maxHeight) || 196
+    const next = Math.min(el.scrollHeight, max)
+    el.style.height = `${next}px`
+    el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden'
+  }, [text, props.sessionId])
 
   const askLocked = pendingAsks > 0
   /** 「/」命令：原输入区并排的「完善想法」「三视图」两个按钮收进斜杠菜单 */
@@ -294,6 +305,7 @@ export function SessionView(props: {
             </div>
           )}
           <textarea
+            ref={inputRef}
             className={`input-text ${waitingLocked ? 'locked' : ''}`}
             readOnly={waitingLocked}
             rows={1}

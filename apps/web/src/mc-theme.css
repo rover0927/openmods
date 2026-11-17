@@ -406,10 +406,10 @@ pre {
   border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
 }
 
-/* 旧品牌色块退役（品牌位已换成草方块） */
+/* 旧品牌色块退役（品牌位已换成主题方块） */
 .sb-mark { display: none; }
 
-/* ---- C. 草方块立方体 -------------------------------------------------- */
+/* ---- C. 品牌方块立方体（默认草方块，随主题换材质） -------------------- */
 .mc-stage {
   display: inline-block;
   flex: none;
@@ -444,12 +444,13 @@ pre {
   image-rendering: pixelated;
   backface-visibility: hidden;
 }
-.mc-cube .face.top { background-image: url(/mc/block/grass_block_top.png); transform: rotateX(90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
-.mc-cube .face.bottom { background-image: url(/mc/block/dirt.png); transform: rotateX(-90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
-.mc-cube .face.front { background-image: url(/mc/block/grass_block_side.png); transform: translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
-.mc-cube .face.back { background-image: url(/mc/block/grass_block_side.png); transform: rotateY(180deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
-.mc-cube .face.right { background-image: url(/mc/block/grass_block_side.png); transform: rotateY(90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
-.mc-cube .face.left { background-image: url(/mc/block/grass_block_side.png); transform: rotateY(-90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+/* 品牌方块六面贴图随主题换材质；未覆盖时回落到草方块 */
+.mc-cube .face.top { background-image: var(--mc-brand-top, url(/mc/block/grass_block_top.png)); transform: rotateX(90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.bottom { background-image: var(--mc-brand-bottom, url(/mc/block/dirt.png)); transform: rotateX(-90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.front { background-image: var(--mc-brand-side, url(/mc/block/grass_block_side.png)); transform: translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.back { background-image: var(--mc-brand-side, url(/mc/block/grass_block_side.png)); transform: rotateY(180deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.right { background-image: var(--mc-brand-side, url(/mc/block/grass_block_side.png)); transform: rotateY(90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.left { background-image: var(--mc-brand-side, url(/mc/block/grass_block_side.png)); transform: rotateY(-90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
 
 /* 悬停 / 键盘聚焦：旋转 + 草绿辉光（不放大，避免贴住/压住品牌名） */
 .sb-brand-main:hover .mc-cube,
@@ -466,12 +467,10 @@ pre {
 }
 .sb-brand-main { align-items: center; gap: 10px; }
 
-/* 会话列表：当前会话 = 深色木纹 + 草绿左标（扁平高亮，不做按下的灰按钮） */
+/* 会话列表：当前会话 = 结构墙压暗 + 主题强调色左标（扁平高亮，不做按下的灰按钮） */
 .sb-row.sb-session.selected {
-  background-color: #33291c;
-  background-image:
-    linear-gradient(rgba(16, 13, 10, 0.35), rgba(16, 13, 10, 0.35)),
-    var(--mc-tex-dark-oak);
+  background-color: var(--mc-face);
+  background-image: var(--mc-tex-scrim-soft), var(--mc-tex-structure);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
   color: #ffffff;
@@ -988,9 +987,15 @@ pre {
   --mc-tex-cobble: url('/mc/block/cobblestone.png');
   --mc-tex-dark-oak: url('/mc/block/dark_oak_planks.png');
   --mc-tex-oak: url('/mc/block/oak_planks.png');
+  /* 结构墙材质：左侧栏 / 设置 / 素材抽屉 / 选中会话行共用；每个主题必须覆盖 */
+  --mc-tex-structure: url('/mc/block/mossy_stone_bricks.png');
   --mc-tex-dirt: url('/mc/block/dirt.png');
   --mc-tex-grass-top: url('/mc/block/grass_block_top.png');
   --mc-tex-grass-side: url('/mc/block/grass_block_side.png');
+  /* 品牌方块六面：草方块主题用草皮/泥土，其它主题各自覆盖 */
+  --mc-brand-top: var(--mc-tex-grass-top);
+  --mc-brand-side: var(--mc-tex-grass-side);
+  --mc-brand-bottom: var(--mc-tex-dirt);
 
   --mc-tex-size: 32px;
   --mc-tex-scrim: linear-gradient(rgba(14, 12, 9, 0.76), rgba(14, 12, 9, 0.76));
@@ -1008,13 +1013,24 @@ body,
   image-rendering: pixelated;
 }
 
-/* 左侧栏：深色橡木 */
+/* 左侧栏：结构墙材质（草方块=苔石砖废墟，其它主题各自覆盖 --mc-tex-structure） */
 .left-sidebar {
   background-color: var(--mc-deep);
-  background-image: var(--mc-tex-scrim), var(--mc-tex-dark-oak);
+  background-image: var(--mc-tex-scrim-soft), var(--mc-tex-structure);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
   image-rendering: pixelated;
+}
+
+/* 左栏底部入口：和墙面同款结构材质，只加一条强调色凹槽做分区 */
+.sb-foot {
+  background-color: var(--mc-deep);
+  background-image: var(--mc-tex-scrim), var(--mc-tex-structure);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+  border-top: 2px solid var(--mc-groove);
+  box-shadow: inset 0 2px 0 rgba(var(--mc-accent-rgb), 0.18);
 }
 
 /* 品牌头：草方块侧面（草皮线保留在顶部，底边草绿分界不变） */
@@ -1066,10 +1082,10 @@ body,
   image-rendering: pixelated;
 }
 
-/* 设置：面板深色橡木，左侧导航石砖 */
+/* 设置：面板结构墙，左侧导航石砖 */
 .settings-panel {
   background-color: var(--mc-deep);
-  background-image: var(--mc-tex-scrim), var(--mc-tex-dark-oak);
+  background-image: var(--mc-tex-scrim-soft), var(--mc-tex-structure);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
   image-rendering: pixelated;
@@ -1096,10 +1112,10 @@ body,
   image-rendering: pixelated;
 }
 
-/* 素材抽屉：深色橡木 */
+/* 素材抽屉：结构墙 */
 .lib-drawer {
   background-color: var(--mc-deep);
-  background-image: var(--mc-tex-scrim), var(--mc-tex-dark-oak);
+  background-image: var(--mc-tex-scrim-soft), var(--mc-tex-structure);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
   image-rendering: pixelated;
@@ -1156,12 +1172,10 @@ body,
 img { image-rendering: auto; }
 
 /* ---- I. 左栏层次：项目条 / 会话行 / 底部入口 --------------------------- */
-/* 项目行：深色橡木木板条 + 草绿左侧标识，作为分组标题，不再是灰色按钮 */
+/* 项目行：结构墙压暗条 + 主题强调色左侧标识，作为分组标题，不再是灰色按钮 */
 .sb-group .sb-project {
   background-color: var(--mc-face);
-  background-image:
-    linear-gradient(rgba(16, 13, 10, 0.5), rgba(16, 13, 10, 0.5)),
-    var(--mc-tex-dark-oak);
+  background-image: var(--mc-tex-scrim), var(--mc-tex-structure);
   background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
   background-repeat: repeat, repeat;
   image-rendering: pixelated;
@@ -1806,6 +1820,11 @@ summary:focus-visible,
   --mc-tex-dirt: url('/mc/block/sandstone.png');
   --mc-tex-grass-top: url('/mc/block/cherry_planks.png');
   --mc-tex-grass-side: url('/mc/block/cherry_planks.png');
+  /* 结构墙：石砖中性灰，压住大面积粉色、保留樱花木的强调 */
+  --mc-tex-structure: url('/mc/block/stone_bricks.png');
+  --mc-brand-top: url('/mc/block/cherry_planks.png');
+  --mc-brand-side: url('/mc/block/cherry_planks.png');
+  --mc-brand-bottom: url('/mc/block/cherry_planks.png');
   --mc-tex-primary: var(--mc-tex-grass-top);
   --mc-tex-scrim: linear-gradient(rgba(20, 12, 10, 0.74), rgba(20, 12, 10, 0.74));
   --mc-tex-scrim-soft: linear-gradient(rgba(20, 12, 10, 0.58), rgba(20, 12, 10, 0.58));
@@ -1866,6 +1885,11 @@ summary:focus-visible,
   --mc-tex-dirt: url('/mc/block/dark_prismarine.png');
   --mc-tex-grass-top: url('/mc/block/prismarine.png');
   --mc-tex-grass-side: url('/mc/block/prismarine.png');
+  /* 结构墙：暗海晶石是方案 5 推荐的深青底，纹理最干净 */
+  --mc-tex-structure: url('/mc/block/dark_prismarine.png');
+  --mc-brand-top: url('/mc/block/prismarine.png');
+  --mc-brand-side: url('/mc/block/prismarine.png');
+  --mc-brand-bottom: url('/mc/block/dark_prismarine.png');
   --mc-tex-primary: var(--mc-tex-grass-top);
   --mc-tex-scrim: linear-gradient(rgba(8, 16, 18, 0.78), rgba(8, 16, 18, 0.78));
   --mc-tex-scrim-soft: linear-gradient(rgba(8, 16, 18, 0.62), rgba(8, 16, 18, 0.62));
@@ -1926,6 +1950,11 @@ summary:focus-visible,
   --mc-tex-dirt: url('/mc/block/bricks.png');
   --mc-tex-grass-top: url('/mc/block/crimson_planks.png');
   --mc-tex-grass-side: url('/mc/block/crimson_planks.png');
+  /* 结构墙：绯红木板（方案 4 的深色木底），和红砖/熔岩橙区分开 */
+  --mc-tex-structure: url('/mc/block/crimson_planks.png');
+  --mc-brand-top: url('/mc/block/crimson_planks.png');
+  --mc-brand-side: url('/mc/block/crimson_planks.png');
+  --mc-brand-bottom: url('/mc/block/crimson_planks.png');
   --mc-tex-primary: var(--mc-tex-grass-top);
   --mc-tex-scrim: linear-gradient(rgba(18, 7, 5, 0.78), rgba(18, 7, 5, 0.78));
   --mc-tex-scrim-soft: linear-gradient(rgba(18, 7, 5, 0.62), rgba(18, 7, 5, 0.62));
@@ -1986,6 +2015,11 @@ summary:focus-visible,
   --mc-tex-dirt: url('/mc/block/quartz_block_side.png');
   --mc-tex-grass-top: url('/mc/block/quartz_block_side.png');
   --mc-tex-grass-side: url('/mc/block/sandstone.png');
+  /* 结构墙：石英侧壁，压暗后接近末地石，紫色强调保持突出 */
+  --mc-tex-structure: url('/mc/block/quartz_block_side.png');
+  --mc-brand-top: url('/mc/block/quartz_block_side.png');
+  --mc-brand-side: url('/mc/block/quartz_block_side.png');
+  --mc-brand-bottom: url('/mc/block/sandstone.png');
   --mc-tex-primary: var(--mc-tex-grass-top);
   --mc-tex-scrim: linear-gradient(rgba(16, 15, 10, 0.76), rgba(16, 15, 10, 0.76));
   --mc-tex-scrim-soft: linear-gradient(rgba(16, 15, 10, 0.6), rgba(16, 15, 10, 0.6));
@@ -2016,7 +2050,7 @@ summary:focus-visible,
   display: block;
   width: 100%;
   height: 28px;
-  background-size: 24px 24px;
+  background-size: 32px 32px;
   background-repeat: repeat;
   image-rendering: pixelated;
   box-shadow:

@@ -497,7 +497,7 @@ input, textarea, select { font-family: inherit; }
 .mode.active { color: var(--accent); background: rgba(122, 170, 255, 0.12); }
 .input-text {
   background: transparent; border: 0; outline: none; color: var(--label-primary);
-  min-height: 36px; max-height: 196px; resize: none;
+  min-height: 36px; max-height: 196px; resize: none; overflow-y: hidden;
   font-size: var(--content-font); line-height: var(--content-line);
   width: 100%; padding: 4px 14px 0;
 }

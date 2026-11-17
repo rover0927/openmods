@@ -227,6 +227,17 @@ export default function App() {
   const [modelWindow, setModelWindow] = useState<number | null>(null)
   /** 上下文构成（点击上下文环展开的图）：需要服务端按当前 surface 现算 */
   const [ctxBreakdown, setCtxBreakdown] = useState<ContextBreakdownDto | null>(null)
+  /**
+   * 当前画布页 owner 会话的统计快照：底部状态条与「上下文」面板按页取数。
+   * 页 owner 就是当前会话时直接用 stats/ctx*（SSE 实时更新）；只有切到别的会话的画布才走这份快照。
+   */
+  const [pageStats, setPageStats] = useState<{
+    sessionId: string
+    stats: StatsDto
+    ctxTokens: number | null
+    modelWindow: number | null
+    contextBreakdown: ContextBreakdownDto | null
+  } | null>(null)
   /** MC 工程（mcdev）状态：dock 顶部的「测试 Mod」/ jar 下载按钮数据源 */
   const [mcProjects, setMcProjects] = useState<McProjectUiDto[]>([])
   /** 代理角色（dsh agentPreset）：lead=主代理、mcmod=1.20.1 Forge 模组开发 */
@@ -1488,6 +1499,42 @@ export default function App() {
     ? canvases.find(c => c.canvasId === activeCanvasPageData.key)?.ownerName
       ?? (activeIsChild ? sessionInfo?.agentName ?? '子代理' : '主会话')
     : undefined
+  /** 当前页画布 owner 的会话 id：底部统计与「上下文」面板按它取数（空白/素材页回落到当前会话） */
+  const activeCanvasOwnerSessionId = activeCanvasPageData?.kind === 'canvas'
+    ? canvases.find(c => c.canvasId === activeCanvasPageData.key)?.ownerSessionId
+    : undefined
+  const pageSessionId = activeCanvasOwnerSessionId || sessionId
+  const pageSessionIsOther = !!pageSessionId && pageSessionId !== sessionId
+  const pageSessionRunning = pageSessionIsOther && subagents.some(s => s.id === pageSessionId && s.status === 'running')
+
+  // 切画布页 = 切统计口径：不再等左侧点会话才刷新
+  useEffect(() => {
+    if (!pageSessionIsOther) { setPageStats(null); return }
+    let cancelled = false
+    const load = () => {
+      api.stats(pageSessionId).then(r => {
+        if (cancelled) return
+        setPageStats({
+          sessionId: pageSessionId,
+          stats: r.stats,
+          ctxTokens: typeof r.contextTokens === 'number' ? r.contextTokens : null,
+          modelWindow: typeof r.modelWindow === 'number' ? r.modelWindow : null,
+          contextBreakdown: r.contextBreakdown ?? null,
+        })
+      }).catch(() => { /* 拉不到统计就保持空态，不阻塞画布 */ })
+    }
+    load()
+    // 正在跑的子代理：轻量轮询，页面上的数字跟着涨
+    if (!pageSessionRunning) return () => { cancelled = true }
+    const timer = window.setInterval(load, 2500)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [pageSessionId, pageSessionIsOther, pageSessionRunning])
+
+  const pageSnapshot = pageSessionIsOther && pageStats?.sessionId === pageSessionId ? pageStats : null
+  const viewStats = pageSessionIsOther ? (pageSnapshot?.stats ?? null) : stats
+  const viewCtxTokens = pageSessionIsOther ? (pageSnapshot?.ctxTokens ?? null) : ctxTokens
+  const viewModelWindow = pageSessionIsOther ? (pageSnapshot?.modelWindow ?? null) : modelWindow
+  const viewCtxBreakdown = pageSessionIsOther ? (pageSnapshot?.contextBreakdown ?? null) : ctxBreakdown
   /** 当前功能开关下可用的右侧标签（关闭画布后 canvas 不出现） */
   const dockAvailable = useMemo(
     () => (featureOn('canvas') ? DOCK_TABS : DOCK_TABS.filter(t => t !== 'canvas')),
@@ -1531,10 +1578,10 @@ export default function App() {
         currentModelId={currentModelId ?? ''}
         refineMode={refineMode}
         onToggleRefine={() => setRefineMode(r => !r)}
-        stats={stats}
-        ctxTokens={ctxTokens}
-        modelWindow={modelWindow}
-        ctxBreakdown={ctxBreakdown}
+        stats={viewStats}
+        ctxTokens={viewCtxTokens}
+        modelWindow={viewModelWindow}
+        ctxBreakdown={viewCtxBreakdown}
         profiles={profiles}
         agentProfile={agentProfile}
         onPickProfile={(id) => { setAgentProfile(id); localStorage.setItem('openmods.profile', id) }}
@@ -1617,12 +1664,13 @@ export default function App() {
         activeSessionId={sessionId}
         onOpenSubagent={openSubagent}
         onStopSubagent={stopSubagent}
-        stats={stats}
+        stats={viewStats}
         sessionId={sessionId}
+        statsSessionId={pageSessionId}
         contextHint={toast?.text ?? null}
-        ctxTokens={ctxTokens}
-        modelWindow={modelWindow}
-        ctxBreakdown={ctxBreakdown}
+        ctxTokens={viewCtxTokens}
+        modelWindow={viewModelWindow}
+        ctxBreakdown={viewCtxBreakdown}
         images={sessionImages}
         terminals={terminals}
         terminalOutput={terminalOutput}

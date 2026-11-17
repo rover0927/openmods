@@ -147,8 +147,12 @@ export function StatsTab({ stats, sessionId, contextHint, usedTokens, contextWin
   const [openTurns, setOpenTurns] = useState<Set<string>>(new Set())
 
   useEffect(() => {
+    // 换会话 / 换画布页时先清掉旧快照，避免新数据回来前还显示上一个会话的构成
+    setFrame(null)
     if (!sessionId) return
-    api.stats(sessionId).then(r => setFrame(r)).catch(() => {})
+    let cancelled = false
+    api.stats(sessionId).then(r => { if (!cancelled) setFrame(r) }).catch(() => {})
+    return () => { cancelled = true }
   }, [sessionId])
 
   // SSE 推来的帧与 /stats 的 stats 字段同形状（都带 context 块）

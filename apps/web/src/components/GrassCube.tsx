@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 
 /**
- * 左上角品牌方块（草方块）。
+ * 左上角品牌方块（默认草方块，随主题换六面材质）。
  * DOM 契约沿用 minecraft-pixel-ui：mc-stage > mc-iso-tilt > mc-cube > 六面。
  * 视角倾斜固定在 iso-tilt 层，旋转动画只作用在 cube 层；
  * 悬停/聚焦由外层 `.sb-brand-main` 触发（见 mc-theme.css）。

@@ -99,6 +99,8 @@ export function RightDock(props: {
   onStopSubagent: (id: string) => void
   stats: StatsDto | null
   sessionId: string
+  /** 统计数据对应的会话：当前画布页 owner（可能不是中间对话的 sessionId） */
+  statsSessionId: string
   contextHint: string | null
   /** 当前占用 / 模型窗口（StatsTab 头部主卡用） */
   ctxTokens: number | null
@@ -391,7 +393,7 @@ export function RightDock(props: {
         {active === 'stats' && (
           <StatsTab
             stats={props.stats}
-            sessionId={props.sessionId}
+            sessionId={props.statsSessionId}
             contextHint={props.contextHint}
             usedTokens={props.ctxTokens}
             contextWindow={props.modelWindow}
