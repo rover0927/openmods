@@ -685,6 +685,6 @@ SSE 连接按 canvasId 过滤 ◄───────────────�
 
 <div align="center">
 
-**License 说明**：本仓库代码为项目自有实现；`bbcanvas/` 基于 Blockbench 5.2.2（GPL-3.0）构建，该部分产物需遵循 GPL-3.0 同协议开源。
+**License 说明**：本仓库自有代码以 [MIT](LICENSE) 协议开源；`bbcanvas/` 基于 Blockbench 5.2.2（GPL-3.0）构建，该部分产物需遵循 GPL-3.0 同协议开源。
 
 </div>
