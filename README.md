@@ -66,9 +66,9 @@ git clone https://github.com/rover0927/openmods.git
 cd openmods
 npm install
 npm run build:bbcanvas   # 从 ../blockbench 构建无头画布（仓库已带产物，跳过亦可）
-npm run build            # 前端产物 → apps/web/dist
-cp .env.example .env     # 按需修改
-npm start                # 或 npm run dev（tsx watch + vite）
+cp .env.example .env     # 按需修改；默认 MOCK=0（真实 LLM）
+npm start                # 生产：自动构建前端 → 单进程 http://127.0.0.1:8787
+# npm run dev            # 调试：tsx watch + vite 热更新（:8787 + :5173）
 ```
 
 访问 `http://127.0.0.1:8787`：
@@ -78,7 +78,7 @@ npm start                # 或 npm run dev（tsx watch + vite）
 3. 在中央输入框或右侧建议 chip 发消息，建模任务会自动派给子代理。
 
 > [!TIP]
-> **成就达成：打开工作台** —— 浏览器访问 `http://127.0.0.1:8787`，左栏新建项目即可开始；`MOCK=1 npm start` 可离线跑通演示流程。
+> **成就达成：打开工作台** —— 浏览器访问 `http://127.0.0.1:8787`，左栏新建项目即可开始；在 `.env` 里设 `MOCK=1` 可离线跑通演示流程。
 
 **模式**：
 
@@ -86,23 +86,22 @@ npm start                # 或 npm run dev（tsx watch + vite）
 - `MOCK=1`：离线演示——脚本化假 LLM（冰晶法杖流程），无需任何 key
 
 > [!TIP]
-> **生产形态**：`npm run build` 后只需 server 一个进程——`http://127.0.0.1:8787` 同时托管前端、API、`/bb/` 画布。`npm run dev` 的 vite（:5173）只用于前端热更新。
+> **生产与调试**：`npm start` 会先构建前端（`apps/web/dist`），再以 server 单进程同时托管前端、API、`/bb/` 画布；`npm run dev` 是调试模式，vite（:5173）只用于前端热更新。
 
 ## <img src="apps/web/public/mc/item/emerald.png" width="16" alt=""> 离线构建包（vendor，重要）
 
-`plugins/mcdev/vendor/`（约 245M：Gradle 8.8 发行版 + ForgeGradle `maven_downloader` 全量快照 + 测试客户端安装器依赖）**不进 git**，两种获取方式：
+`plugins/mcdev/vendor/` 约 245M，不进 git。到 [Releases](https://github.com/rover0927/openmods/releases) 下载：
 
-1. **推荐**：到 [Releases](https://github.com/rover0927/openmods/releases) 下载最新的 `openmods-vendor.zip`，解压到 `plugins/mcdev/vendor/`。解压后新机器 / 全新 `GRADLE_USER_HOME` 构建零下载，统一测试启动器也能离线安装生产客户端。
-2. **不下载也能跑**：首次构建时 `mc_gradle` 自动走国内镜像（USTC bmclapi）补齐缓存，只是慢几分钟且需要联网。
+| 包 | 大小 | 解压到 | 作用 |
+|---|---|---|---|
+| `openmods-vendor.zip` | 224M | `plugins/mcdev/vendor/` | Gradle 8.8 + ForgeGradle 缓存 + 测试客户端安装器依赖；构建零下载，测试客户端可离线安装 |
+| `openmods-mdk-template.zip` | 112K | 任意目录 | 独立的 Forge 1.20.1 MDK 工程模板（等同于仓库里的 `plugins/mcdev/template/forge-1.20.1/`） |
 
-同页还有 `openmods-mdk-template.zip`（Forge 1.20.1 MDK 模板单独打包；模板本体也在 `plugins/mcdev/template/`）。
+`openmods-vendor.zip` 解压后是 `gradle-8.8/`、`fg-maven/` 两个目录，直接放进 `plugins/mcdev/vendor/`。
 
-> [!WARNING]
-> **已有旧版 vendor 的升级提醒**：v0.1.0 的完整包早于测试客户端离线安装支持，缺少 Forge 安装器处理器依赖（trove / guava 25.1 / FART / jarsplitter / srgutils 等）。请二选一：
-> - 重新下载最新的 `openmods-vendor.zip` 覆盖解压；
-> - 或下载增量补丁 `openmods-vendor-forge-testclient-patch.zip`，解压到项目根目录（会把 10 个依赖补进 `plugins/mcdev/vendor/fg-maven/`）。
->
-> 如果启动测试客户端时提示“本地 MDK 缓存不完整 / 缺少库”，先按上面更新 vendor，不要反复重试联网安装。
+不下载也能跑：首次构建会走国内镜像补齐缓存，但需要联网；测试客户端离线安装可能提示缺少库。
+
+> 旧版 vendor 请重新下载当前 `openmods-vendor.zip` 覆盖；补丁包已合并，不再单独提供。
 
 ## <img src="apps/web/public/mc/item/ender_pearl.png" width="16" alt=""> 检查更新
 

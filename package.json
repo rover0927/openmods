@@ -14,7 +14,8 @@
     "dev:web": "npm run dev -w apps/web",
     "build": "npm run build -w apps/web",
     "build:bbcanvas": "node scripts/build-bbcanvas.mjs",
-    "start": "cross-env NODE_ENV=production tsx apps/server/src/index.ts"
+    "prestart": "npm run build",
+    "start": "tsx apps/server/src/index.ts"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",
