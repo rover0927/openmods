@@ -546,6 +546,14 @@ export interface McTestStatusDto {
   logTail: string
   projectDir?: string
   error?: string
+  /** 本次运行的日志归档目录 */
+  runDir?: string
+  /** 游戏 latest.log 路径 */
+  logFile?: string
+  /** FML Mod List 解析出的模组状态 */
+  mods: { jar: string; modId: string; state: string }[]
+  /** 能归因到具体 jar 的错误 */
+  issues: { jar: string; modId?: string; message: string }[]
 }
 
 /** 系统日志（GET /api/logs） */

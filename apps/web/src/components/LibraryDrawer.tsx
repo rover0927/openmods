@@ -342,6 +342,16 @@ export function LibraryDrawer({ open, sessionId, testStatus, onRefreshTestStatus
     }
   }
 
+  /** 复制日志路径（目录/文件），方便用户去资源管理器查看 */
+  const copyPath = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      onToast(`已复制：${text}`)
+    } catch {
+      onToast('复制失败，请手动选择路径')
+    }
+  }
+
   const commitRename = async () => {
     if (!renaming) return
     const { id, name } = renaming
@@ -608,9 +618,34 @@ export function LibraryDrawer({ open, sessionId, testStatus, onRefreshTestStatus
                   <button className="lib-chip" onClick={() => setShowLog(v => !v)}>
                     {showLog ? '收起日志' : '查看日志'}
                   </button>
+                  {testStatus?.runDir && (
+                    <button className="lib-chip" title={testStatus.runDir} onClick={() => void copyPath(testStatus.runDir!)}>
+                      日志目录
+                    </button>
+                  )}
                 </div>
                 {testStatus?.error && <div className="lib-launcher-error">{testStatus.error}</div>}
-                {showLog && <pre className="lib-log">{testStatus?.logTail || '（还没有日志）'}</pre>}
+                {!!testStatus?.issues?.length && (
+                  <div className="lib-launcher-error">
+                    {testStatus.issues.map((it, i) => (
+                      <div key={`${it.jar}-${it.modId ?? ''}-${i}`}>
+                        <b>{it.jar || it.modId || '客户端'}</b>
+                        {it.jar && it.modId ? `（${it.modId}）` : ''}：{it.message}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {showLog && (
+                  <>
+                    {testStatus?.runDir && <div className="lib-hint">本次日志已归档：{testStatus.runDir}</div>}
+                    {!!testStatus?.mods?.length && (
+                      <div className="lib-hint">
+                        模组：{testStatus.mods.map(m => `${m.modId || m.jar}（${m.state}）`).join('、')}
+                      </div>
+                    )}
+                    <pre className="lib-log">{testStatus?.logTail || '（还没有日志）'}</pre>
+                  </>
+                )}
               </div>
 
               {jarLoading && <div className="lib-hint">读取中…</div>}

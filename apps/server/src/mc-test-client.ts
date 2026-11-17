@@ -54,6 +54,7 @@ function resolveMdkEnv(projectDir?: string): MdkEnv | undefined {
 /** 离线构建包里打包的 Forge 依赖（安装器之外还有全套库） */
 const VENDOR_MAVEN = join(ROOT, 'plugins', 'mcdev', 'vendor', 'fg-maven')
 const TEST_ROOT = join(ROOT, 'data', 'mc-test-client')
+const RUNS_DIR = join(TEST_ROOT, 'runs')
 const MINECRAFT_DIR = join(TEST_ROOT, '.minecraft')
 const STATE_FILE = join(TEST_ROOT, 'state.json')
 const MODS_MANIFEST = join(TEST_ROOT, 'mods.json')
@@ -93,6 +94,14 @@ export interface TestClientStatus {
   logTail: string
   projectDir?: string
   error?: string
+  /** 本次运行的日志归档目录（selected.json / latest.log / summary.json） */
+  runDir?: string
+  /** 游戏 latest.log 的绝对路径 */
+  logFile?: string
+  /** 从 FML Mod List 解析出的模组与状态 */
+  mods: { jar: string; modId: string; state: string }[]
+  /** 能归因到具体 jar 的错误 */
+  issues: { jar: string; modId?: string; message: string }[]
 }
 
 interface TestClientState {
@@ -101,6 +110,8 @@ interface TestClientState {
   startedAt?: number
   selected: { name: string; source: 'library' | 'build' }[]
   clientDir?: string
+  /** 本次运行的日志归档目录 */
+  runDir?: string
   error?: string
 }
 
@@ -682,7 +693,151 @@ function buildLaunch(clientDir: string, env?: MdkEnv): { args: string[]; cwd: st
   return { args: [...jvm, mainClass, ...game], cwd: clientDir }
 }
 
-function launch(clientDir: string, selected: TestClientState['selected'], env?: MdkEnv) {
+/** 本次运行的日志目录：runs/YYYYMMDD-HHmmss（并列时加序号） */
+function newRunDir(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+  const base = join(RUNS_DIR, stamp)
+  let dir = base
+  let i = 2
+  while (existsSync(dir)) dir = `${base}-${i++}`
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/** 从 FML 崩溃报告的 Mod List 解析 jar / modId / 状态 */
+function parseModList(text: string): { jar: string; modId: string; state: string }[] {
+  const out: { jar: string; modId: string; state: string }[] = []
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*(\S+\.jar)\s*\|\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)\|\s*([A-Z_]+)/.exec(line)
+    if (!m) continue
+    const row = { jar: m[1].trim(), modId: m[3].trim(), state: m[5].trim() }
+    if (!out.some(x => x.jar === row.jar && x.modId === row.modId)) out.push(row)
+  }
+  return out
+}
+
+/** 把日志里能归因到具体 jar 的错误挑出来 */
+function parseIssues(
+  text: string,
+  selected: { name: string; source: 'library' | 'build' }[],
+): { jar: string; modId?: string; message: string }[] {
+  const mods = parseModList(text)
+  const issues: { jar: string; modId?: string; message: string }[] = []
+  const seen = new Set<string>()
+  const add = (jar: string, message: string, modId?: string) => {
+    const key = `${jar}|${modId ?? ''}|${message}`
+    if (seen.has(key)) return
+    seen.add(key)
+    issues.push({ jar, ...(modId ? { modId } : {}), message })
+  }
+  const selectedJars = new Set(selected.map(s => basename(s.name).toLowerCase()))
+  const modById = new Map(mods.map(m => [m.modId, m]))
+
+  for (const m of mods) {
+    if (!selectedJars.has(basename(m.jar).toLowerCase())) continue
+    if (/ERROR|DISABLED|FAILED/.test(m.state)) add(m.jar, `模组状态 ${m.state}`, m.modId)
+  }
+
+  const reCreate = /Failed to create mod instance\. ModID:\s*(\S+)/g
+  let m: RegExpExecArray | null
+  while ((m = reCreate.exec(text))) {
+    const modId = m[1]
+    const hit = modById.get(modId)
+    if (hit && selectedJars.has(basename(hit.jar).toLowerCase())) {
+      add(hit.jar, '创建模组实例失败，详见日志堆栈', modId)
+    }
+  }
+
+  // 只报选中 jar 的 mods.toml 缺失；Forge 自带的 fmlcore/language 模块是正常警告
+  const reMissing = /Mod file (.+?) is missing mods\.toml/g
+  while ((m = reMissing.exec(text))) {
+    const file = basename(m[1])
+    if (selectedJars.has(file.toLowerCase())) add(file, '缺少 mods.toml')
+  }
+
+  // 资源命名空间（如 icedragon:ice_nest）→ modId → jar；这是注册表/世界生成崩溃最可靠的归因
+  for (const line of text.split(/\r?\n/)) {
+    if (!/ERROR|FATAL|Exception|Unbound|Caused by|Registry/.test(line)) continue
+    const reNs = /\b([a-z][a-z0-9_]{2,63}):[a-z0-9_./-]+/g
+    let n: RegExpExecArray | null
+    while ((n = reNs.exec(line))) {
+      const modId = n[1]
+      if (modId === 'minecraft' || modId === 'forge' || modId === 'fml' || modId === 'realms') continue
+      const hit = modById.get(modId)
+      const jar = hit?.jar
+        ?? selected.map(x => basename(x.name)).find(name => name.toLowerCase().includes(modId)) 
+      if (!jar || !selectedJars.has(basename(jar).toLowerCase())) continue
+      add(jar, line.trim().slice(0, 300), modId)
+    }
+  }
+
+  // 选中 jar 文件名直接出现在 ERROR/FATAL 行里
+  const names = selected.map(s => basename(s.name)).filter(Boolean)
+  for (const line of text.split(/\r?\n/)) {
+    if (!/ERROR|FATAL/.test(line)) continue
+    for (const name of names) {
+      if (line.includes(name)) add(name, line.trim().slice(0, 300))
+    }
+  }
+
+  if (!issues.length && /ReportedException|Failed to load registries/.test(text)) {
+    add('', '客户端崩溃，但未能归因到具体 jar；请查看日志与 crash-reports')
+  }
+  return issues.slice(0, 20)
+}
+
+/** 本次启动之后生成的最新崩溃报告 */
+function newestCrashReport(clientDir: string, startedAt?: number): string {
+  try {
+    const dir = join(clientDir, 'crash-reports')
+    const files = readdirSync(dir)
+      .filter(f => f.endsWith('.txt'))
+      .map(f => ({ f, t: statSync(join(dir, f)).mtimeMs }))
+      .sort((a, b) => b.t - a.t)
+    const hit = files.find(x => !startedAt || x.t >= startedAt - 5000)
+    return hit ? join(dir, hit.f) : ''
+  } catch {
+    return ''
+  }
+}
+
+function collectLogText(s: TestClientState): string {
+  const latest = s.clientDir ? readText(join(s.clientDir, 'logs', 'latest.log')) : ''
+  const crash = s.clientDir ? readText(newestCrashReport(s.clientDir, s.startedAt)) : ''
+  return [latest, readText(CONSOLE_LOG), crash].filter(Boolean).join('\n')
+}
+
+/** 归档本次运行日志：selected.json 已在启动时写，这里补 latest/console/crash + summary */
+function archiveRun(s: TestClientState, exitCode?: number) {
+  if (!s.runDir) return
+  try {
+    mkdirSync(s.runDir, { recursive: true })
+    const latest = s.clientDir ? join(s.clientDir, 'logs', 'latest.log') : ''
+    const fresh = !!latest && existsSync(latest)
+      && (!s.startedAt || statSync(latest).mtimeMs >= s.startedAt - 5000)
+    if (fresh) copyFileSync(latest, join(s.runDir, 'latest.log'))
+    if (existsSync(CONSOLE_LOG)) copyFileSync(CONSOLE_LOG, join(s.runDir, 'client-console.log'))
+    // 安装日志只在本次启动期间写过时归档，避免每次把历史 1MB+ 安装日志复制一遍
+    if (existsSync(INSTALL_LOG) && (!s.startedAt || statSync(INSTALL_LOG).mtimeMs >= s.startedAt - 5000)) {
+      copyFileSync(INSTALL_LOG, join(s.runDir, 'install.log'))
+    }
+    const crash = s.clientDir ? newestCrashReport(s.clientDir, s.startedAt) : ''
+    if (crash) copyFileSync(crash, join(s.runDir, basename(crash)))
+    const text = collectLogText(s)
+    writeFileSync(join(s.runDir, 'summary.json'), JSON.stringify({
+      startedAt: s.startedAt,
+      endedAt: Date.now(),
+      exitCode,
+      selected: s.selected,
+      mods: parseModList(text),
+      issues: parseIssues(text, s.selected),
+    }, null, 2))
+  } catch { /* 日志归档失败不阻塞启动/停止 */ }
+}
+
+function launch(clientDir: string, selected: TestClientState['selected'], env?: MdkEnv, runDir?: string) {
   const { args, cwd } = buildLaunch(clientDir, env)
   mkdirSync(TEST_ROOT, { recursive: true })
   const out = createWriteStream(CONSOLE_LOG, { flags: 'w' })
@@ -694,10 +849,17 @@ function launch(clientDir: string, selected: TestClientState['selected'], env?: 
   })
   if (!child.pid) throw new Error('Java 进程启动失败')
   child.on('error', e => {
-    writeState({ phase: 'error', selected, clientDir, error: e.message })
+    writeState({ phase: 'error', selected, clientDir, runDir, error: e.message })
   })
   child.stdout?.pipe(out)
   child.stderr?.pipe(out)
+  child.on('exit', code => {
+    // 等日志 flush 完再归档；之后即使 server 重启，runs/<时间>/ 里仍有完整记录
+    setTimeout(() => {
+      const cur = readState()
+      archiveRun({ ...cur, pid: undefined }, code ?? undefined)
+    }, 1500).unref?.()
+  })
   child.unref()
   writeState({
     phase: 'starting',
@@ -705,6 +867,7 @@ function launch(clientDir: string, selected: TestClientState['selected'], env?: 
     startedAt: Date.now(),
     selected,
     clientDir,
+    runDir,
   })
 }
 
@@ -720,14 +883,23 @@ export async function startTestClient(jars: TestClientJar[], opts: TestClientOpt
   const mode = opts.testClientMode ?? 'auto'
   // production 只走联网安装器/testClientDir；auto/mdk 优先用本机 MDK 缓存离线组装
   const env = mode === 'production' ? undefined : resolveMdkEnv(opts.testMdkDir)
-  writeState({ phase: 'installing', selected })
+  // 每次运行独立归档：选中的 jar（含 hash）先落盘，日志退出后补进同一目录
+  const runDir = newRunDir()
+  writeFileSync(join(runDir, 'selected.json'), JSON.stringify(jars.map(j => ({
+    name: j.name,
+    source: j.source,
+    size: j.data.length,
+    sha256: createHash('sha256').update(j.data).digest('hex'),
+  })), null, 2))
+  writeState({ phase: 'installing', selected, runDir })
   try {
     const clientDir = await ensureClient(opts.testClientDir, mode, env)
-    writeState({ phase: 'starting', selected, clientDir })
+    writeState({ phase: 'starting', selected, clientDir, runDir })
     syncMods(join(clientDir, 'mods'), jars)
-    launch(clientDir, selected, env)
+    launch(clientDir, selected, env, runDir)
   } catch (e: any) {
-    writeState({ phase: 'error', selected, error: e?.message ?? String(e) })
+    writeState({ phase: 'error', selected, runDir, error: e?.message ?? String(e) })
+    archiveRun({ phase: 'error', selected, runDir, startedAt: Date.now() })
     throw e
   } finally {
     busy = false
@@ -757,19 +929,26 @@ export function getTestClientStatus(tail = 120): TestClientStatus {
   if (s.phase === 'error') phase = 'error'
   else if (s.phase === 'installing') phase = busy ? 'installing' : 'error'
   else if (alive) phase = /Sound engine started/.test(log) ? 'running' : 'starting'
-  else if (s.pid) phase = 'exited'
+  else if (s.phase === 'exited' || s.pid) phase = 'exited'
   else phase = 'idle'
   // 安装阶段优先看安装器日志：上一次启动的 console 还留在盘上，不能拿来当本次进度
   const source = s.phase === 'installing' ? (readText(INSTALL_LOG) || console) : (log || console)
+  const parseText = s.phase === 'installing' ? readText(INSTALL_LOG) : collectLogText(s)
+  const selected = Array.isArray(s.selected) ? s.selected : []
+  const selectedNames = new Set(selected.map(x => basename(x.name).toLowerCase()))
   return {
     phase,
     running: alive,
     pid: s.pid,
     startedAt: s.startedAt,
-    selected: Array.isArray(s.selected) ? s.selected : [],
+    selected,
     logTail: tailLines(source, Math.max(10, Math.min(400, tail))),
     projectDir: s.clientDir ?? MINECRAFT_DIR,
     error: s.error,
+    runDir: s.runDir,
+    logFile: s.clientDir ? join(s.clientDir, 'logs', 'latest.log') : undefined,
+    mods: parseModList(parseText).filter(m => selectedNames.has(basename(m.jar).toLowerCase())),
+    issues: parseIssues(parseText, selected),
   }
 }
 
@@ -778,6 +957,7 @@ export function stopTestClient(): boolean {
   const s = readState()
   if (!s.pid || !pidAlive(s.pid)) {
     writeState({ ...s, phase: s.phase === 'installing' ? 'installing' : 'exited', pid: undefined })
+    archiveRun({ ...s, pid: undefined })
     return false
   }
   if (process.platform === 'win32') {
@@ -790,6 +970,8 @@ export function stopTestClient(): boolean {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
   }
   writeState({ ...s, phase: 'exited', pid: undefined })
+  // 等 latest.log 落盘再归档
+  setTimeout(() => archiveRun({ ...s, pid: undefined }), 1200).unref?.()
   return true
 }
 

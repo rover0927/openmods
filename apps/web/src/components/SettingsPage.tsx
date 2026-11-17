@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api.js'
 import type { FeaturesDto, PrefsDto, WakeEntry } from '../types.js'
 import { AgentsSkillsPane } from './AgentSkillsPane.js'
+import { AboutContent } from './AboutDialog.js'
 
-export type SettingsSectionId = 'general' | 'features' | 'models' | 'agents' | 'subagent' | 'automation'
+export type SettingsSectionId = 'general' | 'features' | 'models' | 'agents' | 'subagent' | 'automation' | 'about'
 
 interface DraftModel {
   id: string
@@ -593,6 +594,21 @@ export function SettingsPage(props: {
               ))}
             </div>
           )}
+        </div>
+      </div>
+    )
+  }
+
+  // ---- 关于 ----
+  if (props.section === 'about') {
+    return (
+      <div className="settings-section">
+        <div className="settings-section-head">
+          <h2>关于我们</h2>
+          <p>openmods 版本信息、开源协议与联系方式。</p>
+        </div>
+        <div className="about-body">
+          <AboutContent onToast={props.onToast} />
         </div>
       </div>
     )

@@ -12,6 +12,7 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: McIconName }[] = [
   { id: 'agents', label: '代理与技能', icon: 'agents' },
   { id: 'subagent', label: '子代理', icon: 'subagents' },
   { id: 'automation', label: '自动化', icon: 'automation' },
+  { id: 'about', label: '关于', icon: 'about' },
 ]
 
 // 设置窗口 —— 复刻 dsh SettingsRoot：overlay + mask + 800×800 面板

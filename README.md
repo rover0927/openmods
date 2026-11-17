@@ -542,6 +542,8 @@ interface PluginContext {
   - 客户端目录默认 `data/mc-test-client/.minecraft`；首次安装优先执行 `installer --offline`，本地缓存/离线包齐备时无需网络；
   - 选中的 jar 复制到 `.minecraft/mods/`，上次管理的旧 jar 会清理，用户手动放的其它 jar 保留；
   - 启动过程在底部显示悬浮实时进度条（安装 / 启动 / 运行 / 失败），失败直接弹出错误；
+  - 每次启动都会把日志归档到 `data/mc-test-client/runs/<时间>/`：`selected.json`（含 jar 名、大小、sha256）、`latest.log`、`client-console.log`、崩溃报告与 `summary.json`；界面「日志目录」按钮可复制路径；
+  - 能归因到具体 jar 的错误会直接列在启动器下方：Mod List 状态、`mods.toml` 缺失、资源命名空间（如 `icedragon:ice_nest`）都会反查到对应 jar；
   - `testClientDir` 仅「独立安装」使用，可指向已有 HMCL/PCL 的 `.minecraft` 目录。
 - 生产 jar 是 `reobfJar` 后的产物，必须在生产客户端里测试；开发客户端只服务当前工程自己的 mod。
 - 离线安装提示缺少库时，先更新 `plugins/mcdev/vendor/`（见 [离线构建包](#-离线构建包vendor重要)），不要反复重试联网安装。
