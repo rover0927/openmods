@@ -9,10 +9,12 @@ const SOURCES = {
   pop: '/sounds/ui/pop.ogg',
   /** 提示条（成就弹窗） */
   toast: '/sounds/ui/toast_in.ogg',
+  /** 升级成就：entity.player.levelup */
+  levelup: '/sounds/ui/levelup.ogg',
 } as const
 type SoundName = keyof typeof SOURCES
 
-const VOLUME: Record<SoundName, number> = { click: 0.32, pop: 0.26, toast: 0.28 }
+const VOLUME: Record<SoundName, number> = { click: 0.32, pop: 0.26, toast: 0.28, levelup: 0.38 }
 
 let enabled = true
 let installed = false
@@ -39,15 +41,19 @@ export function playUiSound(name: SoundName): void {
   if (!enabled) return
   const audio = player(name)
   if (!audio) return
-  try {
-    audio.currentTime = 0
-    // 浏览器拦截自动播放时静默忽略，不打断交互
-    void audio.play().catch(() => {})
-  } catch { /* 某些浏览器在未解锁媒体时抛错 */ }
+  // 首次使用（readyState = HAVE_NOTHING）时设置 currentTime 可能抛错，不能让它吞掉 play
+  try { audio.currentTime = 0 } catch { /* 还没加载元数据：直接播放即可 */ }
+  // 浏览器拦截自动播放时静默忽略，不打断交互
+  void audio.play().catch(() => {})
 }
 
 export function playToastSound(): void {
   playUiSound('toast')
+}
+
+/** 升级成就音（entity.player.levelup） */
+export function playLevelUpSound(): void {
+  playUiSound('levelup')
 }
 
 /** 会发声的可点区域：原生控件 + 本应用自绘的行 / 卡片 / 页签 */

@@ -1,4 +1,4 @@
-﻿/* ==========================================================================
+﻿﻿/* ==========================================================================
    openmods · Minecraft 像素皮肤
    在 styles.css 之后加载：只覆盖令牌与组件选择器，不改原有布局规则。
    素材：物品图标 / 方块贴图来自 Minecraft 官方资源（public/mc），仅本地原型用途。
@@ -2047,4 +2047,80 @@ summary:focus-visible,
 
 @media (prefers-reduced-motion: reduce) {
   .theme-card:active { transform: none; }
+}
+
+/* ---- N. MC 升级成就：构建/启动进度条 → 升级弹窗 ---------------------- */
+/* 进度条：底部提示条里嵌一条 MC 槽位样式的经验条，1.75s 走满 */
+.toast.mc-boot {
+  gap: 12px;
+  min-width: 300px;
+}
+.mc-boot-label {
+  font-size: 12px;
+  color: var(--label-secondary);
+  white-space: nowrap;
+}
+.mc-boot-bar {
+  position: relative;
+  flex: 1;
+  min-width: 130px;
+  height: 10px;
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) var(--mc-slot-light) var(--mc-slot-light) var(--mc-slot-dark);
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.mc-boot-bar > i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  background: linear-gradient(var(--mc-accent-hi), var(--mc-accent));
+  animation: mc-boot-fill 1.75s linear forwards;
+}
+@keyframes mc-boot-fill {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+/* 成就弹窗：右上角滑入，金框 + 经验瓶图标（MC 成就 toast 形态） */
+.mc-achievement {
+  position: fixed;
+  top: 52px;
+  right: 16px;
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #212121;
+  border: 2px solid #ffd36b;
+  box-shadow: inset 0 0 0 1px #3a2a12, 0 6px 0 rgba(0, 0, 0, 0.45);
+  animation: mc-achv-in 0.28s steps(4);
+}
+.mc-achievement-icon { display: inline-flex; }
+.mc-achievement-text { display: flex; flex-direction: column; gap: 2px; }
+.mc-achievement-title {
+  color: #ffd36b;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 18px;
+  text-shadow: 1px 1px 0 #000;
+}
+.mc-achievement-sub {
+  color: #d8d8d8;
+  font-size: 12px;
+  line-height: 16px;
+  text-shadow: 1px 1px 0 #000;
+}
+@keyframes mc-achv-in {
+  from { transform: translateX(32px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mc-achievement { animation: none; }
+  .mc-boot-bar > i { animation-duration: 0.01s; }
 }

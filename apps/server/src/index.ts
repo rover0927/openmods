@@ -84,6 +84,12 @@ bus.setMaxListeners(50)
 // ---- 会话热缓存（声明提前：交互/终端的事件回调要按会话找 SSE 出口） ----
 const sessions = new Map<string, SessionEntry>()
 
+// 插件全局事件 → 对应会话 SSE（mcdev 构建完成等；插件拿不到会话入口，只发 bus）
+bus.on('mc/build', data => {
+  const sid = String((data as any)?.sessionId ?? '')
+  if (sid) sessions.get(sid)?.sse.send('mc/build', data)
+})
+
 // ---- 人机交互（问用户 / 计划评审 / 执行授权） ----
 // 事件只发给对应会话的 SSE；刷新页面后 GET 会话详情还能看到未答的问题。
 const interactionHub = createInteractionHub({

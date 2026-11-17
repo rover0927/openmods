@@ -553,6 +553,8 @@ async function runGradle(opts: {
   timeoutSec?: number
   /** 会话工作目录：GRADLE_USER_HOME 缺省时用它下面的 .gradle-home（预热缓存就放那儿） */
   root?: string
+  /** 非后台任务结束回调（构建结果推给 UI / 插件事件用） */
+  onResult?: (r: { task: string; ok: boolean; code: number }) => void
 }): Promise<ToolResult> {
   const { projectDir, task } = opts
   if (!/^[a-zA-Z][\w:.-]*$/.test(task)) return fail(`任务名不合法：${task}`)
@@ -613,33 +615,61 @@ async function runGradle(opts: {
       cwd: projectDir, env, shell: process.platform === 'win32', windowsHide: true,
     })
     let buf = ''
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let markerTimer: ReturnType<typeof setTimeout> | undefined
+    const netHint = () => /Connection refused|SSL|Could not resolve|Could not GET|Read timed out/i.test(buf)
+      ? '\n依赖下载失败（镜像/网络）：优先检查网络，或用 OPENMODS_GRADLE_HOME 指向已预热缓存；'
+        + '不要为此修改 build.gradle / gradle.properties 的 MC、Forge、Gradle 版本。'
+      : ''
+    /**
+     * 收尾：Gradle daemon 有时攥着 stdout/stderr 句柄不放，只等 close 会一直拖到 timeout。
+     * 因此「BUILD SUCCESSFUL / BUILD FAILED 出现后短暂收尾」或进程 exit 后强制收尾，
+     * 保证工具结果（和会话回合）及时结束。
+     */
+    const finish = (code: number) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      clearTimeout(markerTimer)
+      child.stdout?.destroy()
+      child.stderr?.destroy()
+      recordBuild(projectDir, task, code)
+      opts.onResult?.({ task, ok: code === 0, code })
+      const tail = buf.length > 8000 ? `…（截断，共 ${buf.length} 字符）\n${buf.slice(-8000)}` : buf
+      resolvePromise({
+        forModel: seedNote + `gradlew ${task} 退出码 ${code}\n${tail || '（无输出）'}${code === 0 ? '' : netHint()}`,
+        isError: code !== 0,
+      })
+    }
     const onData = (d: Buffer) => {
       buf += d.toString('utf8')
       if (buf.length > 400_000) buf = buf.slice(-200_000) // 防跑飞
+      // 构建结束标记：成功/失败都立刻进入收尾（留 600ms 吃掉剩余输出），不再等 close
+      if (!markerTimer && /BUILD (SUCCESSFUL|FAILED) in|FAILURE: Build failed/.test(buf)) {
+        const ok = /BUILD SUCCESSFUL in/.test(buf)
+        markerTimer = setTimeout(() => finish(ok ? 0 : 1), 600)
+      }
     }
     child.stdout?.on('data', onData)
     child.stderr?.on('data', onData)
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      clearTimeout(markerTimer)
       child.kill('SIGTERM')
+      child.stdout?.destroy()
+      child.stderr?.destroy()
       resolvePromise(fail(`gradlew ${task} 超时（${timeoutMs / 1000}s）。尾部输出：\n${buf.slice(-4000)}`))
     }, timeoutMs)
-    child.on('close', code => {
-      clearTimeout(timer)
-      recordBuild(projectDir, task, code ?? -1)
-      const tail = buf.length > 8000 ? `…（截断，共 ${buf.length} 字符）\n${buf.slice(-8000)}` : buf
-      const ok = code === 0
-      // 依赖下载失败是环境问题，不是代码问题：明确告诉模型别去改 build.gradle 的平台版本
-      const netHint = !ok && /Connection refused|SSL|Could not resolve|Could not GET|Read timed out/i.test(buf)
-        ? '\n依赖下载失败（镜像/网络）：优先检查网络，或用 OPENMODS_GRADLE_HOME 指向已预热缓存；'
-          + '不要为此修改 build.gradle / gradle.properties 的 MC、Forge、Gradle 版本。'
-        : ''
-      resolvePromise({
-        forModel: seedNote + `gradlew ${task} 退出码 ${code}\n${tail || '（无输出）'}${netHint}`,
-        isError: !ok,
-      })
-    })
+    child.on('close', code => finish(code ?? -1))
+    // close 依赖管道关闭；daemon 不放手时用 exit 兜底（再给 400ms 收尾输出）
+    child.on('exit', code => { setTimeout(() => finish(code ?? -1), 400) })
     child.on('error', e => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
+      clearTimeout(markerTimer)
       resolvePromise(fail(`无法启动 gradlew：${e.message}`))
     })
   })
@@ -876,6 +906,17 @@ const plugin: Plugin = {
             background: !!args.background,
             timeoutSec: Number(args.timeoutSec ?? 600),
             root: rootOf(exec),
+            // 构建结果广播给前端：点了「测试 Mod」/AI 跑完 build 都弹升级成就
+            onResult: r => {
+              if (r.task !== 'build') return
+              ctx.events.emit('mc/build', {
+                sessionId: exec.sessionId,
+                project: basename(dir),
+                ok: r.ok,
+                code: r.code,
+                time: Date.now(),
+              })
+            },
           })
         } catch (e: any) { return fail(e.message) }
       },

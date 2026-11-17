@@ -11,7 +11,8 @@ import { MainPanel } from './components/MainPanel.js'
 import { DOCK_TABS, RightDock, useDockDrag, type DockTabId } from './components/RightDock.js'
 import { SettingsWindow } from './components/SettingsWindow.js'
 import { AskDialog, type InteractionReplyBody } from './components/AskDialog.js'
-import { playToastSound, setUiSoundEnabled } from './ui-sound.js'
+import { McIcon } from './components/McIcon.js'
+import { playLevelUpSound, playToastSound, setUiSoundEnabled } from './ui-sound.js'
 
 
 const MODELING_SUGGESTIONS = [
@@ -236,6 +237,10 @@ export default function App() {
   const featuresRef = useRef<Record<string, boolean>>({})
   const [iframeReady, setIframeReady] = useState(false)
   const [toast, setToast] = useState<{ text: string; action?: { label: string; run: () => void } } | null>(null)
+  /** MC 构建/启动的进度提示（1.75s 进度条，走完弹升级成就） */
+  const [mcBoot, setMcBoot] = useState<{ label: string } | null>(null)
+  /** MC 升级成就弹窗（右上角，levelup 音效） */
+  const [achievement, setAchievement] = useState<{ title: string; sub: string } | null>(null)
   const [health, setHealth] = useState<{ mock: boolean } | null>(null)
   // 计划模式 / 待办 / 授权（会话级，服务端 durable）
   /** 计划模式默认开启：新会话先出方案，批准后再动手 */
@@ -271,6 +276,30 @@ export default function App() {
     playToastSound()
     setToast({ text: msg, action })
     setTimeout(() => setToast(null), action ? 8000 : 5000)
+  }, [])
+
+  // ---- MC 构建/启动的升级动画：进度条 1.75s → 成就弹窗 + levelup 音效 ----
+  const celebrateTimers = useRef<{ progress?: number; achievement?: number }>({})
+  const cancelCelebrate = useCallback(() => {
+    window.clearTimeout(celebrateTimers.current.progress)
+    window.clearTimeout(celebrateTimers.current.achievement)
+    celebrateTimers.current = {}
+    setMcBoot(null)
+    setAchievement(null)
+  }, [])
+  const celebrate = useCallback((label: string, sub: string) => {
+    cancelCelebrate()
+    setMcBoot({ label })
+    celebrateTimers.current.progress = window.setTimeout(() => {
+      setMcBoot(null)
+      setAchievement({ title: '升级！', sub })
+      playLevelUpSound()
+      celebrateTimers.current.achievement = window.setTimeout(() => setAchievement(null), 4000)
+    }, 1750)
+  }, [cancelCelebrate])
+  useEffect(() => () => {
+    window.clearTimeout(celebrateTimers.current.progress)
+    window.clearTimeout(celebrateTimers.current.achievement)
   }, [])
 
   // ---- 右侧拓展的标签页 ----
@@ -634,6 +663,13 @@ export default function App() {
         setWaiting(Array.isArray(f.waiting) ? f.waiting : [])
         if (rootSessionId) refreshSubagents(rootSessionId)
         break
+      // MC 构建完成（mc_gradle build）：刷新工程状态；成功时走进度条 → 升级成就
+      case 'mc/build': {
+        const project = String(f.project ?? 'mod')
+        if (f.ok === true) celebrate(`「${project}」构建完成，正在收尾…`, `构建成功 · ${project}`)
+        if (sessionId) api.mcState(sessionId).then(x => setMcProjects(x.projects ?? [])).catch(() => {})
+        break
+      }
       case 'done':
         setBusy(false)
         if (lastModelRef.current) sendToBridge({ type: 'load_bbmodel', model: lastModelRef.current })
@@ -651,7 +687,7 @@ export default function App() {
         if (rootSessionId) refreshSubagents(rootSessionId)
         break
     }
-  }, [sendToBridge, updateLastTurn, showToast, refreshModels, refreshSubagents, rootSessionId, refreshCanvases, sessionId])
+  }, [sendToBridge, updateLastTurn, showToast, refreshModels, refreshSubagents, rootSessionId, refreshCanvases, sessionId, celebrate])
 
   // 统一事件流：当前打开的会话（主会话或子代理）都订阅同一条 SSE
   useEffect(() => {
@@ -1047,12 +1083,20 @@ export default function App() {
   }, [loadCanvas, loadTerminals, refreshSubagents, showToast, featureOn, refreshCanvases, resetCanvasPages])
 
   // MC 工程：标题栏的「▶ 测试 Mod」= 后台 gradlew runClient（Minecraft 客户端窗口直接弹出来）
+  // 点击即走进度条 → 升级成就（1.75s），启动失败则撤销动画并提示
   const mcRun = useCallback((project: string) => {
     if (!sessionId) return
-    api.mcRun(sessionId, project).then(r => {
-      showToast(`已启动 runClient（pid ${r.pid}）：客户端窗口弹出后即可测试 mod；控制台日志在工程的 run-console.log`)
-    }).catch(e => showToast(`启动失败：${e.message}`))
-  }, [sessionId, showToast])
+    celebrate(`正在启动「${project}」…`, `「${project}」已装进 Minecraft 1.20.1`)
+    api.mcRun(sessionId, project).then(() => {
+      // 启动成功后刷新工程状态，按钮从「▶」切成「■」
+      window.setTimeout(() => {
+        api.mcState(sessionId).then(x => setMcProjects(x.projects ?? [])).catch(() => {})
+      }, 1200)
+    }).catch(e => {
+      cancelCelebrate()
+      showToast(`启动失败：${e.message}`)
+    })
+  }, [sessionId, celebrate, cancelCelebrate, showToast])
 
   const mcStop = useCallback((project: string) => {
     if (!sessionId) return
@@ -1624,6 +1668,21 @@ export default function App() {
               onClick={() => { toast.action!.run(); setToast(null) }}
             >{toast.action.label}</button>
           )}
+        </div>
+      )}
+      {mcBoot && (
+        <div className="toast mc-boot">
+          <span className="mc-boot-label">{mcBoot.label}</span>
+          <span className="mc-boot-bar" aria-hidden="true"><i /></span>
+        </div>
+      )}
+      {achievement && (
+        <div className="mc-achievement" role="status" aria-live="polite">
+          <span className="mc-achievement-icon"><McIcon name="model" size={28} /></span>
+          <span className="mc-achievement-text">
+            <span className="mc-achievement-title">{achievement.title}</span>
+            <span className="mc-achievement-sub">{achievement.sub}</span>
+          </span>
         </div>
       )}
       <SettingsWindow
