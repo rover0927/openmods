@@ -71,12 +71,18 @@ npm start                # 或 npm run dev（tsx watch + vite）
 
 ## 📦 离线构建包（vendor，重要）
 
-`plugins/mcdev/vendor/`（约 243M：Gradle 8.8 发行版 + ForgeGradle `maven_downloader` 全量快照）**不进 git**，两种获取方式：
+`plugins/mcdev/vendor/`（约 245M：Gradle 8.8 发行版 + ForgeGradle `maven_downloader` 全量快照 + 测试客户端安装器依赖）**不进 git**，两种获取方式：
 
-1. **推荐**：到 [Releases](https://github.com/rover0927/openmods/releases) 下载 `openmods-vendor.zip`，解压到 `plugins/mcdev/vendor/`。解压后新机器 / 全新 `GRADLE_USER_HOME` 构建零下载。
+1. **推荐**：到 [Releases](https://github.com/rover0927/openmods/releases) 下载最新的 `openmods-vendor.zip`，解压到 `plugins/mcdev/vendor/`。解压后新机器 / 全新 `GRADLE_USER_HOME` 构建零下载，统一测试启动器也能离线安装生产客户端。
 2. **不下载也能跑**：首次构建时 `mc_gradle` 自动走国内镜像（USTC bmclapi）补齐缓存，只是慢几分钟且需要联网。
 
 同页还有 `openmods-mdk-template.zip`（Forge 1.20.1 MDK 模板单独打包；模板本体也在 `plugins/mcdev/template/`）。
+
+> ⚠️ **已有旧版 vendor 的升级提醒**：v0.1.0 的完整包早于测试客户端离线安装支持，缺少 Forge 安装器处理器依赖（trove / guava 25.1 / FART / jarsplitter / srgutils 等）。请二选一：
+> - 重新下载最新的 `openmods-vendor.zip` 覆盖解压；
+> - 或下载增量补丁 `openmods-vendor-forge-testclient-patch.zip`，解压到项目根目录（会把 10 个依赖补进 `plugins/mcdev/vendor/fg-maven/`）。
+>
+> 如果启动测试客户端时提示“本地 MDK 缓存不完整 / 缺少库”，先按上面更新 vendor，不要反复重试联网安装。
 
 ## 📚 目录
 
@@ -509,11 +515,16 @@ interface PluginContext {
 - Jar 页列表 = 素材库归档 jar + 当前会话 cwd / `MC_ROOT` 下的 `build/libs/*.jar` 扫描结果；扫描结果可一键「归档」进素材库。
 - 勾选一个或多个 jar →「启动测试游戏」：
   - 使用独立的 **Forge 1.20.1 生产客户端**，不是 `runClient` 开发客户端；
-  - 客户端目录默认 `data/mc-test-client/.minecraft`，首次用 vendor 里的 Forge installer 安装（需要网络）；
+  - 设置 → 通用 →「Mod 构建」新增「测试客户端来源」：
+    - **自动（优先本地 MDK）**：默认；检测到本机 MDK 的 ForgeGradle 缓存时离线组装生产客户端，失败才联网；
+    - **当前 MDK（离线）**：只用本机 MDK 缓存组装（`minecraft_repo` + `modules-2` + `maven_downloader` + vendor），不联网；
+    - **独立安装（联网）**：走官方 installer 或 `testClientDir` 指向的现成 `.minecraft`。
+  - 客户端目录默认 `data/mc-test-client/.minecraft`；首次安装优先执行 `installer --offline`，本地缓存/离线包齐备时无需网络；
   - 选中的 jar 复制到 `.minecraft/mods/`，上次管理的旧 jar 会清理，用户手动放的其它 jar 保留；
   - 启动过程在底部显示悬浮实时进度条（安装 / 启动 / 运行 / 失败），失败直接弹出错误；
-  - 设置 → 通用 →「Mod 构建」里的 `testClientDir` 可指向已有 HMCL/PCL 的 `.minecraft` 目录，跳过自动安装。
+  - `testClientDir` 仅「独立安装」使用，可指向已有 HMCL/PCL 的 `.minecraft` 目录。
 - 生产 jar 是 `reobfJar` 后的产物，必须在生产客户端里测试；开发客户端只服务当前工程自己的 mod。
+- 离线安装提示缺少库时，先更新 `plugins/mcdev/vendor/`（见 [离线构建包](#-离线构建包vendor重要)），不要反复重试联网安装。
 
 ---
 
@@ -628,7 +639,7 @@ SSE 帧 `{id, topic, ...}`，topic 含：`open`、`turn/start`、`user/message`�
 21. **素材库自动入库会累积**：普通会话每次非空画布提交都会 upsert 一条 `auto` 素材（同一 canvasId 更新而不是重复创建）；不用时可在设置 → 功能关闭素材库，或在抽屉里删除。
 22. **功能开关需要重启**：`prefs.features` 改的是下次启动态；本次进程里插件不会热插拔，设置页会显示 `pendingRestart`。
 23. **主题切换即时生效**：5 套 MC 主题写在 `[data-theme]`，只影响 UI，不改数据；画布与终端保持深色。
-24. **统一测试客户端首次安装需要网络**：默认装到 `data/mc-test-client/.minecraft`；失败时在设置 → 通用 → Mod 构建里把 `testClientDir` 指向已有 Forge 1.20.1 `.minecraft` 目录。
+24. **统一测试客户端首次安装优先离线**：默认装到 `data/mc-test-client/.minecraft`，会复用本机 MDK 的 ForgeGradle 缓存 + vendor 离线包执行 `installer --offline`；缓存不完整时才联网。想强制离线/联网，可在设置 → 通用 → Mod 构建里切换「测试客户端来源」。**缺少库时请更新 Releases 里的 vendor 包**（见 [离线构建包](#-离线构建包vendor重要)），或改用 `testClientDir` 指向已有 Forge 1.20.1 `.minecraft`。
 
 ---
 

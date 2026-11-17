@@ -4,13 +4,55 @@
 // <clientDir>/mods/，适合多个模组联调。客户端目录默认在 data/mc-test-client，
 // 也可在设置里用 testClientDir 指向已有的 .minecraft。
 import { spawn, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
-  createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync,
+  appendFileSync, copyFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync,
+  statSync, unlinkSync, writeFileSync,
 } from 'node:fs'
-import { basename, delimiter, join, resolve } from 'node:path'
+import { basename, delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
+/**
+ * 本机 MDK 工位（与 mcdev 插件的 MC_ROOT 同一套解析）：
+ * 测试客户端优先复用这里的 ForgeGradle 预热缓存离线组装，避免再走官方源安装。
+ */
+const MC_ROOT = process.env.OPENMODS_MC_ROOT
+  ?? (existsSync(join(ROOT, '..', 'mincraft-maker'))
+    ? join(ROOT, '..', 'mincraft-maker', 'projects')
+    : join(ROOT, 'data', 'mcprojects'))
+const WARM_GRADLE_HOME = process.env.GRADLE_USER_HOME
+  ?? (existsSync(join(MC_ROOT, '.gradle-home')) ? join(MC_ROOT, '.gradle-home') : '')
+const FORGE_GRADLE_CACHE = WARM_GRADLE_HOME ? join(WARM_GRADLE_HOME, 'caches', 'forge_gradle') : ''
+
+/** 本机 MDK 的 ForgeGradle 预热缓存（离线组装生产客户端的来源） */
+interface MdkEnv {
+  home: string
+  forgeGradle: string
+}
+
+/**
+ * 解析 MDK 缓存：显式工程目录优先（工程自身或其父目录的 .gradle-home），
+ * 其次默认的 MC_ROOT/.gradle-home。要求 minecraft_repo 里有 vanilla version.json。
+ */
+function resolveMdkEnv(projectDir?: string): MdkEnv | undefined {
+  const homes: string[] = []
+  const explicit = String(projectDir ?? '').trim()
+  if (explicit) {
+    const dir = resolve(explicit)
+    homes.push(join(dir, '.gradle-home'), join(dirname(dir), '.gradle-home'), dir)
+  }
+  if (WARM_GRADLE_HOME) homes.push(WARM_GRADLE_HOME)
+  for (const home of homes) {
+    const fg = join(home, 'caches', 'forge_gradle')
+    if (existsSync(join(fg, 'minecraft_repo', 'versions', VANILLA_VERSION_ID, 'version.json'))) {
+      return { home, forgeGradle: fg }
+    }
+  }
+  return undefined
+}
+/** 离线构建包里打包的 Forge 依赖（安装器之外还有全套库） */
+const VENDOR_MAVEN = join(ROOT, 'plugins', 'mcdev', 'vendor', 'fg-maven')
 const TEST_ROOT = join(ROOT, 'data', 'mc-test-client')
 const MINECRAFT_DIR = join(TEST_ROOT, '.minecraft')
 const STATE_FILE = join(TEST_ROOT, 'state.json')
@@ -25,6 +67,16 @@ const FORGE_VERSION_ID = '1.20.1-forge-47.4.10'
 const VANILLA_VERSION_ID = '1.20.1'
 
 export type TestClientPhase = 'idle' | 'installing' | 'starting' | 'running' | 'exited' | 'error'
+
+/** 测试客户端来源（对应设置里的 testClientMode） */
+export type TestClientMode = 'auto' | 'mdk' | 'production'
+
+export interface TestClientOptions {
+  testClientDir?: string
+  testClientMode?: TestClientMode
+  /** 指定 MDK 工程目录（空 = 在 MC_ROOT 下自动找） */
+  testMdkDir?: string
+}
 
 export interface TestClientJar {
   name: string
@@ -108,16 +160,262 @@ function hasForge(clientDir: string): boolean {
   return existsSync(versionJson(clientDir, FORGE_VERSION_ID)) && existsSync(versionJson(clientDir, VANILLA_VERSION_ID))
 }
 
+/**
+ * 安装器处理器生成的生产客户端 jar：srg / extra / forge-client。
+ * 只有版本 JSON 不够——缺这三个文件时 Forge 会在 MinecraftLocator 直接崩溃。
+ */
+function patchedClientPaths(clientDir: string): string[] {
+  try {
+    const forge = readJson(versionJson(clientDir, FORGE_VERSION_ID))
+    const args = Array.isArray(forge?.arguments?.game) ? forge.arguments.game.map(String) : []
+    const argOf = (flag: string) => {
+      const i = args.indexOf(flag)
+      return i >= 0 ? args[i + 1] : ''
+    }
+    const mcpVersion = argOf('--fml.mcpVersion')
+    const forgeVersion = argOf('--fml.forgeVersion')
+    const mcVersion = argOf('--fml.mcVersion') || VANILLA_VERSION_ID
+    const forgeGroup = argOf('--fml.forgeGroup') || 'net.minecraftforge'
+    if (!mcpVersion || !forgeVersion) return []
+    // 安装器产物目录是 <mcVersion>-<mcpVersion> / <mcVersion>-<forgeVersion>，
+    // 不是版本 JSON 的 id（1.20.1-forge-47.4.10）
+    const mcAndMcp = `${mcVersion}-${mcpVersion}`
+    const mcAndForge = `${mcVersion}-${forgeVersion}`
+    return [
+      `net/minecraft/client/${mcAndMcp}/client-${mcAndMcp}-srg.jar`,
+      `net/minecraft/client/${mcAndMcp}/client-${mcAndMcp}-extra.jar`,
+      `${forgeGroup.replace(/\./g, '/')}/forge/${mcAndForge}/forge-${mcAndForge}-client.jar`,
+    ]
+  } catch {
+    return []
+  }
+}
+
+/** 客户端是否真的可启动（版本文件 + 安装器生成的三个 patched jar） */
+function clientReady(clientDir: string): boolean {
+  if (!hasForge(clientDir)) return false
+  const paths = patchedClientPaths(clientDir)
+  if (!paths.length) return false
+  return paths.every(p => existsSync(join(clientDir, 'libraries', p)))
+}
+
+const OS_NAME = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'osx' : 'linux'
+
+/** 版本 JSON 的 rules：按当前系统裁剪，避免把 mac/linux 的 natives 也塞进 classpath */
+function ruleAllows(rules: any): boolean {
+  if (!Array.isArray(rules) || !rules.length) return true
+  let allowed = false
+  for (const r of rules) {
+    const os = r?.os
+    if (os && os.name && os.name !== OS_NAME) continue
+    if (os && os.arch && os.arch !== process.arch) continue
+    if (r?.action === 'allow') allowed = true
+    if (r?.action === 'disallow') return false
+  }
+  return allowed
+}
+
+function sha1(path: string): string | undefined {
+  try { return createHash('sha1').update(readFileSync(path)).digest('hex') } catch { return undefined }
+}
+
+function copyIfMissing(src: string, dst: string): boolean {
+  if (existsSync(dst)) return true
+  try {
+    mkdirSync(dirname(dst), { recursive: true })
+    copyFileSync(src, dst)
+    return true
+  } catch { return false }
+}
+
+/** 按 maven 相对路径列出本地所有候选文件（受管目录 / 离线包 / MDK 预热缓存 / Gradle modules-2） */
+function findLocalArtifacts(rel: string, env?: MdkEnv): string[] {
+  const p = rel.replace(/\\/g, '/')
+  const fg = env?.forgeGradle ?? FORGE_GRADLE_CACHE
+  const home = env?.home ?? WARM_GRADLE_HOME
+  const roots: string[] = [
+    join(MINECRAFT_DIR, 'libraries'),
+    VENDOR_MAVEN,
+    ...(fg
+      ? [
+        join(fg, 'maven_downloader'),
+        join(fg, 'minecraft_user_repo'),
+        join(fg, 'mcp_repo'),
+      ]
+      : []),
+  ]
+  const out: string[] = []
+  for (const root of roots) {
+    const f = join(root, p)
+    if (existsSync(f)) out.push(f)
+  }
+  // Gradle modules-2 按 sha1 分桶：modules-2/files-2.1/<group>/<artifact>/<version>/<hash>/<file>
+  if (home) {
+    const parts = p.split('/')
+    if (parts.length >= 4) {
+      const file = parts[parts.length - 1]
+      const version = parts[parts.length - 2]
+      const artifact = parts[parts.length - 3]
+      const group = parts.slice(0, -3).join('.')
+      const versionDir = join(home, 'caches', 'modules-2', 'files-2.1', group, artifact, version)
+      try {
+        for (const hash of readdirSync(versionDir)) {
+          const f = join(versionDir, hash, file)
+          if (existsSync(f)) out.push(f)
+        }
+      } catch { /* 该库不在 gradle 缓存 */ }
+    }
+  }
+  return out
+}
+
+function resetInstallLog() {
+  try {
+    mkdirSync(TEST_ROOT, { recursive: true })
+    writeFileSync(INSTALL_LOG, '')
+  } catch { /* 日志写失败不阻塞 */ }
+}
+
+function installNote(line: string) {
+  try {
+    mkdirSync(TEST_ROOT, { recursive: true })
+    appendFileSync(INSTALL_LOG, `${line}\n`)
+  } catch { /* 日志写失败不阻塞 */ }
+}
+
+/** 从 Forge 安装器 jar 抽出 version.json / install_profile.json（离线安装要用它的库清单与 sha1） */
+function extractForgeMeta(clientDir: string): { installProfile?: string } {
+  if (!existsSync(INSTALLER)) return {}
+  const tmp = join(TEST_ROOT, '.forge-meta')
+  rmSync(tmp, { recursive: true, force: true })
+  mkdirSync(tmp, { recursive: true })
+  try {
+    const r = spawnSync(javaExe('jar'), ['xf', INSTALLER, 'version.json', 'install_profile.json'], {
+      cwd: tmp,
+      windowsHide: true,
+    })
+    if (r.status !== 0) return {}
+    const ver = join(tmp, 'version.json')
+    if (existsSync(ver)) {
+      const dst = versionJson(clientDir, FORGE_VERSION_ID)
+      mkdirSync(dirname(dst), { recursive: true })
+      copyFileSync(ver, dst)
+    }
+    const profile = join(tmp, 'install_profile.json')
+    if (!existsSync(profile)) return {}
+    // 安装器会反复读它，放到受管目录里而不是临时目录
+    const keep = join(TEST_ROOT, 'install_profile.json')
+    copyFileSync(profile, keep)
+    return { installProfile: keep }
+  } catch {
+    return {}
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+}
+
+/** 按 sha1 校验把本地已有的库补进 <clientDir>/libraries；返回是否就绪 */
+function seedArtifact(clientDir: string, rel: string, expected: string, env?: MdkEnv): 'kept' | 'copied' | 'missing' {
+  const dst = join(clientDir, 'libraries', rel)
+  if (existsSync(dst) && (!expected || sha1(dst) === expected)) return 'kept'
+  const src = findLocalArtifacts(rel, env).find(p => !expected || sha1(p) === expected)
+  if (!src) return 'missing'
+  try {
+    mkdirSync(dirname(dst), { recursive: true })
+    copyFileSync(src, dst)
+    return 'copied'
+  } catch {
+    return 'missing'
+  }
+}
+
+/**
+ * 复用本机 MDK 的 ForgeGradle 预热缓存离线组装测试客户端：
+ * 版本 JSON / 客户端 jar 来自 minecraft_repo，库来自离线包、maven_downloader 与 modules-2，
+ * 安装器处理器需要的 36 个库也一起补齐，之后 `--offline` 安装无需联网。
+ * 素材（assets）留在缓存目录里直接用，不复制 600MB。
+ * 返回还缺的库；为空表示可以尝试离线安装。
+ */
+function seedFromLocalMdk(clientDir: string, env: MdkEnv): string[] {
+  resetInstallLog()
+  installNote(`[local] 复用本机 MDK 缓存：${env.forgeGradle}`)
+  const vanillaDir = join(clientDir, 'versions', VANILLA_VERSION_ID)
+  const mcRepo = join(env.forgeGradle, 'minecraft_repo', 'versions', VANILLA_VERSION_ID)
+  mkdirSync(vanillaDir, { recursive: true })
+
+  if (!copyIfMissing(join(mcRepo, 'version.json'), versionJson(clientDir, VANILLA_VERSION_ID))) {
+    installNote('[local] 缺少 vanilla version.json')
+  }
+  copyIfMissing(join(mcRepo, 'client.jar'), join(vanillaDir, `${VANILLA_VERSION_ID}.jar`))
+  installNote(`[local] 客户端版本文件：${existsSync(versionJson(clientDir, VANILLA_VERSION_ID)) ? '就绪' : '缺失'}`)
+
+  let installProfile = ''
+  if (!existsSync(versionJson(clientDir, FORGE_VERSION_ID))) {
+    installNote('[local] 从安装器 jar 提取 Forge 版本文件')
+  }
+  const meta = extractForgeMeta(clientDir)
+  installProfile = meta.installProfile ?? join(TEST_ROOT, 'install_profile.json')
+  if (!existsSync(installProfile)) {
+    installNote('[local] 缺少 install_profile.json，无法离线安装')
+    return ['install_profile.json']
+  }
+  if (!hasForge(clientDir)) return ['版本 JSON']
+
+  const vanilla = readJson(versionJson(clientDir, VANILLA_VERSION_ID))
+  const forge = readJson(versionJson(clientDir, FORGE_VERSION_ID))
+  const libs = mergeLibraries(vanilla, forge)
+  const missing: string[] = []
+  let copied = 0
+  let kept = 0
+  for (const lib of libs) {
+    const rel = libPath(lib)
+    if (!rel) continue
+    const expected = lib?.downloads?.artifact?.sha1 ? String(lib.downloads.artifact.sha1) : ''
+    const r = seedArtifact(clientDir, rel, expected, env)
+    if (r === 'missing') missing.push(rel)
+    else if (r === 'copied') copied++
+    else kept++
+  }
+  installNote(`[local] 客户端库：复用 ${kept}、补齐 ${copied}、缺失 ${missing.length}`)
+
+  // 安装器处理器自己的库（trove/guava25/FART/srgutils…）：校验不过离线安装会直接失败
+  try {
+    const profile = readJson(installProfile)
+    let pKept = 0
+    let pCopied = 0
+    let pMissing = 0
+    for (const lib of Array.isArray(profile?.libraries) ? profile.libraries : []) {
+      const art = lib?.downloads?.artifact
+      if (!art?.path) continue
+      const r = seedArtifact(clientDir, String(art.path), String(art.sha1 ?? ''), env)
+      if (r === 'missing') {
+        pMissing++
+        missing.push(String(art.path))
+      } else if (r === 'copied') pCopied++
+      else pKept++
+    }
+    installNote(`[local] 安装器库：复用 ${pKept}、补齐 ${pCopied}、缺失 ${pMissing}`)
+  } catch {
+    installNote('[local] install_profile.json 解析失败')
+    missing.push('install_profile.json')
+  }
+
+  if (missing.length) installNote(`[local] 缺失示例：${missing.slice(0, 8).join('、')}`)
+  return missing
+}
+
 /** 运行一个长期进程并把输出写进日志；返回退出码 */
 function runLogged(cmd: string, args: string[], opts: {
   cwd?: string
   env?: NodeJS.ProcessEnv
   log: string
   timeoutMs: number
+  /** 追加到已有日志（保留本地播种的输出） */
+  append?: boolean
 }): Promise<number> {
   return new Promise((resolvePromise, reject) => {
     mkdirSync(TEST_ROOT, { recursive: true })
-    const out = createWriteStream(opts.log, { flags: 'w' })
+    const out = createWriteStream(opts.log, { flags: opts.append ? 'a' : 'w' })
     const child = spawn(cmd, args, {
       cwd: opts.cwd ?? TEST_ROOT,
       env: opts.env ?? process.env,
@@ -147,44 +445,73 @@ function runLogged(cmd: string, args: string[], opts: {
   })
 }
 
-/** 安装测试客户端：Forge installer 的 --installClient <dir> 直接装到受管目录 */
-async function installClient(): Promise<string> {
+/** 安装测试客户端：离线（只跑处理器、不联网）或联网；装完要求三个 patched jar 都存在 */
+async function installClient(offline: boolean): Promise<string> {
   if (!existsSync(INSTALLER)) throw new Error(`缺少 Forge 安装器：${INSTALLER}`)
   mkdirSync(MINECRAFT_DIR, { recursive: true })
   const profiles = join(MINECRAFT_DIR, 'launcher_profiles.json')
   if (!existsSync(profiles)) writeFileSync(profiles, '{ "profiles": {} }')
+  installNote(`[local] ${offline ? '离线' : '联网'}安装 Forge 测试客户端…`)
 
-  const code = await runLogged(javaExe(), [
-    '-Djava.awt.headless=true', '-jar', INSTALLER, '--installClient', MINECRAFT_DIR,
-  ], {
+  const args = ['-Djava.awt.headless=true', '-jar', INSTALLER]
+  if (offline) args.push('--offline')
+  args.push('--installClient', MINECRAFT_DIR)
+  const code = await runLogged(javaExe(), args, {
     log: INSTALL_LOG,
-    timeoutMs: 15 * 60_000,
+    timeoutMs: offline ? 5 * 60_000 : 15 * 60_000,
+    append: true,
   })
-  if (hasForge(MINECRAFT_DIR)) return MINECRAFT_DIR
+  if (clientReady(MINECRAFT_DIR)) return MINECRAFT_DIR
 
   const log = readText(INSTALL_LOG)
-  const hint = code !== 0 ? `安装器退出码 ${code}` : '安装器未生成 Forge 版本文件'
+  const hint = code !== 0 ? `安装器退出码 ${code}` : '安装器未生成完整的客户端文件'
   throw new Error(`${hint}。${tailLines(log, 20)}`)
 }
 
-async function ensureClient(prefDir?: string): Promise<string> {
+async function ensureClient(
+  prefDir: string | undefined,
+  mode: TestClientMode,
+  env: MdkEnv | undefined,
+): Promise<string> {
   const custom = String(prefDir ?? '').trim()
   if (custom) {
     const dir = resolve(custom)
-    if (hasForge(dir)) return dir
-    throw new Error(`测试客户端目录里没有 Forge ${FORGE_VERSION_ID}：${dir}`)
+    if (clientReady(dir)) return dir
+    throw new Error(`测试客户端目录不完整（缺 Forge ${FORGE_VERSION_ID} 的 patched jar）：${dir}`)
   }
-  if (hasForge(MINECRAFT_DIR)) return MINECRAFT_DIR
-  return installClient()
+  if (clientReady(MINECRAFT_DIR)) return MINECRAFT_DIR
+
+  if (mode !== 'production') {
+    if (!env) {
+      if (mode === 'mdk') {
+        throw new Error('没有检测到本机 MDK 的 ForgeGradle 缓存：请先在该 MDK 工程里跑一次 gradlew runClient，或在设置里填写 MDK 工程目录。')
+      }
+    } else {
+      const missing = seedFromLocalMdk(MINECRAFT_DIR, env)
+      if (!missing.length) {
+        try {
+          return await installClient(true)
+        } catch (e: any) {
+          if (mode === 'mdk') throw new Error(`离线安装失败：${e?.message ?? e}`)
+          installNote(`[local] 离线安装失败，回退联网：${e?.message ?? e}`)
+        }
+      } else {
+        installNote(`[local] 缓存不完整（缺 ${missing.length} 个库），跳过离线安装`)
+        if (mode === 'mdk') {
+          throw new Error(`本地 MDK 缓存不完整，缺 ${missing.length} 个库（如 ${missing.slice(0, 3).join('、')}）。可切换为「自动」或「独立安装」联网补齐。`)
+        }
+      }
+    }
+  }
+  return installClient(false)
 }
 
 /** 清理上次管理的 jar，再写入本次选中的 jar；不碰用户手动放进 mods 的文件 */
-function syncMods(clientDir: string, jars: TestClientJar[]) {
-  const modsDir = join(clientDir, 'mods')
+function syncMods(modsDir: string, jars: TestClientJar[], manifest = MODS_MANIFEST) {
   mkdirSync(modsDir, { recursive: true })
   let previous: string[] = []
   try {
-    const m = JSON.parse(readFileSync(MODS_MANIFEST, 'utf8'))
+    const m = JSON.parse(readFileSync(manifest, 'utf8'))
     previous = Array.isArray(m?.files) ? m.files.map(String) : []
   } catch { /* 没有清单 */ }
   for (const f of previous) {
@@ -202,8 +529,8 @@ function syncMods(clientDir: string, jars: TestClientJar[]) {
     writeFileSync(join(modsDir, candidate), jar.data)
     files.push(candidate)
   }
-  mkdirSync(TEST_ROOT, { recursive: true })
-  writeFileSync(MODS_MANIFEST, JSON.stringify({ files, updatedAt: Date.now() }, null, 2))
+  mkdirSync(dirname(manifest), { recursive: true })
+  writeFileSync(manifest, JSON.stringify({ files, updatedAt: Date.now() }, null, 2))
 }
 
 function readJson(path: string): any {
@@ -226,36 +553,54 @@ function nativePath(lib: any): string | undefined {
   return d?.path ? String(d.path) : undefined
 }
 
-/** 合并版本 JSON 的 libraries：非 native 按 group:artifact 去重，子版本（Forge）覆盖父版本 */
+/**
+ * 合并版本 JSON 的 libraries：按系统裁剪 rules，group:artifact[:classifier] 去重，
+ * 子版本（Forge）覆盖父版本。1.20.1 的 natives 是独立条目（classifier=natives-windows），
+ * 不能按 group:artifact 合并，否则会把主 jar 顶掉。
+ */
 function mergeLibraries(vanilla: any, forge: any): any[] {
   const map = new Map<string, any>()
   for (const lib of [...(vanilla?.libraries ?? []), ...(forge?.libraries ?? [])]) {
-    if (!lib?.name) continue
-    const key = String(lib.name).split(':').slice(0, 2).join(':')
-    // native 条目也保留；classpath 阶段只取 artifact
-    if (lib.natives) {
-      map.set(`${key}:natives`, lib)
-    } else {
-      map.set(key, lib)
-    }
+    if (!lib?.name || !ruleAllows(lib.rules)) continue
+    const parts = String(lib.name).split(':')
+    const key = parts.length >= 4 ? `${parts[0]}:${parts[1]}:${parts[3]}` : `${parts[0]}:${parts[1]}`
+    map.set(key, lib)
   }
   return [...map.values()]
 }
 
-function buildLaunch(clientDir: string): { args: string[]; cwd: string } {
+/** 1.20.1 的 natives 独立条目：解压 DLL 到 natives 目录 */
+function windowsNativePath(lib: any): string | undefined {
+  if (process.platform !== 'win32') return undefined
+  const parts = String(lib?.name ?? '').split(':')
+  if (parts.length < 4 || parts[3] !== 'natives-windows') return undefined
+  return lib?.downloads?.artifact?.path ? String(lib.downloads.artifact.path) : undefined
+}
+
+/** 素材优先用 MDK 预热缓存（600MB，不复制）；自定义客户端仍用自带 assets */
+function resolveAssetsDir(clientDir: string, indexId: string, env?: MdkEnv): string {
+  const own = join(clientDir, 'assets')
+  if (existsSync(join(own, 'indexes', `${indexId}.json`))) return own
+  const fg = env?.forgeGradle ?? FORGE_GRADLE_CACHE
+  const warm = fg ? join(fg, 'assets') : ''
+  if (warm && existsSync(join(warm, 'indexes', `${indexId}.json`))) return warm
+  return own
+}
+
+function buildLaunch(clientDir: string, env?: MdkEnv): { args: string[]; cwd: string } {
   const vanilla = readJson(versionJson(clientDir, VANILLA_VERSION_ID))
   const forge = readJson(versionJson(clientDir, FORGE_VERSION_ID))
   const librariesDir = join(clientDir, 'libraries')
   const nativesDir = join(clientDir, 'natives')
-  const assetsDir = join(clientDir, 'assets')
   const assetsIndex = String(vanilla?.assetIndex?.id ?? '5')
+  const assetsDir = resolveAssetsDir(clientDir, assetsIndex, env)
 
   const libs = mergeLibraries(vanilla, forge)
   const cp: string[] = []
   const nativeJars: string[] = []
   const missing: string[] = []
   for (const lib of libs) {
-    const np = nativePath(lib)
+    const np = nativePath(lib) ?? windowsNativePath(lib)
     if (np) {
       const abs = join(librariesDir, np)
       if (existsSync(abs)) nativeJars.push(abs)
@@ -267,11 +612,8 @@ function buildLaunch(clientDir: string): { args: string[]; cwd: string } {
     if (existsSync(abs)) cp.push(abs)
     else if (!np) missing.push(p)
   }
-  const vanillaJar = join(clientDir, 'versions', VANILLA_VERSION_ID, `${VANILLA_VERSION_ID}.jar`)
-  const forgeJar = join(clientDir, 'versions', FORGE_VERSION_ID, `${FORGE_VERSION_ID}.jar`)
-  if (existsSync(vanillaJar)) cp.push(vanillaJar)
-  else missing.push(vanillaJar)
-  if (existsSync(forgeJar)) cp.push(forgeJar)
+  // 生产客户端的原版/Forge 类由 MinecraftLocator 从 libraries 里的 srg/extra/client 加载；
+  // 不能再把 versions/1.20.1/1.20.1.jar 放进 classpath，否则同名包会触发 ResolutionException
   if (missing.length) throw new Error(`测试客户端缺少 ${missing.length} 个库/文件，例如 ${missing.slice(0, 3).join('、')}`)
 
   // 解压 natives（生产客户端需要 DLL）
@@ -340,8 +682,8 @@ function buildLaunch(clientDir: string): { args: string[]; cwd: string } {
   return { args: [...jvm, mainClass, ...game], cwd: clientDir }
 }
 
-function launch(clientDir: string, selected: TestClientState['selected']) {
-  const { args, cwd } = buildLaunch(clientDir)
+function launch(clientDir: string, selected: TestClientState['selected'], env?: MdkEnv) {
+  const { args, cwd } = buildLaunch(clientDir, env)
   mkdirSync(TEST_ROOT, { recursive: true })
   const out = createWriteStream(CONSOLE_LOG, { flags: 'w' })
   const child = spawn(javaExe(), args, {
@@ -366,8 +708,8 @@ function launch(clientDir: string, selected: TestClientState['selected']) {
   })
 }
 
-/** 启动测试客户端：异步安装/同步/拉起，调用方立即返回 */
-export async function startTestClient(jars: TestClientJar[], opts: { testClientDir?: string } = {}): Promise<void> {
+/** 启动测试客户端：异步准备/同步/拉起，调用方立即返回 */
+export async function startTestClient(jars: TestClientJar[], opts: TestClientOptions = {}): Promise<void> {
   if (busy) throw new Error('测试客户端正在安装或启动，请稍候')
   if (!jars.length) throw new Error('至少选择一个 jar')
   busy = true
@@ -375,12 +717,15 @@ export async function startTestClient(jars: TestClientJar[], opts: { testClientD
   const prev = readState()
   if (prev.pid && pidAlive(prev.pid)) stopTestClient()
   const selected = jars.map(j => ({ name: j.name, source: j.source }))
+  const mode = opts.testClientMode ?? 'auto'
+  // production 只走联网安装器/testClientDir；auto/mdk 优先用本机 MDK 缓存离线组装
+  const env = mode === 'production' ? undefined : resolveMdkEnv(opts.testMdkDir)
   writeState({ phase: 'installing', selected })
   try {
-    const clientDir = await ensureClient(opts.testClientDir)
+    const clientDir = await ensureClient(opts.testClientDir, mode, env)
     writeState({ phase: 'starting', selected, clientDir })
-    syncMods(clientDir, jars)
-    launch(clientDir, selected)
+    syncMods(join(clientDir, 'mods'), jars)
+    launch(clientDir, selected, env)
   } catch (e: any) {
     writeState({ phase: 'error', selected, error: e?.message ?? String(e) })
     throw e
@@ -414,7 +759,8 @@ export function getTestClientStatus(tail = 120): TestClientStatus {
   else if (alive) phase = /Sound engine started/.test(log) ? 'running' : 'starting'
   else if (s.pid) phase = 'exited'
   else phase = 'idle'
-  const source = log || console
+  // 安装阶段优先看安装器日志：上一次启动的 console 还留在盘上，不能拿来当本次进度
+  const source = s.phase === 'installing' ? (readText(INSTALL_LOG) || console) : (log || console)
   return {
     phase,
     running: alive,

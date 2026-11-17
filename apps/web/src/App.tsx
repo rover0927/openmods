@@ -1575,7 +1575,7 @@ export default function App() {
   const mcTestPhase = mcTestStatus?.phase ?? 'idle'
   const mcTestSelected = mcTestStatus?.selected.length ?? 0
   const mcTestLabel = mcTestPhase === 'installing'
-    ? '正在安装 Forge 测试客户端…'
+    ? '正在准备 Forge 测试客户端…'
     : mcTestPhase === 'starting'
       ? `正在启动测试客户端（${mcTestSelected} 个 jar）…`
       : mcTestPhase === 'running'
@@ -1584,7 +1584,7 @@ export default function App() {
   const mcTestLogLine = mcTestStatus ? (mcTestStatus.logTail.split(/\r?\n/).filter(Boolean).pop() ?? '') : ''
   const mcTestLogText = mcTestPhase === 'error'
     ? (mcTestStatus?.error || mcTestLogLine || '未知错误')
-    : (mcTestLogLine || (mcTestPhase === 'installing' ? '等待安装器输出…' : '等待客户端输出…'))
+    : (mcTestLogLine || (mcTestPhase === 'installing' ? '检查本地 MDK 缓存…' : '等待客户端输出…'))
   /** 当前功能开关下可用的右侧标签（关闭画布后 canvas 不出现） */
   const dockAvailable = useMemo(
     () => (featureOn('canvas') ? DOCK_TABS : DOCK_TABS.filter(t => t !== 'canvas')),

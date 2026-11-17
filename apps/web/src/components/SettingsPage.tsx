@@ -37,6 +37,8 @@ const DEFAULT_PREFS: PrefsDto = {
   uiSound: true,
   modOutput: '',
   testClientDir: '',
+  testClientMode: 'auto',
+  testMdkDir: '',
   features: {},
 }
 
@@ -143,6 +145,8 @@ export function SettingsPage(props: {
   const [modOutputDraft, setModOutputDraft] = useState<string | null>(null)
   /** 测试客户端目录草稿（同上） */
   const [testClientDraft, setTestClientDraft] = useState<string | null>(null)
+  /** MDK 工程目录草稿（同上） */
+  const [testMdkDraft, setTestMdkDraft] = useState<string | null>(null)
   /** 功能开关的服务端视图（enabled = 本次启动实际加载，pendingRestart = 已改待重启） */
   const [featInfo, setFeatInfo] = useState<FeaturesDto | null>(null)
   const [featBusy, setFeatBusy] = useState<string | null>(null)
@@ -391,7 +395,36 @@ export function SettingsPage(props: {
               onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
             />
           </Row>
-          <Row label="测试客户端目录（.minecraft，可留空）" hint="留空则自动安装 Forge 1.20.1 测试客户端；已有 HMCL/PCL 客户端可填其 .minecraft 目录">
+          <Row
+            label="测试客户端来源"
+            hint="「当前 MDK」复用本机 MDK 的 ForgeGradle 缓存，离线装出独立生产客户端（不联网）；「独立安装」走官方安装器或现成 .minecraft"
+          >
+            <Seg
+              value={prefs.testClientMode ?? 'auto'}
+              options={[
+                { value: 'auto', label: '自动（优先本地 MDK）' },
+                { value: 'mdk', label: '当前 MDK（离线）' },
+                { value: 'production', label: '独立安装（联网）' },
+              ]}
+              onChange={v => void patchPrefs({ testClientMode: v as PrefsDto['testClientMode'] })}
+            />
+          </Row>
+          <Row label="MDK 工程目录（可留空）" hint="用于定位工程或其父目录下的 .gradle-home 预热缓存；留空自动使用 mincraft-maker/projects/.gradle-home">
+            <input
+              className="mod-output-input"
+              value={testMdkDraft ?? prefs.testMdkDir ?? ''}
+              placeholder="例如 F:\\Project\\tscode-ts\\mincraft-maker\\projects\\reddragon-mod"
+              onChange={e => setTestMdkDraft(e.target.value)}
+              onBlur={() => {
+                if (testMdkDraft !== null && testMdkDraft !== (prefs.testMdkDir ?? '')) {
+                  void patchPrefs({ testMdkDir: testMdkDraft })
+                }
+                setTestMdkDraft(null)
+              }}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+            />
+          </Row>
+          <Row label="测试客户端目录（.minecraft，可留空）" hint="仅「独立安装」使用：留空则安装到 data/mc-test-client；已有 HMCL/PCL 客户端可填其 .minecraft 目录">
             <input
               className="mod-output-input"
               value={testClientDraft ?? prefs.testClientDir ?? ''}

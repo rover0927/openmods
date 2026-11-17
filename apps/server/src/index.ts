@@ -2552,7 +2552,12 @@ app.post('/api/mc/test/run', async (req, reply) => {
   try {
     if (testClientBusy()) return reply.code(409).send({ error: '测试客户端正在安装或启动，请稍候' })
     const jars = prepareTestJars(req.body)
-    void startTestClient(jars, { testClientDir: settingsStore.getPrefs().testClientDir })
+    const prefs = settingsStore.getPrefs()
+    void startTestClient(jars, {
+      testClientDir: prefs.testClientDir,
+      testClientMode: prefs.testClientMode,
+      testMdkDir: prefs.testMdkDir,
+    })
       .catch(() => { /* 失败由状态接口的 phase=error/logTail 反馈 */ })
     return { ok: true }
   } catch (e: any) {

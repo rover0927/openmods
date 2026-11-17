@@ -23,7 +23,7 @@ const TABS: { id: LibTab; label: string }[] = [
 
 const PHASE_LABEL: Record<McTestStatusDto['phase'], string> = {
   idle: '未启动',
-  installing: '安装中…',
+  installing: '准备中…',
   starting: '启动中…',
   running: '运行中',
   exited: '已退出',

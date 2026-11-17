@@ -389,6 +389,10 @@ export interface PrefsDto {
   modOutput: string
   /** 测试客户端 .minecraft 目录（空 = 自动安装到 data/mc-test-client） */
   testClientDir: string
+  /** 测试客户端来源：auto（优先本地 MDK 离线组装）/ mdk（仅离线）/ production（联网或现成目录） */
+  testClientMode: 'auto' | 'mdk' | 'production'
+  /** 指定 MDK 工程目录，用于定位其 ForgeGradle 缓存（空 = 自动检测） */
+  testMdkDir: string
   /** 功能开关（canvas / mc / library …）；改动需重启生效 */
   features: Record<string, boolean>
 }

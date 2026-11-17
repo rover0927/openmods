@@ -65,6 +65,14 @@ export const MC_THEMES = ['mc-grass', 'mc-cherry', 'mc-ocean', 'mc-nether', 'mc-
 export type McTheme = typeof MC_THEMES[number]
 
 /**
+ * 测试客户端来源：
+ * - auto：优先用本机 MDK 的 ForgeGradle 缓存离线组装生产客户端，失败再联网安装
+ * - mdk：只用本地 MDK 缓存离线组装（不联网）
+ * - production：只用联网安装器 / testClientDir 指向的现成客户端
+ */
+export type TestClientMode = 'auto' | 'mdk' | 'production'
+
+/**
  * 偏好：对应 dsh 设置里那些"行为开关"（general / subagent / 自动唤醒）。
  * 与 providers 分开存，但同一条 revision 乐观锁——一次保存是一个事务。
  */
@@ -89,6 +97,10 @@ export interface PrefsConfig {
   modOutput: string
   /** 测试客户端 .minecraft 目录（空 = 自动安装到 data/mc-test-client） */
   testClientDir: string
+  /** 测试客户端来源：auto（优先本机 MDK）/ mdk / production */
+  testClientMode: TestClientMode
+  /** 指定 MDK 工程目录（空 = 在 MC_ROOT 下自动找带 gradlew 的工程） */
+  testMdkDir: string
   /** 功能开关：canvas / mc / library（改动需重启，服务启动时按它决定加载哪些插件） */
   features: Record<string, boolean>
 }
@@ -104,6 +116,8 @@ export const DEFAULT_PREFS: PrefsConfig = {
   uiSound: true,
   modOutput: '',
   testClientDir: '',
+  testClientMode: 'auto',
+  testMdkDir: '',
   features: {},
 }
 
@@ -132,6 +146,8 @@ export function normalizePrefs(raw: any): PrefsConfig {
     uiSound: typeof p.uiSound === 'boolean' ? p.uiSound : DEFAULT_PREFS.uiSound,
     modOutput: typeof p.modOutput === 'string' ? p.modOutput.trim().slice(0, 500) : DEFAULT_PREFS.modOutput,
     testClientDir: typeof p.testClientDir === 'string' ? p.testClientDir.trim().slice(0, 500) : DEFAULT_PREFS.testClientDir,
+    testClientMode: p.testClientMode === 'mdk' || p.testClientMode === 'production' ? p.testClientMode : DEFAULT_PREFS.testClientMode,
+    testMdkDir: typeof p.testMdkDir === 'string' ? p.testMdkDir.trim().slice(0, 500) : DEFAULT_PREFS.testMdkDir,
     features: (() => {
       const raw = p.features && typeof p.features === 'object' ? p.features : {}
       const out: Record<string, boolean> = {}
