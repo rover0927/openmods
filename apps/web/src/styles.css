@@ -1570,6 +1570,101 @@ select.agent-chip option { background: var(--bg-layer-2); color: var(--label-pri
   color: var(--label-primary);
 }
 .lib-filters-gap { flex: 1; }
+
+/* ---- 素材库分类 + Jar 构建启动器 ---- */
+.lib-tabs { display: flex; gap: 4px; padding: 0 14px 6px; flex: none; flex-wrap: wrap; }
+.lib-tab {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 26px; padding: 0 9px; border: 1px solid var(--border-l2);
+  border-radius: var(--radius-sm); background: var(--bg-layer-2);
+  color: var(--label-secondary); font-size: 12px;
+}
+.lib-tab:hover { background: var(--interactive-hover); color: var(--label-primary); }
+.lib-tab.on { background: var(--bg-layer-3); color: var(--label-primary); border-color: var(--border-l3); }
+.lib-tab-count { font-size: 10px; color: var(--label-caption); font-variant-numeric: tabular-nums; }
+.lib-jar-pane { display: flex; flex-direction: column; gap: 8px; }
+.lib-launcher {
+  position: sticky; top: 0; z-index: 3;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px; background: var(--bg-layer-1);
+  border: 1px solid var(--border-l2); border-radius: var(--radius-md);
+}
+.lib-launcher-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.lib-launcher-count { font-size: 12px; color: var(--label-secondary); white-space: nowrap; }
+.lib-test-phase {
+  font-size: 11px; color: var(--label-tertiary); padding: 2px 6px;
+  border: 1px solid var(--border-l2); border-radius: var(--radius-sm); white-space: nowrap;
+}
+.lib-test-phase.running { color: var(--success); border-color: rgba(139, 220, 90, 0.35); }
+.lib-test-phase.starting, .lib-test-phase.installing { color: var(--warn); border-color: rgba(224, 160, 32, 0.35); }
+.lib-test-phase.error { color: var(--danger); border-color: rgba(214, 69, 69, 0.4); }
+.lib-launcher-error { font-size: 11px; color: var(--danger); word-break: break-word; }
+.lib-log {
+  max-height: 180px; overflow: auto; margin: 0; padding: 6px;
+  font-size: 11px; line-height: 16px; background: var(--bg-layer-1);
+  border: 1px solid var(--border-l1); color: var(--label-secondary); white-space: pre-wrap;
+}
+.lib-jar-list { display: flex; flex-direction: column; gap: 4px; }
+.lib-jar-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 6px 8px; border: 1px solid var(--border-l1);
+  border-radius: var(--radius-sm); background: var(--bg-layer-2);
+}
+.lib-jar-row.on { background: var(--interactive-active); border-color: var(--border-l3); }
+.lib-jar-check { display: flex; align-items: center; justify-content: center; }
+.lib-jar-check input { accent-color: var(--accent); width: 14px; height: 14px; }
+.lib-jar-name { flex: 1 1 180px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--label-primary); font-size: 12px; }
+.lib-jar-src, .lib-jar-time { font-size: 10px; color: var(--label-caption); white-space: nowrap; }
+.lib-jar-size { font-size: 11px; color: var(--label-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lib-jar-actions { display: flex; gap: 4px; align-items: center; margin-left: auto; }
+.lib-jar-actions .lib-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; padding: 2px 6px; font-size: 10px; text-decoration: none;
+}
+
+/* ---- 系统日志抽屉 ---- */
+.log-drawer { width: min(760px, 92vw); display: flex; flex-direction: column; }
+.log-toolbar { display: flex; align-items: center; gap: 6px; padding: 0 14px 8px; flex: none; flex-wrap: wrap; }
+.log-auto { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--label-tertiary); }
+.log-file { display: flex; align-items: center; gap: 8px; padding: 0 14px 8px; flex: none; font-size: 10px; color: var(--label-caption); }
+.log-file > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-list {
+  flex: 1; min-height: 0; overflow: auto; margin: 0 14px 14px; padding: 6px 8px;
+  background: var(--bg-layer-2); border: 1px solid var(--border-l1); border-radius: var(--radius-sm);
+  font-family: ui-monospace, Consolas, 'Courier New', monospace;
+}
+.log-row {
+  display: grid; grid-template-columns: 64px 48px minmax(0, 1fr); gap: 8px;
+  padding: 2px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  font-size: 11px; line-height: 16px; align-items: start;
+}
+.log-time { color: var(--label-caption); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.log-level {
+  font-size: 9px; font-weight: 600; text-align: center; padding: 1px 0;
+  border-radius: 2px; background: rgba(255, 255, 255, 0.06); color: var(--label-tertiary);
+}
+.log-level.info { color: var(--accent); }
+.log-level.warn { color: var(--warn); }
+.log-level.error { color: var(--danger); }
+.log-text { color: var(--label-secondary); white-space: pre-wrap; word-break: break-word; }
+.log-row.error .log-text { color: var(--danger); }
+
+/* ---- 关于页面 ---- */
+.about-dialog { width: min(460px, 92vw); }
+.about-body { display: flex; flex-direction: column; gap: 12px; }
+.about-desc { margin: 0; color: var(--label-secondary); }
+.about-meta { font-size: 11px; line-height: 1.6; color: var(--label-caption); }
+.about-contact {
+  display: flex; flex-direction: column; gap: 8px; padding: 10px;
+  background: var(--bg-layer-2); border: 1px solid var(--border-l2); border-radius: var(--radius-sm);
+}
+.about-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.about-label { width: 70px; flex: none; color: var(--label-tertiary); }
+.about-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--label-primary); text-decoration: none; }
+.about-value:hover { color: var(--accent); }
+.about-links { display: flex; gap: 14px; font-size: 12px; }
+.about-links a { color: var(--accent); text-decoration: none; }
+.about-links a:hover { text-decoration: underline; }
 .lib-importrow { display: flex; gap: 6px; align-items: flex-start; padding: 0 14px 8px; flex: none; }
 .lib-import {
   flex: 1; min-width: 0; min-height: 46px; max-height: 110px; resize: vertical;

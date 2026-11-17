@@ -22,7 +22,7 @@ Fastify + React + Vite 全栈 TypeScript；画布基于 Blockbench 5.2.2（GPL-3
 |---|---|
 | ⛏️ **MC 像素界面** | 5 套方块主题（草方块 / 樱花 / 深海 / 下界 / 末地）；结构墙、品牌方块随主题换材质；物品图标、像素斜面、主题色主操作 |
 | 🎨 **多画布建模** | 主会话与每个建模子代理各有一块独立画布；右侧多页签查看/切换，活跃画布 durable，支持新建空白画布 |
-| 🗂 **多文件素材库** | 模型 / jar / 图片 / 文本统一归档；上传、拖拽、工作目录导入、从画布截取；模型缩略图为等距 3D 预览 |
+| 🗂 **素材库** | 模型 / Jar 构建 / 图片 / 文件四类分开；上传、拖拽、工作目录导入、从画布截取；Jar 页多选后统一启动独立 Forge 测试客户端 |
 | 🤖 **主代理全能力** | 权限审批、计划模式、询问用户、终端、文件读写、并发子代理——对标 dsh 主 agent |
 | ⚙️ **MC 开发闭环** | `mc_scaffold` 建工程 → 建模子代理出模型 → `mc_gradle build` → 标题栏「▶ 测试 Mod」→「jar ⤓」导出（Forge 1.20.1 / 国内镜像 / 离线构建包） |
 | 🧩 **代理与技能** | 三个角色（lead / mcmod / modeling）的工具与技能分配可视化；技能自注入、内置技能只读 |
@@ -118,7 +118,8 @@ openmods/
 │   │   ├── settings.ts       providers/bridge/prefs/credentials 持久化 + redact + 夹取
 │   │   ├── profiles.ts       代理角色（lead / mcmod / modeling）与提示词
 │   │   ├── features.ts       功能开关声明与启动态解析（画布 / MC / 素材库）
-│   │   ├── library.ts        多文件素材库存储 + 模型等距预览
+│   │   ├── library.ts        素材库存储（模型/Jar/图片/文件分类）+ 模型等距预览
+│   │   ├── mc-test-client.ts 独立 Forge 1.20.1 生产测试客户端（安装/mods/启动/状态）
 │   │   ├── model-preview.ts  纯 TS 等距 3D 模型缩略图渲染
 │   │   ├── attachments.ts    图片附件：魔数判型 + sha256 内容寻址
 │   │   ├── files.ts          工作区文件浏览（路径锁在 ROOT 内）
@@ -361,6 +362,7 @@ interface PluginContext {
   | `canvasAutoWake` | true | AI 能否自己把右侧画布唤醒/切回建模标签 |
   | `inlineSubagents` | true | 对话内是否显示子代理活动条 |
   | `modOutput` | '' | jar 导出保存目录；留空回退浏览器下载 |
+  | `testClientDir` | '' | 统一测试启动器的 `.minecraft` 目录；留空自动安装到 `data/mc-test-client` |
   | `features` | {} | 功能开关的用户选择 |
 
 - **即时保存**：除模型页外没有「保存」按钮——开关一动就 `PUT /api/settings {prefs, expectedRevision}`；409/失败回滚并 toast。服务端 `normalizePrefs()` 做容错与区间夹取。
@@ -476,22 +478,42 @@ interface PluginContext {
 
 ### 13.2 多文件素材库（左栏「文档素材库」）
 
-统一归档「多文件资产」：模型快照、jar、贴图、bbmodel、任意文本文件都能塞进来。
+素材库按四类归档，**一个资产只属于一类**（`LibraryAsset.kind` / `schema 3`）：
 
-- **入库方式**：
-  - 上传 / 拖拽：浏览器直接把文件发给服务端（`POST /api/library/upload`，单文件上限 64MB）；
-  - 工作目录导入：填会话工作目录里的相对路径，服务端校验不越界；
-  - 从当前画布截取；
-  - **自动入库**：普通会话的画布只要非空，提交后按 canvasId 自动 upsert 一条 `auto` 素材（900ms 防抖）；素材编辑会话则把改动回写到素材本身（700ms 防抖）。素材库功能关闭时不入库。
-- **存法** `data/library/<id>/`：`meta.json`（列表用，含 files 索引与派生字段）、`files/f_<6位>_<安全原名>`、`thumbs/t_*.png`（模型缩略图）。
-- **缩略图**：`apps/server/src/model-preview.ts` 用纯 TS 渲染等距 3D 预览（`previewVersion: 2`）；渲染不出时回退第一张 PNG 贴图。
-- **模型类资产的四种用法**（语义严格区分）：
-  - **画布打开**：在右侧画布新开一个标签预览（只读，绝不覆盖会话画布）；
-  - **接着改**：打开该素材的编辑会话（没有就建），之后画布改动自动回写素材本身（不产生副本）；
-  - **引用新会话**：复制一份到新会话的画布上改，素材本身不动；
-  - **送入画布**：把素材覆盖进当前会话的画布（有确认弹窗）。
-- **非模型资产**（纯 jar / 贴图 / 文本）只提供下载与预览，不参与画布。
-- **抽屉**：搜索 + 类型筛选（全部 / 模型 / jar / 图片 / 文件）+ 卡片（缩略图、名称、更新相对时间、大小、元素数）。
+- **模型**：画布快照 + 等距缩略图；不会再把 jar 混进模型资产。
+- **Jar 构建**：一个资产只装一个 jar；抽屉的 Jar 页同时列出素材库归档 jar 和工程 `build/libs/*.jar` 扫描结果。
+- **图片 / 文件**：上传或导入的贴图、文本等。
+
+**入库方式**：
+
+- 上传 / 拖拽：浏览器直接把文件发给服务端（`POST /api/library/upload`，单文件上限 64MB）；每个文件单独成资产；
+- 工作目录导入：填会话工作目录里的相对路径，服务端校验不越界；
+- 从当前画布截取：模型归模型资产，工作区最新 build jar 单独归 jar 资产；
+- **自动入库**：普通会话的画布只要非空，提交后按 canvasId 自动 upsert 一条 `auto` 模型素材（900ms 防抖）；素材编辑会话则把改动回写到素材本身（700ms 防抖）。素材库功能关闭时不入库。
+
+**存法** `data/library/<id>/`：`meta.json`（列表用，含 `kind`、files 索引与派生字段）、`files/f_<6位>_<安全原名>`、`thumbs/t_*.png`（模型缩略图）。旧「模型+jar」组合资产在首次读取时懒拆分：模型保留原 id，jar 拆成独立 jar 资产（`splitFrom` 幂等去重）。
+
+**缩略图**：`apps/server/src/model-preview.ts` 用纯 TS 渲染等距 3D 预览（`previewVersion: 2`）；渲染不出时回退第一张 PNG 贴图。
+
+**模型类资产的四种用法**（语义严格区分）：
+
+- **画布打开**：在右侧画布新开一个标签预览（只读，绝不覆盖会话画布）；
+- **接着改**：打开该素材的编辑会话（没有就建），之后画布改动自动回写素材本身（不产生副本）；
+- **引用新会话**：复制一份到新会话的画布上改，素材本身不动；
+- **送入画布**：把素材覆盖进当前会话的画布（有确认弹窗）。
+
+**抽屉**：四个标签（模型 / Jar 构建 / 图片 / 文件）+ 搜索 + 卡片（缩略图、名称、更新相对时间、大小、元素数）。
+
+### 13.3 Jar 构建与统一测试启动器
+
+- Jar 页列表 = 素材库归档 jar + 当前会话 cwd / `MC_ROOT` 下的 `build/libs/*.jar` 扫描结果；扫描结果可一键「归档」进素材库。
+- 勾选一个或多个 jar →「启动测试游戏」：
+  - 使用独立的 **Forge 1.20.1 生产客户端**，不是 `runClient` 开发客户端；
+  - 客户端目录默认 `data/mc-test-client/.minecraft`，首次用 vendor 里的 Forge installer 安装（需要网络）；
+  - 选中的 jar 复制到 `.minecraft/mods/`，上次管理的旧 jar 会清理，用户手动放的其它 jar 保留；
+  - 启动过程在底部显示悬浮实时进度条（安装 / 启动 / 运行 / 失败），失败直接弹出错误；
+  - 设置 → 通用 →「Mod 构建」里的 `testClientDir` 可指向已有 HMCL/PCL 的 `.minecraft` 目录，跳过自动安装。
+- 生产 jar 是 `reobfJar` 后的产物，必须在生产客户端里测试；开发客户端只服务当前工程自己的 mod。
 
 ---
 
@@ -555,11 +577,13 @@ POST   /api/terminals/:tid/input         写 stdin
 POST   /api/terminals/:tid/kill          结束终端（进程树）
 DELETE /api/terminals/:tid               关闭并移除终端
 DELETE /api/terminals                    清空会话终端
-GET    /api/library                      素材库列表
-POST   /api/library/upload               上传文件（≤64MB）
-POST   /api/library/:id/files            追加文件
-POST   /api/library/import               从工作目录导入
-POST   /api/library/capture              从画布截取模型
+GET    /api/library                      素材库列表（每项带 kind）
+GET    /api/library/jars                 素材库归档 jar + 工程 build/libs 扫描
+POST   /api/library/jars/archive         把扫描 jar 归档进素材库
+POST   /api/library/upload               上传文件（≤64MB，每个文件单独成资产）
+POST   /api/library/:id/files            追加文件（jar/模型不可跨类追加）
+POST   /api/library/import               从工作目录导入（每个文件单独成资产）
+POST   /api/library/capture              从画布截取模型（另建独立 jar 资产）
 GET    /api/library/:id/model            读模型 doc
 POST   /api/library/:id/fork             引用到新会话（复制）
 POST   /api/library/:id/edit             打开/创建编辑会话
@@ -570,6 +594,9 @@ POST   /api/library/:id/to-canvas        覆盖写入某会话画布
 PUT    /api/library/:id                  重命名
 DELETE /api/library/:id                  删除素材
 GET    /api/mc/state|run|stop|jar|export MC 构建状态 / runClient / jar 导出
+GET    /api/mc/test                      统一测试客户端状态 + 日志尾部
+POST   /api/mc/test/run                  启动测试客户端 {jars:[{source,assetId?,fileId?,path?}]}
+POST   /api/mc/test/stop                 停止测试客户端
 ```
 
 SSE 帧 `{id, topic, ...}`，topic 含：`open`、`turn/start`、`user/message`、`assistant/delta`、`tool/call`、`tool/result`、`llm/usage`、`step/start|end`、`turn/end`、`session/waiting`、`model_update`（`sessionId` = canvasId）、`model/selected`、`view_update`、`canvases/update`、`stats`、`compaction`、`settings/updated`、`models/updated`、`credentials/updated`、`subagent/notice`、`subagent/updated`、`bridge/working|done`、`terminal/open|data|exit`、`error`、`done`。
@@ -601,6 +628,7 @@ SSE 帧 `{id, topic, ...}`，topic 含：`open`、`turn/start`、`user/message`�
 21. **素材库自动入库会累积**：普通会话每次非空画布提交都会 upsert 一条 `auto` 素材（同一 canvasId 更新而不是重复创建）；不用时可在设置 → 功能关闭素材库，或在抽屉里删除。
 22. **功能开关需要重启**：`prefs.features` 改的是下次启动态；本次进程里插件不会热插拔，设置页会显示 `pendingRestart`。
 23. **主题切换即时生效**：5 套 MC 主题写在 `[data-theme]`，只影响 UI，不改数据；画布与终端保持深色。
+24. **统一测试客户端首次安装需要网络**：默认装到 `data/mc-test-client/.minecraft`；失败时在设置 → 通用 → Mod 构建里把 `testClientDir` 指向已有 Forge 1.20.1 `.minecraft` 目录。
 
 ---
 
@@ -625,7 +653,8 @@ SSE 帧 `{id, topic, ...}`，topic 含：`open`、`turn/start`、`user/message`�
 | 加功能开关 | `apps/server/src/features.ts` 的 `FEATURE_DEFS` + 插件 `requires`；前端读 `/api/features` |
 | 改等待/自动汇总 | `index.ts`：`waiting` / `settlements` + `settleChild()` + `maybeAutoContinue()` + `formatSettlementPrompt()` |
 | 改项目分组/归档 | `apps/server/src/project-store.ts`；门控在 `index.ts` 的 `isArchivedLineage()` |
-| 加素材库能力 | `apps/server/src/library.ts`（存储/索引）+ `index.ts` 的 `/api/library/*` 路由 + `LibraryDrawer.tsx` |
+| 加素材库能力 | `apps/server/src/library.ts`（kind/splitCombined/存储）+ `index.ts` 的 `/api/library/*` 路由 + `LibraryDrawer.tsx` |
+| 改 Jar 测试启动器 | `apps/server/src/mc-test-client.ts` + `index.ts` 的 `/api/mc/test` 路由 + `LibraryDrawer.tsx` 的 Jar 页 |
 | 调试前端 SSE | `App.tsx` 的 `handleEvent` 是唯一入口；`data/sessions/*.jsonl` 是权威日志 |
 
 ## 17. 数据流图

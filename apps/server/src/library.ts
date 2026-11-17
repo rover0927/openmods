@@ -26,6 +26,9 @@ import { renderModelPreview } from './model-preview.js'
 
 export type AssetFileKind = 'model' | 'image' | 'jar' | 'archive' | 'text' | 'other'
 
+/** 素材库顶层分类：一个资产只属于一类（schema 3 起） */
+export type AssetKind = 'model' | 'jar' | 'image' | 'file'
+
 /** 资产里的一个真实文件（rel 相对素材目录，绝不使用客户端传进来的路径拼接） */
 export interface AssetFile {
   id: string
@@ -39,8 +42,10 @@ export interface AssetFile {
 }
 
 export interface LibraryAsset {
-  /** 2 = 多文件资产结构；旧数据缺省按 legacy 读取并懒迁移 */
+  /** 3 = 模型 / Jar / 图片 / 文件分类拆分；旧数据按 legacy 读取并懒迁移 */
   schema?: number
+  /** 顶层分类；derive() 会给旧数据补上 */
+  kind?: AssetKind
   id: string
   name: string
   createdAt: number
@@ -56,7 +61,13 @@ export interface LibraryAsset {
   /** 自动入库的素材：会话画布模型由服务端自动 upsert（保证用户做的模型永不丢） */
   auto?: boolean
   /** 资产来源 */
-  source: { provider: 'canvas' | 'auto' | 'upload' | 'cwd' | 'legacy'; sessionId?: string; path?: string }
+  source: {
+    provider: 'canvas' | 'auto' | 'upload' | 'cwd' | 'legacy' | 'legacy-split' | 'build'
+    sessionId?: string
+    path?: string
+  }
+  /** 从旧组合资产拆出来时记录原资产 id（幂等去重用） */
+  splitFrom?: string
   /** 资产里的全部文件 */
   files: AssetFile[]
   /** 模型类资产（画布快照，或上传的 bbmodel/文档） */
@@ -251,6 +262,41 @@ function findLatestJar(root: string): { path: string; name: string; size: number
   return best ? { path: best.path, name: best.name, size: best.size } : undefined
 }
 
+/** 找工程里的全部构建 jar（用于统一测试启动器的「工程构建」列表） */
+export function findAllJars(root: string, max = 50): {
+  path: string
+  name: string
+  size: number
+  mtime: number
+  project: string
+}[] {
+  const out: { path: string; name: string; size: number; mtime: number; project: string }[] = []
+  const visit = (dir: string, depth: number) => {
+    const libs = join(dir, 'build', 'libs')
+    try {
+      for (const file of readdirSync(libs)) {
+        if (!file.endsWith('.jar')) continue
+        if (/-sources\.jar$|-javadoc\.jar$/i.test(file)) continue
+        const p = join(libs, file)
+        try {
+          const st = statSync(p)
+          if (!st.isFile()) continue
+          out.push({ path: p, name: file, size: st.size, mtime: st.mtimeMs, project: basename(dir) })
+        } catch { /* 文件刚被删 */ }
+      }
+    } catch { /* 这个目录没有构建产物 */ }
+    if (depth >= 3) return
+    let entries
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (!e.isDirectory() || e.name.startsWith('.') || JAR_SCAN_SKIP.has(e.name)) continue
+      visit(join(dir, e.name), depth + 1)
+    }
+  }
+  try { visit(resolve(root), 0) } catch { /* 根目录不存在 */ }
+  return out.sort((a, b) => b.mtime - a.mtime).slice(0, max)
+}
+
 /** 把文件移进素材目录，跨盘/占用时退化成复制 + 删除 */
 function moveFile(from: string, to: string) {
   try { renameSync(from, to); return } catch { /* 跨盘或占用 */ }
@@ -291,9 +337,14 @@ export function createLibraryStore(root: string) {
 
   /** 把派生字段从 model 重新算一遍（旧前端只认这些顶层字段） */
   function derive(meta: LibraryAsset): LibraryAsset {
-    meta.schema = 2
+    meta.schema = 3
     meta.files = Array.isArray(meta.files) ? meta.files : []
     meta.source = meta.source ?? { provider: 'legacy' }
+    // 一个资产只属于一类：模型 > jar > 图片 > 文件
+    if (meta.model) meta.kind = 'model'
+    else if (meta.jar || meta.files.some(f => f.kind === 'jar')) meta.kind = 'jar'
+    else if (meta.files.some(f => f.kind === 'image')) meta.kind = 'image'
+    else meta.kind = 'file'
     if (!meta.model) {
       meta.elementCount = Number(meta.elementCount ?? 0) || 0
       meta.textureCount = Number(meta.textureCount ?? 0) || 0
@@ -309,11 +360,66 @@ export function createLibraryStore(root: string) {
     return meta
   }
 
+  /** 旧组合资产懒拆分：模型保留原 id，jar 拆成独立 jar 资产（幂等） */
+  function splitCombined(id: string, meta: LibraryAsset): LibraryAsset {
+    if (!meta.model) return meta
+    const jarFiles = meta.files.filter(f => f.kind === 'jar')
+    const toDelete: AssetFile[] = []
+    for (const f of jarFiles) {
+      const newId = `${id}-${f.id}`.slice(0, 64)
+      try {
+        const p = safeInside(id, f.rel)
+        if (!p || !existsSync(p)) continue
+        if (!existsSync(metaPath(newId))) {
+          const data = readFileSync(p)
+          const entry = storeFile(newId, f.name, data, 'jar')
+          const jarMeta: LibraryAsset = {
+            schema: 3,
+            kind: 'jar',
+            id: newId,
+            name: f.name,
+            createdAt: meta.createdAt,
+            updatedAt: meta.updatedAt,
+            version: 1,
+            sessionId: meta.sessionId,
+            source: { provider: 'legacy-split', sessionId: meta.sessionId },
+            splitFrom: id,
+            files: [entry],
+            jar: { fileId: entry.id, name: f.name, size: f.size },
+            elementCount: 0,
+            textureCount: 0,
+            resolution: { width: 16, height: 16 },
+            hasThumb: false,
+          }
+          writeMeta(jarMeta)
+        }
+        toDelete.push(f)
+      } catch { /* 单个 jar 失败不影响模型 */ }
+    }
+    // 没有文件条目的旧 jar 字段：直接清掉（模型优先）
+    meta.jar = undefined
+    meta.files = meta.files.filter(f => f.kind !== 'jar')
+    meta.kind = 'model'
+    meta.schema = 3
+    try {
+      writeMeta(meta)
+      // 只有模型 meta 写成功后才删旧文件，避免写失败时模型引用丢失
+      for (const f of toDelete) deleteFileEntry(id, f)
+    } catch { /* 下次读取再试 */ }
+    return meta
+  }
+
+  function maybeSplit(id: string, meta: LibraryAsset): LibraryAsset {
+    if (!meta.model) return meta
+    if (!meta.jar && !meta.files.some(f => f.kind === 'jar')) return meta
+    try { return splitCombined(id, meta) } catch { return meta }
+  }
+
   function readMeta(id: string): LibraryAsset | undefined {
     if (!ID_RE.test(id)) return undefined
     try {
       const meta = JSON.parse(readFileSync(metaPath(id), 'utf8')) as LibraryAsset
-      return derive(meta)
+      return maybeSplit(id, derive(meta))
     } catch { /* 新布局不存在，试迁移 */ }
     if (migrateLegacy(id)) {
       try { return derive(JSON.parse(readFileSync(metaPath(id), 'utf8')) as LibraryAsset) } catch { /* 落到回退 */ }
@@ -420,6 +526,7 @@ export function createLibraryStore(root: string) {
         palette: model?.palette,
       }
       writeMeta(derive(meta))
+      maybeSplit(id, meta)
       for (const p of [legacyMetaPath(id), legacyDocPath(id), legacyThumbPath(id), legacyJarPath(id)]) {
         try { if (existsSync(p)) unlinkSync(p) } catch { /* 忽略 */ }
       }
@@ -526,6 +633,41 @@ export function createLibraryStore(root: string) {
     try { return snapshotOf(JSON.parse(found.data.toString('utf8'))) } catch { return undefined }
   }
 
+  /** 新建一个独立 jar 资产（一个资产只装一个 jar） */
+  function createJarAsset(opts: {
+    name: string
+    data: Buffer
+    sessionId?: string
+    sourcePath?: string
+    provider?: LibraryAsset['source']['provider']
+  }): LibraryAsset {
+    assertAssetFile(opts.name, opts.data.length)
+    if (extOf(opts.name) !== 'jar') throw new Error('只能归档 .jar')
+    const id = randomUUID().slice(0, 10)
+    const now = Date.now()
+    const meta: LibraryAsset = {
+      schema: 3,
+      kind: 'jar',
+      id,
+      name: opts.name,
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+      sessionId: opts.sessionId,
+      source: { provider: opts.provider ?? 'upload', sessionId: opts.sessionId, path: opts.sourcePath },
+      files: [],
+      elementCount: 0,
+      textureCount: 0,
+      resolution: { width: 16, height: 16 },
+      hasThumb: false,
+    }
+    const entry = storeFile(id, opts.name, opts.data, 'jar')
+    meta.files.push(entry)
+    meta.jar = { fileId: entry.id, name: entry.name, size: entry.size }
+    writeMeta(meta)
+    return meta
+  }
+
   const store = {
     dir,
 
@@ -570,14 +712,15 @@ export function createLibraryStore(root: string) {
       doc: any
       /** 会话工作区：截取时顺带归档最新构建产物（build/libs/*.jar） */
       cwd?: string
-    }): LibraryAsset {
+    }): { asset: LibraryAsset; jarAsset?: LibraryAsset } {
       const snap = snapshotOf(opts.doc ?? {})
       if (snap.elements.length === 0) throw new Error('当前画布没有模型元素，先让建模子代理建好再截取')
 
       const id = randomUUID().slice(0, 10)
       const now = Date.now()
       const meta: LibraryAsset = {
-        schema: 2,
+        schema: 3,
+        kind: 'model',
         id,
         name: String(opts.name || '').trim().slice(0, 60) || `素材 ${new Date().toLocaleString('zh-CN')}`,
         createdAt: now,
@@ -593,20 +736,24 @@ export function createLibraryStore(root: string) {
         hasThumb: false,
       }
       applySnapshot(id, meta, snap)
-      // 构建产物一起归档：素材卡片可直接下载 jar；没有构建产物时不写字段
+      writeMeta(meta)
+      // 构建产物单独归档为 jar 资产，不再混进模型
+      let jarAsset: LibraryAsset | undefined
       if (opts.cwd) {
         const jar = findLatestJar(opts.cwd)
         if (jar) {
           try {
-            const data = readFileSync(jar.path)
-            const entry = storeFile(id, jar.name, data, 'jar')
-            meta.files.push(entry)
-            meta.jar = { fileId: entry.id, name: jar.name, size: data.length }
-          } catch { /* 复制失败不影响素材归档 */ }
+            jarAsset = createJarAsset({
+              name: jar.name,
+              data: readFileSync(jar.path),
+              sessionId: opts.sessionId,
+              sourcePath: jar.path,
+              provider: 'canvas',
+            })
+          } catch { /* 复制失败不影响模型归档 */ }
         }
       }
-      writeMeta(meta)
-      return meta
+      return { asset: meta, jarAsset }
     },
 
     /**
@@ -654,13 +801,18 @@ export function createLibraryStore(root: string) {
       sourcePath?: string
     }): LibraryAsset {
       assertAssetFile(opts.fileName, opts.data.length)
+      const ext = extOf(opts.fileName)
+      const firstKind = detectKind(opts.fileName, opts.data)
+      const isModel = (ext === 'bbmodel' || ext === 'json') && !!looksLikeModelDoc(opts.data)
+      const kind: AssetKind = firstKind === 'jar' ? 'jar' : isModel ? 'model' : firstKind === 'image' ? 'image' : 'file'
       const id = randomUUID().slice(0, 10)
       const now = Date.now()
       const baseName = String(opts.name || '').trim().slice(0, 60)
         || sanitizeFileName(opts.fileName).replace(/\.[^.]+$/, '')
         || `素材 ${new Date(now).toLocaleString('zh-CN')}`
       const meta: LibraryAsset = {
-        schema: 2,
+        schema: 3,
+        kind,
         id,
         name: baseName,
         createdAt: now,
@@ -679,60 +831,73 @@ export function createLibraryStore(root: string) {
       return meta
     },
 
+    /** 新建独立 jar 资产（归档扫描结果 / 上传 jar 共用） */
+    createJar(opts: {
+      name: string
+      data: Buffer
+      sessionId?: string
+      sourcePath?: string
+      provider?: LibraryAsset['source']['provider']
+    }): LibraryAsset {
+      return createJarAsset(opts)
+    },
+
     /** 追加文件（也可用于新建后的首个文件） */
     addFile(id: string, opts: { fileName: string; data: Buffer; meta?: LibraryAsset }): LibraryAsset {
       const meta = opts.meta ?? readMeta(id)
       if (!meta) throw new Error('素材不存在')
       assertAssetFile(opts.fileName, opts.data.length)
       if (meta.files.length >= MAX_FILES_PER_ASSET) throw new Error(`单个素材最多 ${MAX_FILES_PER_ASSET} 个文件`)
-      const entry = storeFile(id, opts.fileName, opts.data)
-      meta.files.push(entry)
+      const kind = meta.kind ?? derive(meta).kind
+      const fileKind = detectKind(opts.fileName, opts.data)
       const ext = extOf(opts.fileName)
+      const isModelDoc = (ext === 'bbmodel' || ext === 'json') && !!looksLikeModelDoc(opts.data)
+      // 一个资产只属于一类：jar 与模型/文件不混装
+      if (fileKind === 'jar') {
+        if (kind !== 'jar') throw new Error('jar 请作为独立素材上传')
+        if (meta.jar) throw new Error('一个 jar 资产只能包含一个 jar')
+      }
+      if (kind === 'jar' && fileKind !== 'jar') throw new Error('jar 资产只能包含 jar 文件')
+      if (kind === 'model' && isModelDoc && meta.model) throw new Error('模型资产只能包含一个模型文档')
+      const entry = storeFile(id, opts.fileName, opts.data, fileKind)
+      meta.files.push(entry)
       if (entry.kind === 'jar' && !meta.jar) {
         meta.jar = { fileId: entry.id, name: entry.name, size: entry.size }
-      } else if (!meta.model && (ext === 'bbmodel' || ext === 'json')) {
-        const doc = looksLikeModelDoc(opts.data)
-        if (doc) adoptModelFile(id, meta, doc)
+      } else if (!meta.model && isModelDoc) {
+        adoptModelFile(id, meta, looksLikeModelDoc(opts.data)!)
       }
       meta.updatedAt = Date.now()
       if (!opts.meta) writeMeta(meta)
       return meta
     },
 
-    /** 从工作目录导入：只收 cwd 内的普通文件，防目录穿越与符号链接 */
-    importFiles(opts: { root: string; paths: string[]; name?: string; sessionId?: string }): LibraryAsset {
+    /** 从工作目录导入：每个文件单独成资产（模型/jar 不再混装） */
+    importFiles(opts: { root: string; paths: string[]; name?: string; sessionId?: string }): { asset: LibraryAsset; assets: LibraryAsset[] } {
       const paths = (opts.paths ?? []).map(p => String(p ?? '').trim()).filter(Boolean)
       if (!paths.length) throw new Error('没有要导入的文件')
       if (paths.length > MAX_IMPORT_FILES) throw new Error(`一次最多导入 ${MAX_IMPORT_FILES} 个文件`)
       const rootAbs = resolve(opts.root)
-      const first = (() => {
-        const abs = resolve(rootAbs, paths[0])
+      const assets: LibraryAsset[] = []
+      for (const p of paths) {
+        const abs = resolve(rootAbs, p)
         try {
           const st = lstatSync(abs)
-          if (st.isSymbolicLink() || !st.isFile()) throw new Error(`不是普通文件：${paths[0]}`)
-          if (!abs.startsWith(rootAbs + sep)) throw new Error(`路径超出会话工作目录：${paths[0]}`)
+          if (st.isSymbolicLink() || !st.isFile()) throw new Error(`不是普通文件：${p}`)
+          if (!abs.startsWith(rootAbs + sep)) throw new Error(`路径超出会话工作目录：${p}`)
           assertAssetFile(abs, st.size)
-          return { abs, data: readFileSync(abs) }
+          assets.push(store.create({
+            name: assets.length === 0 ? opts.name : undefined,
+            fileName: basename(abs),
+            data: readFileSync(abs),
+            sessionId: opts.sessionId,
+            provider: 'cwd',
+            sourcePath: abs,
+          }))
         } catch (e: any) {
-          throw new Error(e?.message ?? `无法读取 ${paths[0]}`)
+          throw new Error(e?.message ?? `无法读取 ${p}`)
         }
-      })()
-      const asset = store.create({
-        name: opts.name,
-        fileName: basename(first.abs),
-        data: first.data,
-        sessionId: opts.sessionId,
-        provider: 'cwd',
-        sourcePath: first.abs,
-      })
-      for (const p of paths.slice(1)) {
-        const abs = resolve(rootAbs, p)
-        const st = lstatSync(abs)
-        if (st.isSymbolicLink() || !st.isFile()) throw new Error(`不是普通文件：${p}`)
-        if (!abs.startsWith(rootAbs + sep)) throw new Error(`路径超出会话工作目录：${p}`)
-        store.addFile(asset.id, { fileName: basename(abs), data: readFileSync(abs) })
       }
-      return store.get(asset.id) ?? asset
+      return { asset: assets[0], assets }
     },
 
     /** 读资产里的某个文件（fileId 只用来在 meta 里反查 rel） */

@@ -1121,6 +1121,68 @@ body,
   image-rendering: pixelated;
 }
 
+/* 素材库分类 + Jar 启动器：MC 槽位与像素斜面 */
+.lib-tab {
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
+  border-radius: 0;
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.35);
+}
+.lib-tab.on {
+  background: var(--mc-accent-dim);
+  color: var(--mc-accent-text);
+  border-color: var(--mc-accent-deep) var(--mc-accent-soft) var(--mc-accent-soft) var(--mc-accent-deep);
+}
+.lib-launcher,
+.lib-log,
+.lib-jar-row {
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
+  border-radius: 0;
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+.lib-jar-row.on {
+  background: var(--mc-accent-dim);
+  border-color: var(--mc-accent-deep) var(--mc-accent-soft) var(--mc-accent-soft) var(--mc-accent-deep);
+}
+.lib-test-phase {
+  background: var(--mc-slot);
+  border: 2px solid var(--mc-slot-dark);
+  border-radius: 0;
+}
+.lib-test-phase.running { color: var(--mc-accent-text); border-color: var(--mc-accent-deep); }
+.lib-test-phase.starting,
+.lib-test-phase.installing { color: var(--warn); border-color: var(--mc-bevel-light); }
+.lib-test-phase.error { color: var(--danger); border-color: var(--mc-bevel-dark); }
+.lib-jar-check input { accent-color: var(--mc-accent); }
+.lib-log { color: var(--label-secondary); }
+
+/* 系统日志 + 关于：MC 槽位/像素斜面 */
+.log-list {
+  background: #0f0f0f;
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
+  border-radius: 0;
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.5);
+}
+.log-level { border-radius: 0; background: rgba(0, 0, 0, 0.35); }
+.log-row { border-bottom-color: rgba(255, 255, 255, 0.05); }
+.about-dialog {
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
+  border-radius: 0;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6), inset 2px 2px 0 rgba(0, 0, 0, 0.35);
+}
+.about-contact {
+  background: var(--mc-slot);
+  border: 2px solid var(--mc-slot-dark);
+  border-radius: 0;
+}
+.about-value { color: var(--mc-accent-text); }
+
 /* 槽位 / 缩略图：泥土，保留原有内凹描边 */
 .sb-slot,
 .lib-thumb {
@@ -2117,6 +2179,53 @@ summary:focus-visible,
 @keyframes mc-boot-fill {
   from { width: 0; }
   to { width: 100%; }
+}
+
+/* 统一测试启动器：底部悬浮实时进度条（安装/启动 indeterminate，运行/失败满格） */
+.toast.mc-test-boot {
+  bottom: 64px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 380px;
+  max-width: min(720px, 86vw);
+}
+.mc-test-row { display: flex; align-items: center; gap: 10px; }
+.mc-test-row .mc-boot-label { flex: none; }
+.mc-test-row .mc-boot-bar { flex: 1; }
+.mc-test-close {
+  flex: none; width: 20px; height: 20px; padding: 0;
+  background: transparent; border: 0; color: var(--label-tertiary);
+  font-size: 12px; line-height: 20px; cursor: pointer;
+}
+.mc-test-close:hover { color: var(--label-primary); }
+.mc-test-log {
+  font-size: 11px; line-height: 15px; color: var(--label-caption);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mc-test-log.err { color: var(--danger); }
+.mc-test-boot.installing .mc-boot-bar > i,
+.mc-test-boot.starting .mc-boot-bar > i {
+  width: 35%;
+  animation: mc-test-indeterminate 1.2s linear infinite;
+}
+@keyframes mc-test-indeterminate {
+  0% { left: -35%; }
+  100% { left: 100%; }
+}
+.mc-test-boot.running .mc-boot-bar > i,
+.mc-test-boot.error .mc-boot-bar > i {
+  width: 100%;
+  animation: none;
+}
+.mc-test-boot.error .mc-boot-bar > i { background: var(--danger); }
+.mc-test-boot.error { border: 2px solid var(--danger); }
+@media (prefers-reduced-motion: reduce) {
+  .mc-test-boot.installing .mc-boot-bar > i,
+  .mc-test-boot.starting .mc-boot-bar > i {
+    animation: none;
+    width: 100%;
+  }
 }
 
 /* 成就弹窗：右上角滑入，金框 + 经验瓶图标（MC 成就 toast 形态） */

@@ -36,6 +36,7 @@ const DEFAULT_PREFS: PrefsDto = {
   inlineSubagents: true,
   uiSound: true,
   modOutput: '',
+  testClientDir: '',
   features: {},
 }
 
@@ -140,6 +141,8 @@ export function SettingsPage(props: {
   const [discovering, setDiscovering] = useState<string | null>(null)
   /** mod-output 输入草稿：null = 沿用已保存值（失焦/回车才落盘，避免每键一次 PUT） */
   const [modOutputDraft, setModOutputDraft] = useState<string | null>(null)
+  /** 测试客户端目录草稿（同上） */
+  const [testClientDraft, setTestClientDraft] = useState<string | null>(null)
   /** 功能开关的服务端视图（enabled = 本次启动实际加载，pendingRestart = 已改待重启） */
   const [featInfo, setFeatInfo] = useState<FeaturesDto | null>(null)
   const [featBusy, setFeatBusy] = useState<string | null>(null)
@@ -384,6 +387,21 @@ export function SettingsPage(props: {
                   void patchPrefs({ modOutput: modOutputDraft })
                 }
                 setModOutputDraft(null)
+              }}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+            />
+          </Row>
+          <Row label="测试客户端目录（.minecraft，可留空）" hint="留空则自动安装 Forge 1.20.1 测试客户端；已有 HMCL/PCL 客户端可填其 .minecraft 目录">
+            <input
+              className="mod-output-input"
+              value={testClientDraft ?? prefs.testClientDir ?? ''}
+              placeholder="例如 C:\\Users\\you\\.minecraft"
+              onChange={e => setTestClientDraft(e.target.value)}
+              onBlur={() => {
+                if (testClientDraft !== null && testClientDraft !== (prefs.testClientDir ?? '')) {
+                  void patchPrefs({ testClientDir: testClientDraft })
+                }
+                setTestClientDraft(null)
               }}
               onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
             />

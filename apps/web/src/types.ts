@@ -387,6 +387,8 @@ export interface PrefsDto {
   uiSound: boolean
   /** mod-output：jar 导出保存目录（空 = 未配置，jar 按钮回退浏览器下载） */
   modOutput: string
+  /** 测试客户端 .minecraft 目录（空 = 自动安装到 data/mc-test-client） */
+  testClientDir: string
   /** 功能开关（canvas / mc / library …）；改动需重启生效 */
   features: Record<string, boolean>
 }
@@ -450,14 +452,18 @@ export interface LibraryFileDto {
   createdAt: number
 }
 
+export type LibraryAssetKind = 'model' | 'jar' | 'image' | 'file'
+
 /**
- * 素材库条目：统一「多文件资产」。
- * 一个素材可以同时装模型快照、缩略图、jar 构建产物、贴图、bbmodel 或任意允许的文本文件。
+ * 素材库条目：模型 / Jar / 图片 / 文件四类互相独立。
+ * 模型资产装画布快照与缩略图；jar 资产一个资产只装一个 jar；图片/文件资产装其余文件。
  * 缩略图走 /api/library/:id/thumb?v=updatedAt。
  */
 export interface LibraryAssetDto {
-  /** 2 = 多文件资产；旧数据缺省（懒迁移中） */
+  /** 3 = 分类拆分；旧数据缺省（懒迁移中） */
   schema?: number
+  /** 顶层分类 */
+  kind: LibraryAssetKind
   id: string
   name: string
   createdAt: number
@@ -472,7 +478,13 @@ export interface LibraryAssetDto {
   /** 自动入库（会话画布快照） */
   auto?: boolean
   /** 资产来源 */
-  source: { provider: 'canvas' | 'auto' | 'upload' | 'cwd' | 'legacy'; sessionId?: string; path?: string }
+  source: {
+    provider: 'canvas' | 'auto' | 'upload' | 'cwd' | 'legacy' | 'legacy-split' | 'build'
+    sessionId?: string
+    path?: string
+  }
+  /** 从旧组合资产拆出来时记录原资产 id */
+  splitFrom?: string
   /** 资产内的全部文件 */
   files: LibraryFileDto[]
   /** 模型能力（有它才能「画布打开 / 接着改 / 引用 / 送入画布」） */
@@ -492,6 +504,61 @@ export interface LibraryAssetDto {
   hasThumb: boolean
   /** 调色板（#RRGGBB 不带 #）：纯色贴图模型用它拼缩略图，比首张贴图更有辨识度 */
   palette?: string[]
+}
+
+/** Jar 构建列表项：素材库已归档 jar 或工程 build/libs 扫描结果 */
+export interface LibraryJarItemDto {
+  source: 'library' | 'build'
+  assetId?: string
+  fileId?: string
+  path?: string
+  name: string
+  size: number
+  updatedAt?: number
+  mtime?: number
+  project?: string
+  /** 扫描结果是否已有同名同大小的归档 jar */
+  archived?: boolean
+}
+
+/** 统一测试启动器的选择项 */
+export interface McTestJarSelectionDto {
+  source: 'library' | 'build'
+  assetId?: string
+  fileId?: string
+  path?: string
+  name?: string
+}
+
+export type McTestPhase = 'idle' | 'installing' | 'starting' | 'running' | 'exited' | 'error'
+
+/** 统一测试启动器状态（GET /api/mc/test） */
+export interface McTestStatusDto {
+  phase: McTestPhase
+  running: boolean
+  pid?: number
+  startedAt?: number
+  selected: { name: string; source: 'library' | 'build' }[]
+  logTail: string
+  projectDir?: string
+  error?: string
+}
+
+/** 系统日志（GET /api/logs） */
+export type LogLevel = 'info' | 'warn' | 'error'
+
+export interface LogEntryDto {
+  seq: number
+  ts: number
+  level: LogLevel
+  text: string
+}
+
+export interface LogsDto {
+  logs: LogEntryDto[]
+  seq: number
+  /** 当天落盘日志文件 */
+  file: string
 }
 
 /** 功能开关（/api/features） */

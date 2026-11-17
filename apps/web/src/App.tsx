@@ -3,10 +3,13 @@ import { api, type SseFrame } from './api.js'
 import type {
   AgentProfileDto, AnimationMetaDto, CanvasPageDto, CanvasRefDto, CanvasState, ContextBreakdownDto, FeaturesDto, McProjectUiDto, ModelInfoDto, PendingInteractionDto, PrefsDto, SessionInfoDto,
   SessionSummaryDto, StatsDto, SubagentNoticeDto, SubagentWaitDto, TerminalDto, TodoItemDto, TurnEntry, WakeEntry,
+  McTestStatusDto,
 } from './types.js'
 import { EMPTY_CONTEXT_STATS } from './types.js'
 import { LeftSidebar } from './components/LeftSidebar.js'
 import { LibraryDrawer } from './components/LibraryDrawer.js'
+import { LogDrawer } from './components/LogDrawer.js'
+import { AboutDialog } from './components/AboutDialog.js'
 import { MainPanel } from './components/MainPanel.js'
 import { DOCK_TABS, RightDock, useDockDrag, type DockTabId } from './components/RightDock.js'
 import { SettingsWindow } from './components/SettingsWindow.js'
@@ -127,6 +130,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   /** 文档素材库抽屉 */
   const [libraryOpen, setLibraryOpen] = useState(false)
+  const [logsOpen, setLogsOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
   const [dockCollapsed, setDockCollapsed] = useState(false)
   // 右侧拓展的标签页（可多开、可切换、可关闭）；顺序即标签顺序
   const [dockTabs, setDockTabs] = useState<DockTabId[]>(() => {
@@ -250,6 +255,8 @@ export default function App() {
   const [toast, setToast] = useState<{ text: string; action?: { label: string; run: () => void } } | null>(null)
   /** MC 构建/启动的进度提示（1.75s 进度条，走完弹升级成就） */
   const [mcBoot, setMcBoot] = useState<{ label: string } | null>(null)
+  /** 统一测试启动器状态：底部悬浮实时进度条 / 失败直报 */
+  const [mcTestStatus, setMcTestStatus] = useState<McTestStatusDto | null>(null)
   /** MC 升级成就弹窗（右上角，levelup 音效） */
   const [achievement, setAchievement] = useState<{ title: string; sub: string } | null>(null)
   const [health, setHealth] = useState<{ mock: boolean } | null>(null)
@@ -312,6 +319,33 @@ export default function App() {
     window.clearTimeout(celebrateTimers.current.progress)
     window.clearTimeout(celebrateTimers.current.achievement)
   }, [])
+
+  // ---- 统一测试启动器：底部悬浮实时进度条（安装/启动/运行/失败） ----
+  const refreshMcTestStatus = useCallback(() => {
+    api.mcTestStatus(120).then(setMcTestStatus).catch(() => { /* 服务未起 */ })
+  }, [])
+  useEffect(() => { refreshMcTestStatus() }, [refreshMcTestStatus])
+  useEffect(() => {
+    if (libraryOpen) refreshMcTestStatus()
+  }, [libraryOpen, refreshMcTestStatus])
+  const mcTestActive = !!mcTestStatus && ['installing', 'starting', 'running'].includes(mcTestStatus.phase)
+  useEffect(() => {
+    if (!mcTestActive) return
+    const timer = window.setInterval(refreshMcTestStatus, 2000)
+    return () => window.clearInterval(timer)
+  }, [mcTestActive, refreshMcTestStatus])
+  // 空闲/已退出不占底部提示；失败保留到用户关闭
+  useEffect(() => {
+    if (mcTestStatus && (mcTestStatus.phase === 'idle' || mcTestStatus.phase === 'exited')) setMcTestStatus(null)
+  }, [mcTestStatus])
+  const lastTestErrorRef = useRef('')
+  useEffect(() => {
+    if (mcTestStatus?.phase !== 'error') return
+    const msg = mcTestStatus.error || mcTestStatus.logTail.split(/\r?\n/).filter(Boolean).pop() || '未知错误'
+    if (lastTestErrorRef.current === msg) return
+    lastTestErrorRef.current = msg
+    showToast(`测试客户端失败：${msg.slice(0, 240)}`)
+  }, [mcTestStatus, showToast])
 
   // ---- 右侧拓展的标签页 ----
   const openDockTab = useCallback((tab: DockTabId) => {
@@ -678,6 +712,7 @@ export default function App() {
       case 'mc/build': {
         const project = String(f.project ?? 'mod')
         if (f.ok === true) celebrate(`「${project}」构建完成，正在收尾…`, `构建成功 · ${project}`)
+        else showToast(`「${project}」构建失败（退出码 ${f.code ?? '?'}），查看会话里的编译日志`)
         if (sessionId) api.mcState(sessionId).then(x => setMcProjects(x.projects ?? [])).catch(() => {})
         break
       }
@@ -1535,6 +1570,21 @@ export default function App() {
   const viewCtxTokens = pageSessionIsOther ? (pageSnapshot?.ctxTokens ?? null) : ctxTokens
   const viewModelWindow = pageSessionIsOther ? (pageSnapshot?.modelWindow ?? null) : modelWindow
   const viewCtxBreakdown = pageSessionIsOther ? (pageSnapshot?.contextBreakdown ?? null) : ctxBreakdown
+
+  // 统一测试启动器：底部悬浮进度条文案
+  const mcTestPhase = mcTestStatus?.phase ?? 'idle'
+  const mcTestSelected = mcTestStatus?.selected.length ?? 0
+  const mcTestLabel = mcTestPhase === 'installing'
+    ? '正在安装 Forge 测试客户端…'
+    : mcTestPhase === 'starting'
+      ? `正在启动测试客户端（${mcTestSelected} 个 jar）…`
+      : mcTestPhase === 'running'
+        ? `测试客户端已启动（${mcTestSelected} 个 jar）`
+        : mcTestPhase === 'error' ? '测试客户端启动失败' : ''
+  const mcTestLogLine = mcTestStatus ? (mcTestStatus.logTail.split(/\r?\n/).filter(Boolean).pop() ?? '') : ''
+  const mcTestLogText = mcTestPhase === 'error'
+    ? (mcTestStatus?.error || mcTestLogLine || '未知错误')
+    : (mcTestLogLine || (mcTestPhase === 'installing' ? '等待安装器输出…' : '等待客户端输出…'))
   /** 当前功能开关下可用的右侧标签（关闭画布后 canvas 不出现） */
   const dockAvailable = useMemo(
     () => (featureOn('canvas') ? DOCK_TABS : DOCK_TABS.filter(t => t !== 'canvas')),
@@ -1555,9 +1605,11 @@ export default function App() {
         version={sessionsVersion}
         onOpenSession={openSession}
         onNewSession={newSession}
-        onOpenLibrary={() => setLibraryOpen(true)}
+        onOpenLibrary={() => { setLogsOpen(false); setAboutOpen(false); setLibraryOpen(true) }}
+        onOpenLogs={() => { setLibraryOpen(false); setAboutOpen(false); setLogsOpen(true) }}
+        onOpenAbout={() => { setLibraryOpen(false); setLogsOpen(false); setAboutOpen(true) }}
         libraryEnabled={featureOn('library')}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => { setLogsOpen(false); setAboutOpen(false); setSettingsOpen(true) }}
         onToast={showToast}
       />
       <MainPanel
@@ -1655,7 +1707,7 @@ export default function App() {
         onCreateCanvas={createCanvas}
         onActivateCanvas={activateCurrentCanvas}
         onReloadCanvas={() => reloadCanvasPage(activeCanvasPage)}
-        onOpenLibrary={() => setLibraryOpen(true)}
+        onOpenLibrary={() => { setLogsOpen(false); setAboutOpen(false); setLibraryOpen(true) }}
         pendingAtts={pendingAtts}
         onAddFiles={addPendingFiles}
         onRemoveDockAtt={(i) => setPendingAtts(prev => prev.filter((_, idx) => idx !== i))}
@@ -1693,6 +1745,8 @@ export default function App() {
       <LibraryDrawer
         open={libraryOpen}
         sessionId={sessionId}
+        testStatus={mcTestStatus}
+        onRefreshTestStatus={refreshMcTestStatus}
         onClose={() => setLibraryOpen(false)}
         onToast={showToast}
         onOpenInCanvas={openLibModel}
@@ -1704,6 +1758,8 @@ export default function App() {
           void openSession(id)
         }}
       />
+      <LogDrawer open={logsOpen} onClose={() => setLogsOpen(false)} onToast={showToast} />
+      <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} onToast={showToast} />
       {interactions[0] && (
         <AskDialog key={interactions[0].id} ask={interactions[0]} onSubmit={submitInteraction} />
       )}
@@ -1722,6 +1778,16 @@ export default function App() {
         <div className="toast mc-boot">
           <span className="mc-boot-label">{mcBoot.label}</span>
           <span className="mc-boot-bar" aria-hidden="true"><i /></span>
+        </div>
+      )}
+      {mcTestStatus && mcTestPhase !== 'idle' && mcTestPhase !== 'exited' && (
+        <div className={`toast mc-boot mc-test-boot ${mcTestPhase}`}>
+          <div className="mc-test-row">
+            <span className="mc-boot-label">{mcTestLabel}</span>
+            <span className="mc-boot-bar" aria-hidden="true"><i /></span>
+            <button className="mc-test-close" title="关闭提示" onClick={() => setMcTestStatus(null)}>✕</button>
+          </div>
+          <div className={`mc-test-log ${mcTestPhase === 'error' ? 'err' : ''}`}>{mcTestLogText}</div>
         </div>
       )}
       {achievement && (

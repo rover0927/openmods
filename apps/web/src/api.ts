@@ -2,6 +2,7 @@
 import type {
   ArchivedView, FeaturesDto, ModelInfoDto, PrefsDto, ProjectBaselineDto, ProjectDto,
   SessionInfoDto, SessionSummaryDto, SettingsDto, StatsFrameDto, LibraryAssetDto, CanvasTreeDto,
+  LibraryJarItemDto, McTestJarSelectionDto, McTestStatusDto, LogsDto,
 } from './types.js'
 
 export interface SseFrame {
@@ -247,18 +248,41 @@ export const api = {
   /** 给已有素材追加文件 */
   appendLibraryFile: (id: string, file: File) =>
     uploadBytes(`/api/library/${id}/files?name=${encodeURIComponent(file.name)}`, file),
-  /** 从会话工作目录导入（paths 相对 cwd） */
+  /** 从会话工作目录导入（每个文件单独成资产） */
   importLibraryFromCwd: (sessionId: string, paths: string[], name?: string) =>
-    jfetch<{ asset: LibraryAssetDto }>('/api/library/import', {
+    jfetch<{ asset: LibraryAssetDto; assets: LibraryAssetDto[] }>('/api/library/import', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId, paths, ...(name ? { name } : {}) }),
     }),
+  /** Jar 构建列表：素材库归档 + 工程 build/libs 扫描 */
+  libraryJars: (sessionId?: string) =>
+    jfetch<{ jars: LibraryJarItemDto[] }>(`/api/library/jars${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`),
+  /** 把工程构建 jar 归档进素材库 */
+  archiveLibraryJar: (sessionId: string, path: string) =>
+    jfetch<{ asset: LibraryAssetDto }>('/api/library/jars/archive', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, path }),
+    }),
+  /** 统一测试启动器状态 */
+  mcTestStatus: (tail = 120) => jfetch<McTestStatusDto>(`/api/mc/test?tail=${tail}`),
+  mcTestRun: (jars: McTestJarSelectionDto[], sessionId?: string) =>
+    jfetch<{ ok: boolean }>('/api/mc/test/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jars, sessionId }),
+    }),
+  mcTestStop: () =>
+    jfetch<{ ok: boolean; stopped: boolean }>('/api/mc/test/stop', { method: 'POST' }),
+  /** 系统日志增量拉取：after 为上次拿到的 seq */
+  logs: (after = 0, limit = 300) =>
+    jfetch<LogsDto>(`/api/logs?after=${after}&limit=${limit}`),
   /** 素材内文件地址：图片/文本默认内联，jar 等强制下载加 download=1 */
   libraryFileUrl: (id: string, fileId: string, download = false) =>
     `/api/library/${id}/files/${fileId}${download ? '?download=1' : ''}`,
   captureLibrary: (sessionId: string, name?: string) =>
-    jfetch<{ asset: LibraryAssetDto }>('/api/library/capture', {
+    jfetch<{ asset: LibraryAssetDto; jarAsset?: LibraryAssetDto }>('/api/library/capture', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId, name }),

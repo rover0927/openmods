@@ -55,6 +55,10 @@ export function LeftSidebar(props: {
   onOpenSettings: () => void
   /** 打开文档素材库抽屉 */
   onOpenLibrary: () => void
+  /** 打开系统日志抽屉 */
+  onOpenLogs: () => void
+  /** 打开关于页面 */
+  onOpenAbout: () => void
   /** 素材库功能关闭时不显示入口 */
   libraryEnabled?: boolean
   onToast: (msg: string, action?: ToastAction) => void
@@ -376,6 +380,8 @@ export function LeftSidebar(props: {
           {props.libraryEnabled !== false && (
             <button className="sb-rail-btn" title="文档素材库" onClick={props.onOpenLibrary}><McIcon name="library" size={16} /></button>
           )}
+          <button className="sb-rail-btn" title="系统日志" onClick={props.onOpenLogs}><McIcon name="logs" size={16} /></button>
+          <button className="sb-rail-btn" title="关于" onClick={props.onOpenAbout}><McIcon name="about" size={16} /></button>
           <button className="sb-rail-btn" title="设置" onClick={props.onOpenSettings}><McIcon name="settings" size={16} /></button>
         </div>
       ) : (
@@ -410,6 +416,14 @@ export function LeftSidebar(props: {
                 <span className="sb-title">文档素材库</span>
               </button>
             )}
+            <button className="sb-row sb-settings" onClick={props.onOpenLogs}>
+              <span className="sb-slot" aria-hidden="true"><McIcon name="logs" size={16} /></span>
+              <span className="sb-title">系统日志</span>
+            </button>
+            <button className="sb-row sb-settings" onClick={props.onOpenAbout}>
+              <span className="sb-slot" aria-hidden="true"><McIcon name="about" size={16} /></span>
+              <span className="sb-title">关于</span>
+            </button>
             <button className="sb-row sb-settings" onClick={props.onOpenSettings}>
               <span className="sb-slot" aria-hidden="true"><McIcon name="settings" size={16} /></span>
               <span className="sb-title">设置</span>

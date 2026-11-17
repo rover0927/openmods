@@ -7,6 +7,8 @@ import type { CSSProperties } from 'react'
 export const MC_ICON = {
   newGroup: 'brick',
   library: 'book',
+  logs: 'paper',
+  about: 'compass',
   settings: 'clock',
   canvas: 'diamond_pickaxe',
   images: 'map',

@@ -87,6 +87,8 @@ export interface PrefsConfig {
   uiSound: boolean
   /** mod-output：jar 导出保存目录（构建产物一键复制到这里；空 = 未配置，走浏览器下载） */
   modOutput: string
+  /** 测试客户端 .minecraft 目录（空 = 自动安装到 data/mc-test-client） */
+  testClientDir: string
   /** 功能开关：canvas / mc / library（改动需重启，服务启动时按它决定加载哪些插件） */
   features: Record<string, boolean>
 }
@@ -101,6 +103,7 @@ export const DEFAULT_PREFS: PrefsConfig = {
   inlineSubagents: true,
   uiSound: true,
   modOutput: '',
+  testClientDir: '',
   features: {},
 }
 
@@ -128,6 +131,7 @@ export function normalizePrefs(raw: any): PrefsConfig {
     inlineSubagents: typeof p.inlineSubagents === 'boolean' ? p.inlineSubagents : DEFAULT_PREFS.inlineSubagents,
     uiSound: typeof p.uiSound === 'boolean' ? p.uiSound : DEFAULT_PREFS.uiSound,
     modOutput: typeof p.modOutput === 'string' ? p.modOutput.trim().slice(0, 500) : DEFAULT_PREFS.modOutput,
+    testClientDir: typeof p.testClientDir === 'string' ? p.testClientDir.trim().slice(0, 500) : DEFAULT_PREFS.testClientDir,
     features: (() => {
       const raw = p.features && typeof p.features === 'object' ? p.features : {}
       const out: Record<string, boolean> = {}

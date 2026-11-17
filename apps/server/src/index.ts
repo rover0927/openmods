@@ -3,7 +3,7 @@ import Fastify from 'fastify'
 import fastifyStatic from '@fastify/static'
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import type { FeatureDecl, HttpMethod, HttpRouteOptions, LoadedPlugin, PluginContext, SessionRuntimeLike, SkillProvider, ToolDef, ToolResult } from '@openmods/plugin-kit'
@@ -17,16 +17,23 @@ import { SessionStore, isValidSessionId, summarize, type SessionSummary, type Su
 import { CanvasService } from './canvas.js'
 import { ProjectStore, ProjectActiveSessionError, type SessionActivity } from './project-store.js'
 import { createAttachmentStore, MAX_IMAGES_PER_MESSAGE } from './attachments.js'
-import { createLibraryStore, type LibraryAsset, type LibraryDoc } from './library.js'
+import { createLibraryStore, findAllJars, type LibraryAsset, type LibraryDoc } from './library.js'
 import { createFileService } from './files.js'
 import { probeWeb, proxyWeb } from './webview.js'
 import { createInteractionHub, type InteractionReply, type PendingInteraction } from './interaction.js'
 import { createTerminalManager } from './terminals.js'
+import { installLogCapture, getLogs, logFilePath } from './log-bus.js'
+import {
+  getTestClientStatus, startTestClient, stopTestClient, testClientBusy, type TestClientJar,
+} from './mc-test-client.js'
 import { projectStats } from '../../../plugins/stats/projection.js'
 import { compile as compileBb } from '../../../plugins/bb-tools/bbmodel.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '../../..')
+
+// 系统日志：尽早接管 console，启动/插件/构建日志都会进内存缓冲与 data/logs
+installLogCapture(ROOT)
 
 /**
  * 新会话默认绑定的工作目录（左栏「目录」的来源）。
@@ -1235,6 +1242,14 @@ for (const r of pluginHttpRoutes) {
 
 app.get('/api/health', async () => ({ ok: true, mock: MOCK, plugins: loadedPlugins.map(p => p.name) }))
 
+// 系统日志：after 为上次拿到的 seq，增量返回；file 是当天落盘日志路径
+app.get('/api/logs', async (req) => {
+  const after = Number((req.query as any)?.after ?? 0)
+  const limit = Number((req.query as any)?.limit ?? 300)
+  const result = getLogs(Number.isFinite(after) ? after : 0, Number.isFinite(limit) ? limit : 300)
+  return { ...result, file: logFilePath() }
+})
+
 // 功能关闭时相关接口统一 404（前端入口也会按 /api/features 隐藏；
 // 服务端也要拦，避免首屏 features 还没回来时前端把入口/按钮渲染出来）。
 // 插件自带路由（如 /api/mc）不需要前缀拦截：插件未 apply 时路由根本没注册。
@@ -2402,6 +2417,151 @@ function seedCanvas(sessionId: string, snap: LibraryDoc, libId?: string) {
 
 app.get('/api/library', async () => ({ assets: library.list() }))
 
+/** Jar 扫描根：当前会话 cwd + 默认 MC 工作区 */
+function jarScanRoots(sessionId?: string): string[] {
+  const roots: string[] = []
+  const sid = String(sessionId ?? '').trim()
+  if (sid && sessionStore.exists(sid)) {
+    const cwd = sessionStore.readMeta(sid).cwd
+    if (cwd) roots.push(cwd)
+  }
+  if (!roots.some(r => resolve(r).toLowerCase() === resolve(DEFAULT_CWD).toLowerCase())) roots.push(DEFAULT_CWD)
+  return roots
+}
+
+// Jar 构建列表：素材库已归档 jar + 工程 build/libs 自动扫描
+app.get('/api/library/jars', async (req) => {
+  const sessionId = String((req.query as any)?.sessionId ?? '').trim()
+  const archived: any[] = []
+  for (const a of library.list()) {
+    if (a.kind !== 'jar') continue
+    const jars = a.files.filter(f => f.kind === 'jar')
+    if (!jars.length && a.jar) {
+      archived.push({
+        source: 'library', assetId: a.id, fileId: a.jar.fileId, name: a.jar.name,
+        size: a.jar.size, updatedAt: a.updatedAt, project: a.name,
+      })
+      continue
+    }
+    for (const f of jars) {
+      archived.push({
+        source: 'library', assetId: a.id, fileId: f.id, name: f.name,
+        size: f.size, updatedAt: a.updatedAt, project: a.name,
+      })
+    }
+  }
+  const seen = new Set<string>()
+  const builds: any[] = []
+  for (const root of jarScanRoots(sessionId)) {
+    for (const j of findAllJars(root)) {
+      const key = resolve(j.path).toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      const archivedSame = archived.some(a => a.name === j.name && a.size === j.size)
+      // 已归档的同名同大小构建不再重复列出，避免用户同时勾选两份
+      if (archivedSame) continue
+      builds.push({
+        source: 'build', path: j.path, name: j.name, size: j.size,
+        mtime: j.mtime, project: j.project, archived: false,
+      })
+    }
+  }
+  return { jars: [...archived, ...builds.slice(0, 100)] }
+})
+
+// 把工程构建 jar 归档到素材库
+app.post('/api/library/jars/archive', async (req, reply) => {
+  const body = (req.body ?? {}) as { path?: string; sessionId?: string }
+  const sessionId = String(body.sessionId ?? '').trim() || undefined
+  const abs = resolve(String(body.path ?? '').trim())
+  if (!abs.toLowerCase().endsWith('.jar')) return reply.code(400).send({ error: '只支持 .jar' })
+  if (!abs.toLowerCase().includes(`${sep}build${sep}libs${sep}`)) {
+    return reply.code(400).send({ error: '只能归档工程 build/libs 下的 jar' })
+  }
+  const roots = jarScanRoots(sessionId)
+  if (!roots.some(r => abs.toLowerCase().startsWith(resolve(r).toLowerCase() + sep))) {
+    return reply.code(400).send({ error: 'jar 不在当前工作区/工程目录内' })
+  }
+  try {
+    const st = statSync(abs)
+    if (!st.isFile()) throw new Error('不是普通文件')
+    const asset = library.createJar({
+      name: abs.split(/[\\/]/).pop() ?? 'mod.jar',
+      data: readFileSync(abs),
+      sessionId,
+      sourcePath: abs,
+      provider: 'build',
+    })
+    return { asset }
+  } catch (e: any) {
+    return reply.code(400).send({ error: e.message })
+  }
+})
+
+/** 把 UI 传来的 jar 选择解析成真实字节；library 走素材库，build 走工程 build/libs */
+function prepareTestJars(body: any): TestClientJar[] {
+  const rows = Array.isArray(body?.jars) ? body.jars : []
+  if (!rows.length) throw new Error('至少选择一个 jar')
+  if (rows.length > 20) throw new Error('一次最多选择 20 个 jar')
+  const sessionId = String(body?.sessionId ?? '').trim()
+  const roots = jarScanRoots(sessionId)
+  const out: TestClientJar[] = []
+  let total = 0
+  for (const row of rows) {
+    const source = String(row?.source ?? '')
+    if (source === 'library') {
+      const assetId = String(row?.assetId ?? '')
+      const fileId = String(row?.fileId ?? '')
+      const found = fileId
+        ? library.readFile(assetId, fileId)
+        : (() => {
+            const asset = library.get(assetId)
+            const id = asset?.jar?.fileId
+            return id ? library.readFile(assetId, id) : undefined
+          })()
+      if (!found) throw new Error(`素材 jar 不存在：${assetId}`)
+      if (found.file.kind !== 'jar') throw new Error(`不是 jar：${found.file.name}`)
+      total += found.data.length
+      out.push({ name: found.file.name, data: found.data, source: 'library' })
+      continue
+    }
+    if (source === 'build') {
+      const abs = resolve(String(row?.path ?? ''))
+      const lower = abs.toLowerCase()
+      if (!lower.endsWith('.jar')) throw new Error('只支持 .jar')
+      if (!lower.includes(`${sep}build${sep}libs${sep}`)) throw new Error('只能启动工程 build/libs 下的 jar')
+      if (!roots.some(r => lower.startsWith(resolve(r).toLowerCase() + sep))) {
+        throw new Error('jar 不在当前工作区/工程目录内')
+      }
+      const st = statSync(abs)
+      if (!st.isFile()) throw new Error('不是普通文件')
+      total += st.size
+      out.push({ name: basename(abs), data: readFileSync(abs), source: 'build' })
+      continue
+    }
+    throw new Error('未知的 jar 来源')
+  }
+  if (total > 256 * 1024 * 1024) throw new Error('选中的 jar 总大小超过 256MB')
+  return out
+}
+
+// 统一测试启动器：状态 / 启动 / 停止
+app.get('/api/mc/test', async (req) => getTestClientStatus(Number((req.query as any)?.tail ?? 120)))
+
+app.post('/api/mc/test/run', async (req, reply) => {
+  try {
+    if (testClientBusy()) return reply.code(409).send({ error: '测试客户端正在安装或启动，请稍候' })
+    const jars = prepareTestJars(req.body)
+    void startTestClient(jars, { testClientDir: settingsStore.getPrefs().testClientDir })
+      .catch(() => { /* 失败由状态接口的 phase=error/logTail 反馈 */ })
+    return { ok: true }
+  } catch (e: any) {
+    return reply.code(400).send({ error: e.message })
+  }
+})
+
+app.post('/api/mc/test/stop', async () => ({ ok: true, stopped: stopTestClient() }))
+
 // 上传一个文件（原始字节体）：首个文件建资产，多选/拖拽的其余文件走 /:id/files 追加
 app.post('/api/library/upload', { bodyLimit: 64 * 1024 * 1024 }, async (req, reply) => {
   const q = (req.query ?? {}) as { name?: string; title?: string; sessionId?: string }
@@ -2448,13 +2608,13 @@ app.post('/api/library/import', async (req, reply) => {
   if (!sessionStore.exists(sessionId)) return reply.code(400).send({ error: '会话不存在' })
   const cwd = sessionStore.readMeta(sessionId).cwd ?? DEFAULT_CWD
   try {
-    const asset = library.importFiles({
+    const result = library.importFiles({
       root: cwd,
       paths: Array.isArray(body.paths) ? body.paths.map(String) : [],
       name: String(body.name ?? '').trim() || undefined,
       sessionId,
     })
-    return { asset }
+    return result
   } catch (e: any) {
     return reply.code(400).send({ error: e.message })
   }
@@ -2490,7 +2650,7 @@ app.post('/api/library/capture', async (req, reply) => {
   try {
     const s = await ensureSession(sessionId)
     const doc = canvas.read(sessionId)
-    const asset = library.capture({
+    const result = library.capture({
       sessionId,
       canvasId: s.canvasId ?? canvas.idOf(sessionId),
       name: String(body.name ?? ''),
@@ -2498,7 +2658,7 @@ app.post('/api/library/capture', async (req, reply) => {
       // 素材归档时顺带收当前会话工作区里的最新构建产物（build/libs/*.jar）
       cwd: s.cwd,
     })
-    return { asset }
+    return result
   } catch (e: any) {
     return reply.code(400).send({ error: e.message })
   }
