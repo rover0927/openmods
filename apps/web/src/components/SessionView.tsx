@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type {
   AgentProfileDto, ContextBreakdownDto, ModelInfoDto, SessionSummaryDto, StatsDto, SubagentWaitDto, TurnEntry,
 } from '../types.js'
@@ -58,6 +58,7 @@ function baseName(p: string): string {
 }
 
 export function SessionView(props: {
+  sessionId: string
   turns: TurnEntry[]
   busy: boolean
   /** 等待中的子代理：非空 = 会话没结束但输入锁定（结算后自动汇总） */
@@ -127,6 +128,28 @@ export function SessionView(props: {
   /** 等待子代理时锁输入：会话还在跑这一轮，用户不能插话（服务端同样 409） */
   const waitingLocked = waiting.length > 0
 
+  /** 聊天区是否吸附在底部：在底部时新输出自动跟随，用户上滑后暂停跟随 */
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const stickBottomRef = useRef(true)
+  const BOTTOM_SLACK = 72
+  const onChatScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_SLACK
+  }
+  // 切换会话/首次打开：直接定位到最新输出
+  useLayoutEffect(() => {
+    stickBottomRef.current = true
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [props.sessionId])
+  // 流式输出、新回合、等待态变化：用户仍在底部时跟随到最新元素
+  useLayoutEffect(() => {
+    if (!stickBottomRef.current) return
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [turns, busy, waiting, streamChars, thinkTail, inlineSubagents])
+
   const askLocked = pendingAsks > 0
   /** 「/」命令：原输入区并排的「完善想法」「三视图」两个按钮收进斜杠菜单 */
   const slashCommands = [
@@ -158,6 +181,7 @@ export function SessionView(props: {
   const submit = () => {
     const t = text.trim()
     if (!t || busy || waitingLocked || askLocked) return
+    stickBottomRef.current = true
     onSend(t, refineMode ? 'refine' : 'build')
     setText('')
   }
@@ -182,7 +206,7 @@ export function SessionView(props: {
 
   return (
     <div className="chat-tab">
-      <div className="chat-scroll">
+      <div className="chat-scroll" ref={scrollRef} onScroll={onChatScroll}>
         <div className="chat-column">
           {busy && (
             <div className="run-banner">

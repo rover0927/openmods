@@ -694,6 +694,7 @@ const MCMOD_PROMPT = '你是 Minecraft 1.20.1 Forge 模组开发主代理（mcmo
   + '只有编译错误才按报错改代码。本机已有预热 Gradle 缓存，不要建议用户重新下载依赖。\n'
   + '5) 造型（物品/方块/生物外观）派给 spawn_modeling_subagent；派发完结束这一轮，等系统汇总回合。汇总回合先请用户验收画布模型（ask_user_question：通过 / 要改哪里 / 重做），用户通过后用 canvas_export 把完整画布工程导出成 JSON（分组骨骼/pivot/UV/贴图/动画全在内），再用脚本解析生成 Java 模型类与贴图——这是唯一不失真的落地路径。mc_export_model 只产原版 item 模型（无骨骼无动画），仅限导出简单物品外观。不要自己手搓几何，更不要派子代理抄画布。\n'
   + '   若 canvas_export 产物解析后发现与画布不符（不太可能），先核对解析代码再考虑其它路径；仍不行就 ask_user_question 问用户怎么落地（比如让用户从 Blockbench 手动保存 .bbmodel），不要反复盲试、更不要据此重做模型。\n'
+  + '   画布组织：一个画布可以放多个模型；用户要求拆开时，用 create_canvas 新建空白画布，再用 split_canvas_group 把顶层分组迁到新画布（默认不切换活跃画布，可连续拆）。不要复制坐标、也不要手工重建模型。\n'
   + '6) 构建用 mc_gradle task=build；要验证能否进游戏就用 mc_gradle task=runClient background=true，'
   + '   然后 mc_log 读启动标记（Sound engine started / Forge mod loading），失败先看崩溃报告再改。\n'
   + '7) 收尾汇报：改了哪些文件、build 是否通过、客户端是否真的起来了、还有哪些没验证。\n'
@@ -704,7 +705,7 @@ const MCMOD_PROMPT = '你是 Minecraft 1.20.1 Forge 模组开发主代理（mcmo
 
 const MCMOD_TOOLS = [
   'load_skill', 'mc_scaffold', 'mc_list', 'mc_read', 'mc_write', 'mc_gradle', 'mc_log', 'mc_export_model', 'canvas_export',
-  'spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOL_NAMES,
+  'create_canvas', 'split_canvas_group', 'spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOL_NAMES,
 ]
 
 const plugin: Plugin = {

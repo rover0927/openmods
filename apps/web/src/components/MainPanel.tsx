@@ -192,6 +192,7 @@ export function MainPanel(props: {
         </div>
       </header>
       <SessionView
+        sessionId={props.sessionId}
         turns={props.turns}
         busy={props.busy}
         waiting={props.waiting}

@@ -357,39 +357,111 @@ const tools: ToolDef[] = [
     },
   },
   {
+    name: 'create_canvas',
+    mutates: true,
+    description: '在当前会话新建一块空白画布（默认切换为活跃画布）。用户能在右侧画布页签看到并切换；需要把现有模型分开放时，配合 split_canvas_group 把顶层分组迁进去。不要用它复制模型。',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '画布名称，默认「新画布」' },
+        activate: { type: 'boolean', description: '是否切换为活跃画布，默认 true' },
+      },
+    },
+    async execute(args, ctx) {
+      const name = String(args.name ?? '').trim() || '新画布'
+      const activate = args.activate !== false
+      const canvasId = ctx.canvas.createCanvas(ctx.sessionId, { name, activate })
+      const doc = ctx.canvas.readCanvas(canvasId)
+      // 新建画布本身不触发提交广播：提交一次空文档，前端画布页签立即出现
+      if (doc) ctx.canvas.commitCanvas(canvasId, doc, ctx.sessionId)
+      return ok(`已新建画布「${name}」（${canvasId}）${activate ? '，并设为活跃画布' : '，未切换活跃画布'}。当前会话共 ${ctx.canvas.listOf(ctx.sessionId).length} 块画布，右侧画布页签可查看。`)
+    },
+  },
+  {
     name: 'split_canvas_group',
     mutates: true,
-    description: '把当前活跃画布上的一个**顶层分组**（含子树）迁移到指定**直属子代理**的画布，并把几何平移到原点；用于修复旧版"所有子代理共用一块画布"留下的堆叠模型。动画不随分组迁移。',
+    description: '把当前活跃画布上的一个**顶层分组**（含子树）迁到另一块画布，并把几何平移到原点。默认在当前会话**新建一块画布**（不切换活跃画布），用于把同一画布上的多个模型拆开；也可用 target_canvas 指定本会话已有的空画布，或用 target_session 迁给直属子代理（兼容旧共享画布场景）。动画不随分组迁移。',
     parameters: {
       type: 'object',
       properties: {
         group: { type: 'string', description: '当前活跃画布上的顶层分组名' },
-        target_session: { type: 'string', description: '目标直属子代理的会话 id（用 list_subagents 查）' },
+        target_canvas: { type: 'string', description: '目标画布 id 或名称（当前会话已有画布）；省略则新建一块画布' },
+        target_session: { type: 'string', description: '目标直属子代理会话 id（可选；迁给子代理时用 list_subagents 查）' },
+        name: { type: 'string', description: '新建画布的名称，默认用分组名' },
+        activate: { type: 'boolean', description: '新建画布后是否切换为活跃画布，默认 false（保持源画布活跃，方便连续拆）' },
       },
-      required: ['group', 'target_session'],
+      required: ['group'],
     },
     async execute(args, ctx) {
-      const sourceCanvas = ctx.canvas.idOf(ctx.sessionId)
+      const sourceSession = ctx.sessionId
+      const sourceCanvas = ctx.canvas.idOf(sourceSession)
       const targetSession = String(args.target_session ?? '').trim()
       const groupName = String(args.group ?? '').trim()
-      if (targetSession === ctx.sessionId) {
-        return { forModel: '目标必须是子代理会话，不能是当前会话。', isError: true }
-      }
       if (!groupName) return { forModel: '缺少 group（顶层分组名）。', isError: true }
 
-      const treeIds = new Set(ctx.canvas.listTree(ctx.sessionId).map(c => c.canvasId))
-      const targetActive = ctx.canvas.idOf(targetSession)
-      if (!treeIds.has(targetActive)) {
-        return { forModel: 'target_session 不是本会话的直属子代理（用 list_subagents 查子代理 id）。', isError: true }
-      }
-
-      const doc = ctx.canvas.read(ctx.sessionId) as BbDoc | undefined
+      const doc = ctx.canvas.read(sourceSession) as BbDoc | undefined
       if (!doc) return { forModel: '当前活跃画布还没有内容。', isError: true }
       // 只认顶层分组：顶层字符串项是元素，嵌套分组要迁移得先把它提到顶层
       const node = (doc.outliner ?? []).find(n => typeof n !== 'string' && n.name === groupName) as BbGroup | undefined
       if (!node) {
         const tops = (doc.outliner ?? []).filter((n): n is BbGroup => typeof n !== 'string').map(n => n.name)
         return { forModel: `顶层分组 "${groupName}" 不存在（只能迁移顶层分组）。现有顶层分组：${tops.join('、') || '无——先用 list_outline 查看结构'}。`, isError: true }
+      }
+
+      let targetCanvasId: string
+      let targetDoc: BbDoc
+      let created = false
+      let toChild = false
+      if (targetSession && targetSession !== sourceSession) {
+        toChild = true
+        const treeIds = new Set(ctx.canvas.listTree(sourceSession).map(c => c.canvasId))
+        const targetActive = ctx.canvas.idOf(targetSession)
+        if (!treeIds.has(targetActive)) {
+          return { forModel: 'target_session 不是本会话的直属子代理（用 list_subagents 查子代理 id）。', isError: true }
+        }
+        if (targetActive === sourceCanvas) {
+          // 旧共享画布：给该子代理新建一块独立画布并设为活跃
+          created = true
+          targetCanvasId = ctx.canvas.createCanvas(targetSession, { name: groupName, activate: true })
+          targetDoc = ctx.canvas.readCanvas(targetCanvasId) as BbDoc
+        } else {
+          targetCanvasId = targetActive
+          const existing = ctx.canvas.readCanvas(targetCanvasId) as BbDoc | null
+          if ((existing?.elements?.length ?? 0) > 0) {
+            return { forModel: '目标子代理的画布不是空的（已有部件）。换一个空画布的子代理，或先清空它的画布。', isError: true }
+          }
+          targetDoc = existing ?? createDoc('未命名模型')
+        }
+      } else {
+        const requested = String(args.target_canvas ?? '').trim()
+        if (requested) {
+          const ids = ctx.canvas.listOf(sourceSession)
+          let id = ids.includes(requested) ? requested : undefined
+          if (!id) {
+            for (const cid of ids) {
+              const d = ctx.canvas.readCanvas(cid) as BbDoc | null
+              if (d?.name === requested) { id = cid; break }
+            }
+          }
+          if (!id) {
+            const names = ids.map(cid => (ctx.canvas.readCanvas(cid) as BbDoc | null)?.name).filter(Boolean)
+            return { forModel: `当前会话没有名为 "${requested}" 的画布。现有画布：${names.join('、') || '无'}。`, isError: true }
+          }
+          if (id === sourceCanvas) {
+            return { forModel: 'target_canvas 不能是源画布（当前活跃画布）。', isError: true }
+          }
+          targetCanvasId = id
+          const existing = ctx.canvas.readCanvas(id) as BbDoc | null
+          if ((existing?.elements?.length ?? 0) > 0) {
+            return { forModel: '目标画布不是空的（已有部件）。换一块空画布，或省略 target_canvas 让工具新建。', isError: true }
+          }
+          targetDoc = existing ?? createDoc('未命名模型')
+        } else {
+          created = true
+          const canvasName = String(args.name ?? '').trim() || groupName
+          targetCanvasId = ctx.canvas.createCanvas(sourceSession, { name: canvasName, activate: args.activate === true })
+          targetDoc = (ctx.canvas.readCanvas(targetCanvasId) as BbDoc | null) ?? createDoc(canvasName)
+        }
       }
 
       const uuids = new Set<string>()
@@ -405,23 +477,6 @@ const tools: ToolDef[] = [
         }
       } else {
         for (let axis = 0; axis < 3; axis++) shift[axis] = Number(node.origin?.[axis] ?? 0) || 0
-      }
-
-      let targetCanvasId: string
-      let targetDoc: BbDoc
-      let created = false
-      if (targetActive === sourceCanvas) {
-        // 旧共享画布：给该子代理新建一块独立画布并设为活跃
-        created = true
-        targetCanvasId = ctx.canvas.createCanvas(targetSession, { name: groupName, activate: true })
-        targetDoc = ctx.canvas.readCanvas(targetCanvasId) as BbDoc
-      } else {
-        targetCanvasId = targetActive
-        const existing = ctx.canvas.readCanvas(targetCanvasId) as BbDoc | null
-        if ((existing?.elements?.length ?? 0) > 0) {
-          return { forModel: '目标子代理的画布不是空的（已有部件）。换一个空画布的子代理，或先清空它的画布。', isError: true }
-        }
-        targetDoc = existing ?? createDoc('未命名模型')
       }
 
       const moved = moving.map(e => {
@@ -456,8 +511,8 @@ const tools: ToolDef[] = [
 
       doc.elements = (doc.elements ?? []).filter(e => !uuids.has(e.uuid))
       doc.outliner = (doc.outliner ?? []).filter(n => (typeof n === 'string' ? !uuids.has(n) : n.uuid !== node.uuid))
-      ctx.canvas.commit(ctx.sessionId, doc)
-      ctx.canvas.commitCanvas(targetCanvasId, targetDoc, targetSession)
+      ctx.canvas.commit(sourceSession, doc)
+      ctx.canvas.commitCanvas(targetCanvasId, targetDoc, toChild ? targetSession : sourceSession)
 
       const boneNames = new Set<string>()
       const walkBones = (g: BbGroup) => {
@@ -468,11 +523,16 @@ const tools: ToolDef[] = [
       const stuckAnims = (doc.animations ?? []).filter(a => Object.keys(a.bones ?? {}).some(b => boneNames.has(b)))
 
       const offset = shift.map(v => -v)
-      const lines = [
-        `已把顶层分组 "${groupName}" 迁移到子代理画布：${moved.length} 个方块，平移量 [${offset.map(v => +(Number(v) || 0).toFixed(2)).join(', ')}]。`,
-        `目标会话：${targetSession} · 目标画布：${targetCanvasId}${created ? '（旧共享画布场景：已为它新建独立画布并设为活跃）' : ''}`,
-        `源画布剩余 ${doc.elements.length} 个部件。目标子代理画布已置为活跃，可在右侧拓展的画布页签查看。`,
-      ]
+      const lines: string[] = []
+      if (toChild) {
+        lines.push(`已把顶层分组 "${groupName}" 迁移到子代理画布：${moved.length} 个方块，平移量 [${offset.map(v => +(Number(v) || 0).toFixed(2)).join(', ')}]。`)
+        lines.push(`目标会话：${targetSession} · 目标画布：${targetCanvasId}${created ? '（旧共享画布场景：已为它新建独立画布并设为活跃）' : ''}`)
+        lines.push(`源画布剩余 ${doc.elements.length} 个部件。目标子代理画布已置为活跃，可在右侧拓展的画布页签查看。`)
+      } else {
+        lines.push(`已把顶层分组 "${groupName}" 迁到${created ? `新建画布「${targetDoc.name}」` : `画布「${targetDoc.name}」`}：${moved.length} 个方块，平移量 [${offset.map(v => +(Number(v) || 0).toFixed(2)).join(', ')}]。`)
+        lines.push(`目标画布：${targetCanvasId}${created ? (args.activate === true ? '（已设为活跃画布）' : '（未切换活跃画布，方便继续拆）') : ''}；源画布剩余 ${doc.elements.length} 个部件。`)
+        lines.push('用户可在右侧画布页签查看和切换这些画布。')
+      }
       if (stuckAnims.length) {
         lines.push(`注意：动画 ${stuckAnims.map(a => a.name).join('、')} 仍引用被迁移的骨骼名，相关动画仍留在源画布。`)
       }
