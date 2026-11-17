@@ -12,7 +12,7 @@ Fastify + React + Vite 全栈 TypeScript；画布基于 Blockbench 5.2.2（GPL-3
 
 **openmods 是跑在本机的 AI 工作台**：三栏主界面 + **并发建模子代理（各自独立画布）** + **无头 Blockbench 画布** + **MC 1.20.1 模组开发闭环**（建模 → 导出 → 构建 → 一键进游戏测试 → jar 导出），外加可插拔工具/插件、多文件素材库、省 token 压缩与用量看板。
 
-界面是完整的 **Minecraft 像素皮肤**：原版方块贴图铺底、物品图标做功能入口、左上角一颗会转的草方块。
+界面是完整的 **Minecraft 像素皮肤**：原版方块贴图铺底、物品图标做功能入口；提供草方块 / 樱花 / 深海 / 下界 / 末地 5 套主题，结构墙与左上角品牌方块随主题换材质。
 
 > **路线图**：openmods 现在以独立本地工作台的形式提供。项目足够成熟之后，会考虑把它做成 **deepseek-harness（dsh）的插件**，复用 dsh 的代理运行时与插件机制，不再单独维护一套外壳。
 
@@ -20,26 +20,29 @@ Fastify + React + Vite 全栈 TypeScript；画布基于 Blockbench 5.2.2（GPL-3
 
 | | |
 |---|---|
-| ⛏️ **MC 像素界面** | 方块贴图皮肤（石砖 / 深色橡木 / 草方块等 11 种）、物品图标、旋转草方块、草绿主操作按钮 |
+| ⛏️ **MC 像素界面** | 5 套方块主题（草方块 / 樱花 / 深海 / 下界 / 末地）；结构墙、品牌方块随主题换材质；物品图标、像素斜面、主题色主操作 |
 | 🎨 **多画布建模** | 主会话与每个建模子代理各有一块独立画布；右侧多页签查看/切换，活跃画布 durable，支持新建空白画布 |
 | 🗂 **多文件素材库** | 模型 / jar / 图片 / 文本统一归档；上传、拖拽、工作目录导入、从画布截取；模型缩略图为等距 3D 预览 |
 | 🤖 **主代理全能力** | 权限审批、计划模式、询问用户、终端、文件读写、并发子代理——对标 dsh 主 agent |
 | ⚙️ **MC 开发闭环** | `mc_scaffold` 建工程 → 建模子代理出模型 → `mc_gradle build` → 标题栏「▶ 测试 Mod」→「jar ⤓」导出（Forge 1.20.1 / 国内镜像 / 离线构建包） |
 | 🧩 **代理与技能** | 三个角色（lead / mcmod / modeling）的工具与技能分配可视化；技能自注入、内置技能只读 |
-| 📊 **上下文面板** | 分段占用、工具用量、耗时分布、token 环形图、每轮明细 |
+| 📊 **上下文面板** | 底部状态条与右侧面板跟随当前画布页的 owner 会话；分段占用、工具用量、耗时分布、token 环形图、每轮明细 |
 | 🖼 **图片输入** | Ctrl+V 粘贴直发视觉模型；纯文本模型按 dsh 语义诚实降级 |
+| ⌨️ **输入框自适应** | 随内容自动长高（36–196px），超过后内部滚动；发送后自动缩回单行 |
 | 💰 **省 token** | 阈值触发八段式检查点摘要 + 工具结果免费裁剪，按模型覆盖阈值 |
 | 🧰 **可裁剪功能** | 画布与建模 / Minecraft 模组开发 / 素材库可在设置里独立关闭 |
 
 ## 🖼 界面预览
 
-| 主工作台：会话 + 独立画布 | 素材库：模型卡片 + 等距 3D 缩略图 |
+| 龙模型：建模 → 构建 → 进游戏 | 枪械模型：无子弹射击 + 换弹 |
 |---|---|
-| ![主工作台](docs/screenshots/main-workspace.png) | ![素材库](docs/screenshots/library.png) |
+| ![龙模型](docs/screenshots/session-dragon.png) | ![枪械模型](docs/screenshots/session-firearm.png) |
+| **原版扩展开局**：多画布 + 上下文建议 | **素材库**：模型卡片 + 等距 3D 缩略图 |
+| ![原版扩展开局](docs/screenshots/session-base-expand.png) | ![素材库](docs/screenshots/library.png) |
 | **设置 → 功能**：三大功能开关 | **设置 → 代理与技能**：工具与技能分配 |
 | ![设置 → 功能](docs/screenshots/settings-features.png) | ![设置 → 代理与技能](docs/screenshots/settings-agents.png) |
 
-> 截图来自 `MOCK=1` 实机运行（离线冰晶法杖流程），不依赖任何 API key。
+> 截图来自本地实机会话（龙 / 枪械 / 原版扩展）与设置页；`MOCK=1` 可离线复现画布与设置流程。
 
 ## 🚀 快速开始
 
@@ -238,8 +241,8 @@ composer 的模型 chip 左侧有代理角色下拉（`GET /api/profiles`，选�
 |---|---|
 | `mc_scaffold` | 从 MDK 47.4.10 快照建工程：替换包名/modid/主类、写 `gradle.properties`、生成示例资源 |
 | `mc_list` / `mc_read` / `mc_write` | 工程内文件读写（realpath 前缀校验） |
-| `mc_gradle` | 在工程里跑 `gradlew`；同步等待或后台运行；自动播种 vendor 缓存 |
-| `mc_log` | 读 `run/logs/latest.log` 尾部 + 启动标记 + 崩溃提示 |
+| `mc_gradle` | 在工程里跑 `gradlew`；同步等待或后台运行；`runClient` 启动前自动停同一工程的上一个客户端；自动播种 vendor 缓存 |
+| `mc_log` | 读 `run/logs/latest.log`；`waitSec` 等启动标记、`pattern` 正则过滤、陈旧日志/崩溃报告按本次 `runClient` 过滤；UTF-8/GBK 自动解码 |
 | `mc_export_model` | 把画布 bbmodel 转成 Java 版物品模型并把贴图写成 16×16 PNG |
 
 **镜像（实测）**：首选 `https://unicom.mirrors.ustc.edu.cn/bmclapi/`；`bmclapi2.bangbang93.com/maven/` 只作备选。ForgeGradle 有两类下载链路：走 Gradle 仓库的由模板 `settings.gradle` 在仓库加入时改写成镜像；拿编译期常量直连的（`maven_downloader`）只能预置到 `<GRADLE_USER_HOME>/caches/forge_gradle/`，已由 `mc_gradle` 自动完成。另外必须设 `systemProp.net.minecraftforge.gradle.check.certs=false`，否则官方源 SSL 自检可能无声挂起。
@@ -338,7 +341,7 @@ interface PluginContext {
 
   | 分区 | 内容 |
   |---|---|
-  | 通用 `general` | 主题（MC 像素固定深色，浅色已停用）、字号、发送键、Mod 构建输出目录、revision + 打开配置文件 |
+  | 通用 `general` | 5 套 MC 主题（草方块 / 樱花 / 深海 / 下界 / 末地）、字号、发送键、Mod 构建输出目录、revision + 打开配置文件 |
   | 功能 `features` | 画布与建模 / Minecraft 模组开发 / 素材库 三个开关；`pendingRestart` 提示需重启生效 |
   | 模型 `models` | 供应商卡片（显示名 / Base URL / key write-only / 模型行编辑器）+ ⟳ 自动获取 + 桥接模型 |
   | 代理与技能 `agents` | 三角色的工具 chips 与技能勾选分配；技能库 + 自注入；内置技能只读 |
@@ -350,7 +353,7 @@ interface PluginContext {
 
   | 字段 | 默认 | 作用 |
   |---|---|---|
-  | `theme` | `dark` | 保留字段；MC 皮肤固定深色 |
+  | `theme` | `mc-grass` | MC 主题 id：`mc-grass` / `mc-cherry` / `mc-ocean` / `mc-nether` / `mc-end` |
   | `fontSize` | 14 | 写 `--content-font`（12–18 夹取） |
   | `enterToSend` | true | Enter 直发，或 ⌘/Ctrl+Enter 才发 |
   | `maxActiveSubagents` | 4 | 同一会话并发子代理上限 |
@@ -370,17 +373,17 @@ interface PluginContext {
 
 `apps/web/src/mc-theme.css` 在 `styles.css` 之后加载，只覆盖令牌与组件选择器，不改布局规则。
 
-- **固定深色**：令牌同时匹配 `:root` / `[data-theme='light']` / `[data-theme='dark']`，强制 MC 深色（泥土棕底、深木表面、草绿强调 `#8bdc5a`）。
-- **方块材质层（§H）**：原版方块贴图通过 `--mc-tex-*` 令牌 + 遮罩铺满 body、主面板、左栏、dock、输入卡、弹窗、设置、抽屉与槽位。贴图取自 `public/mc/block/`：`stone`、`stone_bricks`、`cobblestone`、`dark_oak_planks`、`oak_planks`、`mossy_stone_bricks`、`sandstone`、`quartz_block_side`、`dirt`、`grass_block_side`、`grass_block_top`；按 32px 整数倍平铺 + `image-rendering: pixelated`。
+- **5 套 MC 主题**：`documentElement[data-theme]` = `mc-grass` / `mc-cherry` / `mc-ocean` / `mc-nether` / `mc-end`；每套覆盖 `--mc-*` 令牌与方块贴图，设置里点卡片即时生效，画布与终端保持深色。
+- **方块材质层（§H）**：原版方块贴图通过 `--mc-tex-*` 令牌 + 遮罩铺满 body、主面板、左栏、dock、输入卡、弹窗、设置、抽屉与槽位。结构墙统一走 `--mc-tex-structure`：草方块=苔石砖、樱花=石砖、深海=暗海晶石、下界=绯红木板、末地=石英；贴图取自 `public/mc/block/`，按 32px 整数倍平铺 + `image-rendering: pixelated`。
 - **左栏层次（§I）**：
-  - 项目行 = 深色橡木木板条 + 草绿左标；会话行 = 扁平列表行，悬停草绿高亮，选中深色木纹 + 草绿左标；
+  - 项目行 = 结构墙压暗条 + 主题强调色左标；会话行 = 扁平列表行，悬停强调色高亮，选中 = 结构墙压暗 + 强调色左标；
   - 底部「文档素材库 / 设置」与其他入口同为扁平行；行内小按钮扁平化；
-  - 左栏滚动条 8px 深木色半透明。
-- **主操作**：顶部绿色按钮「新建项目」、会话分区头部 `＋`「新建会话」、发送键等主操作使用草方块顶面/草绿。
+  - 左栏滚动条 8px 深色半透明。
+- **主操作**：顶部「新建项目」、会话分区头部 `＋`「新建会话」、发送键等主操作使用主题材质 + 主题色遮罩（草方块主题为草皮/草绿）。
 - **图标**：`McIcon.tsx` 用 `public/mc/item/*.png` 的物品图标表达功能——`newGroup: brick`、`library: book`、`settings: clock`、`canvas: diamond_pickaxe`、`images: map`、`files: paper`、`web: ender_pearl`、`terminal: redstone`、`plan: enchanted_book`、`subagents: totem_of_undying`、`stats: ender_eye`。
-- **草方块**：左上角 `GrassCube.tsx` 六面立方体，悬停旋转、点击播放 `mc-brand-shove` 位移动画；收起侧栏后缩到 20px。
+- **品牌方块**：左上角 `GrassCube.tsx` 六面立方体，六面贴图由 `--mc-brand-*` 控制，随主题换成草方块 / 樱花木 / 海晶石 / 绯红木 / 石英；悬停旋转、点击播放 `mc-brand-shove` 位移动画；收起侧栏后缩到 20px。
 - **布局轴**（沿用 dsh）：`--rail-w: 240px`、`--content-w: 748px`、`--content-font: 14px`；收起侧栏为 56px 图标栏。
-- **结构**：56px 页头（标题 + 会话 id/desc 副标题）、748px 中轴、用户气泡右对齐 70% 上限、助手正文透明无卡片、输入卡 28px 圆角、composer dock 状态行、toast 底部居中。
+- **结构**：56px 页头（标题 + 会话 id/desc 副标题）、748px 中轴、用户气泡右对齐 70% 上限、助手正文透明无卡片、输入卡像素描边（无圆角，随内容自动伸缩）、composer dock 状态行、toast 底部居中。
 
 ---
 
@@ -402,6 +405,7 @@ interface PluginContext {
   - 页头「设为活跃」把当前页设为它所属会话的活跃画布；「下载」只对当前会话的活跃画布可用；
   - 新建空白画布走 `POST /api/sessions/:id/canvases`，随后在原空白页打开。
 - `model_update` 现在携带的是 **canvasId**（不再是会话 id）：只更新对应画布缓存，当前页才推给 iframe；未知画布会触发一次画布列表补拉。
+- 底部状态条 / 上下文面板按当前画布页的 owner 会话取数：切到主会话或某个子代理的画布立即请求 `/api/stats`；运行中的子代理每 2.5s 轮询；空白页 / 素材页回落到当前对话会话。
 
 ### 10.3 AI 自动唤醒
 
@@ -596,7 +600,7 @@ SSE 帧 `{id, topic, ...}`，topic 含：`open`、`turn/start`、`user/message`�
 20. **`contextBreakdown` 的「对话」是倒推值**（总量 − 系统提示词 − 工具定义），系统/工具两段用 chars/4 启发式（CJK 偏低估）。
 21. **素材库自动入库会累积**：普通会话每次非空画布提交都会 upsert 一条 `auto` 素材（同一 canvasId 更新而不是重复创建）；不用时可在设置 → 功能关闭素材库，或在抽屉里删除。
 22. **功能开关需要重启**：`prefs.features` 改的是下次启动态；本次进程里插件不会热插拔，设置页会显示 `pendingRestart`。
-23. **MC 皮肤固定深色**：设置里的主题切换已停用，`theme` 字段仅为兼容保留。
+23. **主题切换即时生效**：5 套 MC 主题写在 `[data-theme]`，只影响 UI，不改数据；画布与终端保持深色。
 
 ---
 
@@ -613,7 +617,7 @@ SSE 帧 `{id, topic, ...}`，topic 含：`open`、`turn/start`、`user/message`�
 | 改画布行为 | `bbcanvas/bb-bridge.js` → 复制到 `bbcanvas/dist/` → 刷新页面 |
 | 换 LLM 端点 | 设置 → 模型 → 供应商 Base URL / API key（或 .env `LLM_*`） |
 | 看 token 去向 | 右侧「上下文」标签 + `data/sessions/<id>.jsonl` 的 `llm/usage` / `compaction/summary` |
-| 改 MC 皮肤 | `apps/web/src/mc-theme.css`（令牌覆盖 A、组件 B、草方块 C、图标 D、弹窗 F、材质层 H、左栏 I）；贴图在 `apps/web/public/mc/` |
+| 改 MC 皮肤 | `apps/web/src/mc-theme.css`（令牌 A、组件 B、品牌方块 C、图标 D、弹窗 F、材质层 H、左栏 I、换肤 M）；贴图在 `apps/web/public/mc/` |
 | 加右侧标签 | `RightDock.tsx` 的 `DockTabId` + `TAB_META` + `DOCK_TABS`，再在 App 里补状态与 localStorage 白名单 |
 | 加画布页类型 | `App.tsx` 的 `CanvasPageDto` + `showCanvasPage` / `openLibModel` / `pickCanvas` |
 | 调自动唤醒 | `App.tsx` 的 `wakeCanvas(reason)`；开关是 `prefs.canvasAutoWake` |
