@@ -157,26 +157,56 @@ skillProviders.push(dirProvider)
 // 这个工具以前只在提示里提到、从未注册——模型调它会得到「未知工具」，技能永远读不进来。
 tools.push({
   name: 'load_skill',
-  description: '按需加载一项技能（SKILL.md 全文）。先用系统提示里的技能名调用；一次只加载当前需要的。',
+  description: '按需加载一项技能（SKILL.md 全文）。先用系统提示里的技能名调用；一次只加载当前需要的。'
+    + '返回末尾会带技能目录与 references 清单；需要精确签名时再传 file（如 references/forge-1.20.1-api.md）读取附加文件。',
   parameters: {
     type: 'object',
-    properties: { name: { type: 'string', description: '技能名，如 blockbench-modeling' } },
+    properties: {
+      name: { type: 'string', description: '技能名，如 blockbench-modeling' },
+      file: { type: 'string', description: '可选：技能目录内的相对路径（如 references/forge-1.20.1-api.md）' },
+    },
     required: ['name'],
   },
   async execute(args, exec) {
     const name = String(args.name ?? '').trim()
+    const file = String(args.file ?? '').trim()
     // 技能按角色分配（设置 → 代理与技能）：不在本角色清单里的拒绝加载
     const entry = sessions.get(exec.sessionId)
     const allowed = entry ? effectiveSkills(entry.profile) : undefined
     for (const provider of skillProviders) {
-      if (provider.list().some(m => m.name === name)) {
-        if (allowed && !allowed.includes(name)) {
-          return {
-            forModel: `技能 "${name}" 未分配给当前角色（${entry?.profile ?? 'default'}）。可用: ${allowed.join(', ') || '无'}。`,
-            isError: true,
-          }
+      if (!provider.list().some(m => m.name === name)) continue
+      if (allowed && !allowed.includes(name)) {
+        return {
+          forModel: `技能 "${name}" 未分配给当前角色（${entry?.profile ?? 'default'}）。可用: ${allowed.join(', ') || '无'}。`,
+          isError: true,
         }
-        return { forModel: await provider.load(name) }
+      }
+      try {
+        if (file) {
+          if (!provider.read) return { forModel: `技能 ${name} 不支持读取附加文件`, isError: true }
+          return { forModel: await provider.read(name, file) }
+        }
+        const content = await provider.load(name)
+        const dir = provider.dirOf?.(name)
+        if (!dir) return { forModel: content }
+        // 技能正文里的 references/... 是相对技能目录的；把目录和清单直接给模型，
+        // 否则它只能从会话 cwd 猜路径（历史会话为此浪费了 4 次调用和 3 次授权）。
+        let refs: string[] = []
+        try {
+          refs = readdirSync(join(dir, 'references'))
+            .filter(f => f.endsWith('.md'))
+            .slice(0, 20)
+            .map(f => `references/${f}`)
+        } catch { /* 技能没有 references 目录 */ }
+        return {
+          forModel: content
+            + `\n\n---\n技能目录：${dir}\n`
+            + (refs.length
+              ? `参考文件：${refs.join('、')}\n需要精确签名时用 load_skill name="${name}" file="${refs[0]}" 读取，不要凭记忆写。`
+              : ''),
+        }
+      } catch (e: any) {
+        return { forModel: `读取技能 ${name} 失败：${e?.message ?? e}`, isError: true }
       }
     }
     const available = skillProviders.flatMap(p => p.list().map(m => m.name))

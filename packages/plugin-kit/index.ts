@@ -29,6 +29,11 @@ export interface ToolDef {
    */
   mutates?: boolean
   /**
+   * 计划模式下也允许执行的只读调用：mutates=true 的工具可以在这里放行无副作用的用法
+   * （例如 bash 里的 grep/cat）。返回 false 或未提供时仍按写操作拦截。
+   */
+  planSafe?: (args: any, exec: ToolExecContext) => boolean
+  /**
    * 是否需要用户授权（复刻 dsh `approval/request` 的最小面）：
    * - `true`：每次调用都要（会话内可以「总是允许」把该工具加入白名单）
    * - 函数：返回原因字符串表示这次需要授权，返回 null 表示这次不用
@@ -188,6 +193,10 @@ export interface SkillProvider {
   list(): SkillMeta[]
   /** 按需读取 SKILL.md 全文（渐进披露，不占常驻上下文） */
   load(name: string): Promise<string>
+  /** 技能目录（system prompt / load_skill 用来告诉模型 references 在哪）；非目录型技能可不实现 */
+  dirOf?(name: string): string | null
+  /** 读取技能目录内的附加文件（如 references/xxx.md），实现方必须做路径越界校验 */
+  read?(name: string, file: string): Promise<string>
 }
 
 /** 压缩等插件在每步模型调用前插入逻辑 */

@@ -1,6 +1,6 @@
 // 目录型技能提供器：skills/<name>/SKILL.md 即技能（可插拔、热扫描、按需读取）
-import { readdirSync, readFileSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs'
+import { join, resolve, sep } from 'node:path'
 import type { SkillMeta, SkillProvider } from '@openmods/plugin-kit'
 
 export class DirSkillProvider implements SkillProvider {
@@ -32,6 +32,21 @@ export class DirSkillProvider implements SkillProvider {
     if (!found) throw new Error(`技能不存在: ${name}（可用: ${this.scan().map(s => s.name).join(', ') || '无'}）`)
     return readFileSync(join(found.dir, 'SKILL.md'), 'utf8')
   }
+
+  dirOf(name: string): string | null {
+    return this.scan().find(s => s.name === name)?.dir ?? null
+  }
+
+  async read(name: string, file: string): Promise<string> {
+    const found = this.scan().find(s => s.name === name)
+    if (!found) throw new Error(`技能不存在: ${name}（可用: ${this.scan().map(s => s.name).join(', ') || '无'}）`)
+    // 只允许技能目录内的文件，避免 file=../../.env 这类越界读取
+    const base = resolve(found.dir)
+    const abs = resolve(base, file)
+    if (abs !== base && !abs.startsWith(base + sep)) throw new Error(`file 必须位于技能目录内：${file}`)
+    if (!existsSync(abs) || !statSync(abs).isFile()) throw new Error(`技能文件不存在：${file}`)
+    return readFileSync(abs, 'utf8')
+  }
 }
 
 /**
@@ -47,5 +62,16 @@ export class FilteredSkillProvider implements SkillProvider {
   async load(name: string): Promise<string> {
     if (this.hidden.has(name)) throw new Error(`技能不存在: ${name}（所属功能已关闭）`)
     return this.inner.load(name)
+  }
+
+  dirOf(name: string): string | null {
+    if (this.hidden.has(name)) return null
+    return this.inner.dirOf?.(name) ?? null
+  }
+
+  async read(name: string, file: string): Promise<string> {
+    if (this.hidden.has(name)) throw new Error(`技能不存在: ${name}（所属功能已关闭）`)
+    if (!this.inner.read) throw new Error(`技能 ${name} 不支持读取附加文件`)
+    return this.inner.read(name, file)
   }
 }

@@ -341,8 +341,9 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
                   sessionId: rt.id, session: rt, canvas: deps.canvas, callId: call.id, signal,
                 }
                 const args = safeJsonParse(call.args)
-                // 计划模式：只读出方案。写操作一律拦在运行时，插件不需要各自实现
-                if (def.mutates && rt.planMode) {
+                // 计划模式：只读出方案。写操作一律拦在运行时，插件不需要各自实现；
+                // 工具可用 planSafe 放行无副作用的只读用法（如 bash 里的 grep/cat）。
+                if (def.mutates && rt.planMode && !def.planSafe?.(args, exec)) {
                   result = {
                     forModel: `计划模式中：${def.name} 会修改内容，已被拦截。继续调研，把步骤写进 todo_write；方案完整后用 exit_plan_mode 提交给用户批准（批准后本模式自动关闭）。`,
                     isError: true,

@@ -31,6 +31,38 @@ function fmtExit(r: { exitCode: number | null; signal?: string; timedOut: boolea
   return `（被信号结束${r.signal ? `：${r.signal}` : ''}）`
 }
 
+/** 计划模式只放行能明确判定为只读的 bash（grep/cat/find/git status 等） */
+const READONLY_COMMANDS = new Set([
+  'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'find', 'sed', 'awk', 'echo', 'pwd',
+  'which', 'where', 'stat', 'file', 'tree', 'git', 'diff', 'sort', 'uniq', 'cut', 'tr', 'nl', 'du', 'df', 'printenv', 'type',
+])
+const GIT_READONLY = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'branch'])
+
+export function isReadOnlyBash(command: string): boolean {
+  const cmd = String(command ?? '').trim()
+  if (!cmd) return false
+  // 允许 2>/dev/null、2>&1 这类不影响文件的丢弃；其它 > / >> 一律视为写操作
+  const cleaned = cmd.replace(/\d?>\s*\/dev\/null/g, '').replace(/2>&1/g, '')
+  if (cleaned.includes('>')) return false
+  // 命令替换/反引号里可能藏写操作，计划模式一律不猜
+  if (cleaned.includes('$(') || cleaned.includes('`')) return false
+  const segments = cleaned.split(/\s*(?:;|&&|\|\||\|)\s*/).map(s => s.trim()).filter(Boolean)
+  if (!segments.length) return false
+  for (const seg of segments) {
+    const tokens = seg.split(/\s+/)
+    const head = tokens[0]
+    if (!READONLY_COMMANDS.has(head)) return false
+    if (head === 'git') {
+      const sub = tokens[1] ?? ''
+      if (!GIT_READONLY.has(sub)) return false
+      if (sub === 'branch' && !tokens.some(t => t === '--show-current' || t === '-a' || t === '-v' || t === '-vv')) return false
+    }
+    if (head === 'sed' && tokens.some(t => t === '-i' || /^-[a-zA-Z]*i[a-zA-Z]*$/.test(t))) return false
+    if (head === 'find' && tokens.some(t => ['-delete', '-exec', '-execdir', '-ok', '-okdir'].includes(t))) return false
+  }
+  return true
+}
+
 export const plugin: Plugin = {
   name: 'shell-tools',
   apply(ctx) {
@@ -49,6 +81,7 @@ export const plugin: Plugin = {
         required: ['command', 'description'],
       },
       mutates: true,
+      planSafe: args => isReadOnlyBash(String(args?.command ?? '')),
       requiresApproval: args => `执行命令：${clip(String(args?.command ?? ''))}`,
       async execute(args, exec) {
         const command = String(args.command ?? '').trim()
@@ -66,7 +99,10 @@ export const plugin: Plugin = {
         const timeout = Math.min(MAX_TIMEOUT, Math.max(1000, Number(args.timeoutMs) || DEFAULT_TIMEOUT))
         const r = await ctx.terminals.wait(sid, t.id, timeout)
         const out = ctx.terminals.output(sid, t.id, TAIL_CHARS) ?? ''
-        const head = `${t.id} ${fmtExit(r)}${r.timedOut ? `，用 terminal_read ${t.id} 继续看输出、terminal_kill 结束` : ''}`
+        // 前台 ephemeral 命令结束后不保留终端，不要把临时 tty id 暴露给模型去 terminal_read
+        const head = r.timedOut
+          ? `${t.id} ${fmtExit(r)}，用 terminal_read ${t.id} 继续看输出、terminal_kill 结束`
+          : fmtExit(r)
         return { forModel: `${head}\n${out || '（没有输出）'}`, isError: r.exitCode != null && r.exitCode !== 0 }
       },
     })

@@ -6,9 +6,9 @@
 //   文件读写只允许落在工程目录内（realpath 前缀校验），不碰仓库其它地方。
 // - runClient 是长驻进程：mc_gradle background=true 时立即返回 pid + 控制台日志路径，
 //   由 mc_log 轮询 run/logs/latest.log 判断是否真的起来了。
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { copyFile, mkdir, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile, cp } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -174,6 +174,16 @@ function fail(text: string): ToolResult {
   return { forModel: text, isError: true }
 }
 
+/**
+ * Windows 上 Gradle/javac 与 Minecraft 日志常按系统代码页（GBK）输出；
+ * 直接按 UTF-8 解码会把中文变成 `����`。先按 UTF-8 解，出现替换字符再按 GB18030 重解。
+ */
+function decodeText(buf: Buffer): string {
+  const utf8 = buf.toString('utf8')
+  if (!utf8.includes('\uFFFD')) return utf8
+  try { return new TextDecoder('gb18030').decode(buf) } catch { return utf8 }
+}
+
 // ---- 工程 build/runClient 状态（mc_gradle 与右侧 dock 的「测试 Mod」按钮共用同一份） ----
 // data/mcdev-state.json：projectDir → { lastBuild, runClient }。durable，重启后 UI 仍能显示构建状态。
 interface McBuildRecord { task: string; ok: boolean; code: number; time: number }
@@ -192,7 +202,10 @@ function readMcState(): McStateMap {
 function writeMcState(map: McStateMap) {
   try {
     mkdirSync(dirname(MC_STATE_FILE), { recursive: true })
-    writeFileSync(MC_STATE_FILE, JSON.stringify(map, null, 2))
+    // 先写临时文件再 rename：读侧不会读到半截 JSON（并发写/进程被杀时尤其重要）
+    const tmp = `${MC_STATE_FILE}.tmp`
+    writeFileSync(tmp, JSON.stringify(map, null, 2))
+    renameSync(tmp, MC_STATE_FILE)
   } catch { /* 落盘失败不阻塞构建 */ }
 }
 
@@ -459,7 +472,7 @@ async function scaffold(opts: {
     return { projectDir, files }
   }
 
-  const files = await copyTree(TEMPLATE, projectDir, new Set(['.git', 'run', 'build', '.gradle']))
+  const files = await copyTree(TEMPLATE, projectDir, new Set([...REF_COPY_SKIP, 'run-console.log']))
 
   // 1) 包目录搬家：src/main/java/com/example/examplemod → <pkgPath>
   const oldPkgDir = join(projectDir, 'src/main/java/com/example/examplemod')
@@ -577,35 +590,27 @@ async function runGradle(opts: {
       : ''
 
   if (opts.background) {
+    if (task === 'runClient') {
+      const r = await launchClient(projectDir, env)
+      return {
+        forModel: seedNote + r.stoppedNote
+          + `已在后台启动 runClient（pid ${r.pid}）。控制台日志 ${r.logPath}（已重置）；游戏日志用 mc_log 读 run/logs/latest.log。`
+          + `\n启动后用 mc_log project=. waitSec=120 等启动标记，不要用 bash sleep/tail 轮询；不要重复启动。`,
+      }
+    }
+    // 其它任务照旧后台跑：不登记 runClient 状态
     await mkdir(join(projectDir, 'run'), { recursive: true })
     const logPath = join(projectDir, 'run-console.log')
-    const out = createWriteStream(logPath, { flags: 'a' })
+    const out = createWriteStream(logPath, { flags: 'w' })
     const child = spawn(gradlew, argv.slice(1), {
       cwd: projectDir, env, shell: process.platform === 'win32', windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     child.stdout?.pipe(out)
     child.stderr?.pipe(out)
-    // runClient 记入工程状态：右侧 dock 的「测试 Mod」按钮据此显示运行中 / 提供停止
-    if (task === 'runClient' && child.pid) {
-      const map = readMcState()
-      const cur: McProjectState = map[projectDir] ?? {}
-      cur.runClient = { pid: child.pid, startedAt: Date.now() }
-      map[projectDir] = cur
-      writeMcState(map)
-      child.on('exit', () => {
-        const m = readMcState()
-        if (m[projectDir]?.runClient?.pid === child.pid) {
-          if (cur.runClient) delete cur.runClient
-          map[projectDir] = cur
-          writeMcState(map)
-        }
-      })
-    }
     child.unref()
     return {
-      forModel: seedNote + `已在后台启动 ${task}（pid ${child.pid}）。控制台日志 ${logPath}；游戏日志用 mc_log 读 run/logs/latest.log。`
-        + `\n首次启动要下资源（约 600MB 贴图音效）并反编译，可能 5~15 分钟；不要重复启动，先轮询日志。`,
+      forModel: seedNote + `已在后台启动 ${task}（pid ${child.pid}）。控制台日志 ${logPath}（已重置）。`,
     }
   }
 
@@ -614,11 +619,12 @@ async function runGradle(opts: {
     const child = spawn(gradlew, argv.slice(1), {
       cwd: projectDir, env, shell: process.platform === 'win32', windowsHide: true,
     })
-    let buf = ''
+    let raw = Buffer.alloc(0)
     let settled = false
     let timer: ReturnType<typeof setTimeout> | undefined
     let markerTimer: ReturnType<typeof setTimeout> | undefined
-    const netHint = () => /Connection refused|SSL|Could not resolve|Could not GET|Read timed out/i.test(buf)
+    const text = () => decodeText(raw)
+    const netHint = () => /Connection refused|SSL|Could not resolve|Could not GET|Read timed out/i.test(text())
       ? '\n依赖下载失败（镜像/网络）：优先检查网络，或用 OPENMODS_GRADLE_HOME 指向已预热缓存；'
         + '不要为此修改 build.gradle / gradle.properties 的 MC、Forge、Gradle 版本。'
       : ''
@@ -636,18 +642,20 @@ async function runGradle(opts: {
       child.stderr?.destroy()
       recordBuild(projectDir, task, code)
       opts.onResult?.({ task, ok: code === 0, code })
-      const tail = buf.length > 8000 ? `…（截断，共 ${buf.length} 字符）\n${buf.slice(-8000)}` : buf
+      const out = text()
+      const tail = out.length > 8000 ? `…（截断，共 ${out.length} 字符）\n${out.slice(-8000)}` : out
       resolvePromise({
         forModel: seedNote + `gradlew ${task} 退出码 ${code}\n${tail || '（无输出）'}${code === 0 ? '' : netHint()}`,
         isError: code !== 0,
       })
     }
     const onData = (d: Buffer) => {
-      buf += d.toString('utf8')
-      if (buf.length > 400_000) buf = buf.slice(-200_000) // 防跑飞
+      raw = Buffer.concat([raw, d])
+      if (raw.length > 400_000) raw = raw.subarray(-200_000) // 防跑飞
       // 构建结束标记：成功/失败都立刻进入收尾（留 600ms 吃掉剩余输出），不再等 close
-      if (!markerTimer && /BUILD (SUCCESSFUL|FAILED) in|FAILURE: Build failed/.test(buf)) {
-        const ok = /BUILD SUCCESSFUL in/.test(buf)
+      const now = text()
+      if (!markerTimer && /BUILD (SUCCESSFUL|FAILED) in|FAILURE: Build failed/.test(now)) {
+        const ok = /BUILD SUCCESSFUL in/.test(now)
         markerTimer = setTimeout(() => finish(ok ? 0 : 1), 600)
       }
     }
@@ -660,7 +668,7 @@ async function runGradle(opts: {
       child.kill('SIGTERM')
       child.stdout?.destroy()
       child.stderr?.destroy()
-      resolvePromise(fail(`gradlew ${task} 超时（${timeoutMs / 1000}s）。尾部输出：\n${buf.slice(-4000)}`))
+      resolvePromise(fail(`gradlew ${task} 超时（${timeoutMs / 1000}s）。尾部输出：\n${text().slice(-4000)}`))
     }, timeoutMs)
     child.on('close', code => finish(code ?? -1))
     // close 依赖管道关闭；daemon 不放手时用 exit 兜底（再给 400ms 收尾输出）
@@ -675,36 +683,142 @@ async function runGradle(opts: {
   })
 }
 
-/** 读尾部日志 + 识别客户端是否真的起来了 */
-async function readLogs(projectDir: string, lines: number): Promise<string> {
+/** 日志行过滤：pattern 为空时返回尾部 tailLines 行，否则返回带行号的匹配行 */
+function grepLines(text: string, pattern: string, maxMatches: number, tailLines: number): { body: string; detail: string } {
+  const all = text.split(/\r?\n/)
+  if (!pattern) {
+    const count = Math.min(tailLines, all.length)
+    return { body: all.slice(-count).join('\n'), detail: `最后 ${count} 行` }
+  }
+  const re = new RegExp(pattern, 'i')
+  const hits: string[] = []
+  for (let i = 0; i < all.length; i++) {
+    if (!re.test(all[i])) continue
+    hits.push(`${i + 1}:${all[i]}`)
+    if (hits.length >= maxMatches) break
+  }
+  if (hits.length) return { body: hits.join('\n'), detail: `匹配 /${pattern}/ ${hits.length}${hits.length >= maxMatches ? '+' : ''} 条` }
+  const count = Math.min(tailLines, all.length)
+  return { body: all.slice(-count).join('\n'), detail: `没有匹配 /${pattern}/ 的行，下面是最后 ${count} 行` }
+}
+
+const SOURCE_SKIP = new Set(['build', '.gradle', 'run', 'out', '.git', 'node_modules'])
+
+/** 源码/资源的最新修改时间：用于判断 runClient 启动后是否又改过代码 */
+function newestSourceMtime(dir: string, depth = 0): number {
+  if (depth > 12) return 0
+  let newest = 0
+  try {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (SOURCE_SKIP.has(e.name)) continue
+      const p = join(dir, e.name)
+      if (e.isDirectory()) newest = Math.max(newest, newestSourceMtime(p, depth + 1))
+      else { try { newest = Math.max(newest, statSync(p).mtimeMs) } catch { /* 文件刚被删 */ } }
+    }
+  } catch { /* 目录不存在/无权限 */ }
+  return newest
+}
+
+/** latest.log 尾部 + 启动状态；waitSec > 0 时轮询等待启动标记（最多 180s） */
+async function readLogs(projectDir: string, lines: number, waitSec = 0, pattern = '', maxMatches = 40): Promise<string> {
   const n = Math.min(Math.max(lines || 80, 10), 400)
-  const candidates = [
-    join(projectDir, 'run/logs/latest.log'),
-    join(projectDir, 'run/logs/debug.log'),
-  ]
-  for (const p of candidates) {
-    const text = await readFile(p, 'utf8').catch(() => null)
-    if (!text) continue
+  // 先校验正则，避免等到拿到日志才抛错
+  if (pattern) new RegExp(pattern, 'i')
+  const max = Math.min(Math.max(maxMatches || 40, 1), 200)
+  const state = readMcState()[projectDir]?.runClient
+  const startedAt = state?.startedAt
+  const waitMs = Math.min(Math.max(Number(waitSec) || 0, 0), 180) * 1000
+  const deadline = Date.now() + waitMs
+  const marks = ['Sound engine started', 'Forge mod loading', 'Backend library: LWJGL', 'Created: 1024x512']
+  let stale = ''
+
+  /** 只认本次 runClient 之后产生的日志，避免拿上一次运行的成功标记当本次结果 */
+  const readFresh = async (): Promise<{ text: string; path: string } | null> => {
+    for (const p of [join(projectDir, 'run/logs/latest.log'), join(projectDir, 'run/logs/debug.log')]) {
+      const st = await stat(p).catch(() => null)
+      if (!st) continue
+      if (startedAt && st.mtimeMs < startedAt - 2000) {
+        stale = `latest.log 是上一次运行的（${new Date(st.mtimeMs).toLocaleTimeString()}），已忽略。`
+        continue
+      }
+      const buf = await readFile(p).catch(() => null)
+      if (buf) return { text: decodeText(buf), path: p }
+    }
+    return null
+  }
+
+  const format = (text: string, path: string, timedOut: boolean) => {
     const all = text.split(/\r?\n/)
-    const tail = all.slice(-n).join('\n')
-    const marks = ['Sound engine started', 'Forge mod loading', 'Backend library: LWJGL', 'Created: 1024x512']
     const seen = marks.filter(m => text.includes(m))
     const crashed = /---- Minecraft Crash Report ----|A fatal error has been detected/.test(text)
+    const live = state ? pidAlive(state.pid) : false
+    // runClient 启动后模型又改了源码时，这份日志对应的是旧代码，不能拿来验收新改动
+    const sourceMtime = Math.max(
+      newestSourceMtime(join(projectDir, 'src')),
+      ...[join(projectDir, 'build.gradle'), join(projectDir, 'settings.gradle'), join(projectDir, 'gradle.properties')]
+        .map(p => { try { return statSync(p).mtimeMs } catch { return 0 } }),
+    )
+    const editedAfterStart = !!startedAt && sourceMtime > startedAt + 2000
+    const picked = grepLines(text, pattern, max, n)
     const head = [
-      `日志 ${relative(projectDir, p)}（共 ${all.length} 行，最后 ${n} 行）`,
+      `日志 ${relative(projectDir, path)}（共 ${all.length} 行，${picked.detail}）`,
       seen.length ? `启动标记：${seen.join(' / ')}` : '启动标记：尚未出现',
       crashed ? '⚠ 日志里出现崩溃报告' : '',
+      editedAfterStart
+        ? `⚠ 客户端启动后源码有改动（最新 ${new Date(sourceMtime).toLocaleTimeString()}）；这份日志对应旧代码，改完请重新 build + runClient。`
+        : '',
+      state
+        ? (live
+          ? `客户端运行中（pid ${state.pid}，已启动 ${Math.round((Date.now() - state.startedAt) / 1000)}s）`
+          : `客户端已退出（pid ${state.pid}）`)
+        : '未登记运行中的 runClient（可能是手动启动的客户端）',
+      timedOut && !crashed && !seen.includes('Sound engine started')
+        ? `等待 ${Math.round(waitMs / 1000)}s 未看到 Sound engine started`
+        : '',
     ].filter(Boolean).join('\n')
-    return `${head}\n\n${tail}`
+    return `${head}\n\n${picked.body}`
   }
+
+  for (;;) {
+    const log = await readFresh()
+    if (log) {
+      const done = /Sound engine started|---- Minecraft Crash Report ----|A fatal error has been detected/.test(log.text)
+        || (!!state && !pidAlive(state.pid))
+      const timedOut = !waitMs || Date.now() >= deadline
+      if (done || timedOut) return format(log.text, log.path, waitMs > 0 && timedOut)
+    }
+    if (!waitMs || Date.now() >= deadline) break
+    // 客户端已经退出且没有新日志：不必把 waitSec 耗满
+    if (state && !pidAlive(state.pid)) break
+    await new Promise(r => setTimeout(r, Math.min(1500, Math.max(0, deadline - Date.now()))))
+  }
+
+  // 没有可用的 latest.log 时再看崩溃报告；只认本次 runClient 之后生成的，避免拿旧崩溃误导
   const crashDir = join(projectDir, 'run/crash-reports')
   const reports = await readdir(crashDir).catch(() => [] as string[])
   if (reports.length) {
     const newest = reports.sort().at(-1)!
-    const text = await readFile(join(crashDir, newest), 'utf8').catch(() => '')
-    return `没有 latest.log，但有崩溃报告 ${newest}：\n\n${text.split(/\r?\n/).slice(0, 80).join('\n')}`
+    const reportPath = join(crashDir, newest)
+    const st = await stat(reportPath).catch(() => null)
+    if (!startedAt || (st && st.mtimeMs >= startedAt - 2000)) {
+      const text = decodeText(await readFile(reportPath).catch(() => Buffer.alloc(0)))
+      const body = pattern ? grepLines(text, pattern, max, 80).body : text.split(/\r?\n/).slice(0, 80).join('\n')
+      return `没有可用的 latest.log，但有崩溃报告 ${newest}：\n\n${body}`
+    }
   }
-  return '还没有日志：先 mc_gradle runClient（background=true），等启动后再读。'
+
+  const total = waitMs ? `等待 ${Math.round(waitMs / 1000)}s 后仍未出现 latest.log` : '还没有可用的 latest.log'
+  const status = state
+    ? (pidAlive(state.pid)
+      ? `客户端运行中（pid ${state.pid}，已启动 ${Math.round((Date.now() - state.startedAt) / 1000)}s），latest.log 尚未生成。${stale}`
+      : `客户端已退出（pid ${state.pid}），latest.log 尚未生成。${stale}`)
+    : `没有检测到运行中的 runClient：先 mc_gradle task=runClient background=true，再 mc_log waitSec=120。${stale}`
+  const consoleBuf = await readFile(join(projectDir, 'run-console.log')).catch(() => null)
+  const consoleBody = consoleBuf ? grepLines(decodeText(consoleBuf), pattern, max, 40) : null
+  const tail = consoleBody
+    ? `\n\nrun-console.log ${pattern ? `匹配 /${pattern}/` : '尾部'}：\n${consoleBody.body}`
+    : ''
+  return `${total}。${status}${tail}`
 }
 
 /** mcmod 角色的提示词归插件自己：关掉 mc 开关后这套工作流连角色一起消失 */
@@ -713,7 +827,8 @@ const MCMOD_PROMPT = '你是 Minecraft 1.20.1 Forge 模组开发主代理（mcmo
   + '你有完整工作台：read/write/edit/glob/grep 读写工程、bash 跑命令、terminal_open/terminal_kill 拉起/结束长任务终端、'
   + 'ask_user_question 问用户、todo_write 记步骤、exit_plan_mode 提交计划。工作目录就是当前工程目录，相对路径都以它为根。\n'
   + '工作流固定：\n'
-  + '1) 先 load_skill("minecraft-forge-1.20.1") 拿到工具链与 API 约束；写代码前需要精确签名就读 skills/minecraft-forge-1.20.1/references/forge-1.20.1-api.md，不要凭记忆写。\n'
+  + '1) 先 load_skill("minecraft-forge-1.20.1") 拿到工具链与 API 约束；它会返回技能目录和 references 清单，'
+  + '需要精确签名时用 load_skill name="minecraft-forge-1.20.1" file="references/forge-1.20.1-api.md" 读取，不要凭记忆写，也不要从会话目录猜 skills/ 相对路径。\n'
   + '2) 核对需求：modid、Java 包名、要加的东西（物品/方块/实体/命令/玩法）。信息不足时用 ask_user_question 一次问全，别反复问。\n'
   + '3) 建工程：先看会话目录里是否已有工程（存在 build.gradle 就直接沿用，不要重复 scaffold）。目录为空才用 mc_scaffold：'
   + 'name 只传目录名或绝对路径，目标必须是空目录，建完不要再手工 mv 文件。做龙/实体/方块等有现成示例时，'
@@ -726,7 +841,13 @@ const MCMOD_PROMPT = '你是 Minecraft 1.20.1 Forge 模组开发主代理（mcmo
   + '   若 canvas_export 产物解析后发现与画布不符（不太可能），先核对解析代码再考虑其它路径；仍不行就 ask_user_question 问用户怎么落地（比如让用户从 Blockbench 手动保存 .bbmodel），不要反复盲试、更不要据此重做模型。\n'
   + '   画布组织：一个画布可以放多个模型；用户要求拆开时，用 create_canvas 新建空白画布，再用 split_canvas_group 把顶层分组迁到新画布（默认不切换活跃画布，可连续拆）。不要复制坐标、也不要手工重建模型。\n'
   + '6) 构建用 mc_gradle task=build；要验证能否进游戏就用 mc_gradle task=runClient background=true，'
-  + '   然后 mc_log 读启动标记（Sound engine started / Forge mod loading），失败先看崩溃报告再改。\n'
+  + '   然后 mc_log project=. waitSec=120 等启动标记（Sound engine started / Forge mod loading），失败先看崩溃报告再改。'
+  + '   **不要用 bash sleep/tail/grep 轮询客户端日志**：mc_log waitSec 会轮询等待并在标记出现/崩溃/超时时返回；'
+  + '   查具体错误用 mc_log pattern="ERROR|Exception"（不要在 bash 里 grep 日志，日志可能是 GBK/二进制）。'
+  + '   **不要猜 tty-N**，bash 前台命令结束后没有可读终端；mc_gradle 启动 runClient 会自动停掉同一工程的上一个客户端，不要重复启动。'
+  + '   **runClient 启动后不要改源码**；如果改了，先 build 再重新 runClient（会自动停旧客户端），'
+  + '   不要拿旧客户端的日志验收新代码——mc_log 检测到启动后源码有改动会直接提示。'
+  + '   连续两次 mc_log waitSec 仍没有启动标记，就把当前进度和日志片段告诉用户，不要继续加长 sleep。\n'
   + '7) 收尾汇报：改了哪些文件、build 是否通过、客户端是否真的起来了、还有哪些没验证。\n'
   + '工具名以本清单为准，只能调用实际注册的工具；没有 mc_export、mc_edit、mc_canvas_outline、mc_list_outline、export_model、save_model 这些工具——'
   + '画布工程整体导出叫 canvas_export（含骨骼/贴图/动画），导出原版 item 模型才叫 mc_export_model，改工程文件用 edit/write。拿不准就先看函数目录（工具定义），不要凭名字猜。\n'
@@ -883,7 +1004,8 @@ const plugin: Plugin = {
       name: 'mc_gradle',
       mutates: true,
       description: '在工程里跑 gradlew 任务（build / runClient / runData / --stop）。'
-        + 'runClient 是长驻进程，必须 background=true；普通任务默认 600s 超时，返回尾部输出。',
+        + 'runClient 是长驻进程，必须 background=true；启动前会自动停掉同一工程的上一个客户端。'
+        + '普通任务默认 600s 超时，返回尾部输出。',
       parameters: {
         type: 'object',
         properties: {
@@ -924,19 +1046,32 @@ const plugin: Plugin = {
 
     ctx.tools.register({
       name: 'mc_log',
-      description: '读 run/logs/latest.log 尾部，并给出启动标记（Sound engine started / Forge mod loading）与崩溃提示。',
+      description: '读 run/logs/latest.log 尾部，并给出启动标记（Sound engine started / Forge mod loading）与崩溃提示。'
+        + 'runClient 之后用 waitSec（最长 180s）等启动标记出现，不要用 bash sleep/tail 轮询日志。'
+        + 'pattern 可用正则过滤（如 "ERROR|Exception|Corrupt PNG"），返回带行号的匹配行；日志会先按 UTF-8/GBK 解码。',
       parameters: {
         type: 'object',
         properties: {
           project: { type: 'string', description: '工程目录' },
           lines: { type: 'integer', description: '读最后多少行，默认 80' },
+          waitSec: { type: 'integer', description: '等待启动标记的秒数（0~180，默认 0）；runClient 后建议 120' },
+          pattern: { type: 'string', description: '可选：正则过滤日志行（如 ERROR|Exception），返回行号' },
+          maxMatches: { type: 'integer', description: 'pattern 最多返回多少条，默认 40，最大 200' },
         },
         required: ['project'],
       },
       async execute(args, exec) {
         try {
           const dir = await resolveProject(String(args.project), rootOf(exec))
-          return { forModel: await readLogs(dir, Number(args.lines ?? 80)) }
+          return {
+            forModel: await readLogs(
+              dir,
+              Number(args.lines ?? 80),
+              Number(args.waitSec ?? 0),
+              String(args.pattern ?? ''),
+              Number(args.maxMatches ?? 40),
+            ),
+          }
         } catch (e: any) { return fail(e.message) }
       },
     })
@@ -1154,61 +1289,85 @@ async function listMcProjects(root: string): Promise<McProjectUiInfo[]> {
   return out
 }
 
-/** UI「测试 Mod」按钮：与 mc_gradle background 同一套实现（镜像 seed / GRADLE_USER_HOME / 状态登记） */
-function startRunClient(projectDir: string, root: string): Promise<{ pid: number; logPath: string }> {
-  return new Promise((res, rej) => {
-    ;(async () => {
-      try {
-        const gradlew = process.platform === 'win32' ? 'gradlew.bat' : './gradlew'
-        const env = {
-          ...process.env,
-          JAVA_HOME: process.env.JAVA_HOME ?? 'F:/sdk_java/jdk-17',
-          GRADLE_USER_HOME: process.env.OPENMODS_GRADLE_HOME ?? process.env.GRADLE_USER_HOME ?? WARM_GRADLE_HOME ?? join(root, '.gradle-home'),
-        }
-        await seedMavenCache(env.GRADLE_USER_HOME)
-        await seedWrapperDist(env.GRADLE_USER_HOME, projectDir)
-        await mkdir(join(projectDir, 'run'), { recursive: true })
-        const logPath = join(projectDir, 'run-console.log')
-        const out = createWriteStream(logPath, { flags: 'a' })
-        const child = spawn(gradlew, ['runClient', '--console=plain'], {
-          cwd: projectDir, env, shell: process.platform === 'win32', windowsHide: true,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        })
-        if (!child.pid) throw new Error('gradlew 启动失败')
-        child.stdout?.pipe(out)
-        child.stderr?.pipe(out)
-        const map = readMcState()
-        const cur: McProjectState = map[projectDir] ?? {}
-        cur.runClient = { pid: child.pid, startedAt: Date.now() }
-        map[projectDir] = cur
-        writeMcState(map)
-        child.on('exit', () => {
-          const m = readMcState()
-          if (m[projectDir]?.runClient?.pid === child.pid) {
-            if (cur.runClient) delete cur.runClient
-            map[projectDir] = cur
-            writeMcState(map)
-          }
-        })
-        child.unref()
-        res({ pid: child.pid, logPath })
-      } catch (e: any) { rej(e) }
-    })()
+/** 同一工程只保留一个 runClient：停旧 → 重置控制台日志 → spawn → 登记状态（AI / dock 共用） */
+async function launchClient(projectDir: string, env: NodeJS.ProcessEnv): Promise<{ pid: number; logPath: string; stoppedNote: string }> {
+  const old = readMcState()[projectDir]?.runClient
+  let stoppedNote = ''
+  if (old) {
+    stoppedNote = stopRunClient(projectDir)
+      ? `已停止上一个客户端（pid ${old.pid}）。\n`
+      : (pidAlive(old.pid) ? `⚠ 上一个客户端（pid ${old.pid}）未能停止。\n` : '')
+  }
+  await mkdir(join(projectDir, 'run'), { recursive: true })
+  const logPath = join(projectDir, 'run-console.log')
+  const out = createWriteStream(logPath, { flags: 'w' })
+  const gradlew = process.platform === 'win32' ? 'gradlew.bat' : './gradlew'
+  const child = spawn(gradlew, ['runClient', '--console=plain'], {
+    cwd: projectDir, env, shell: process.platform === 'win32', windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  if (!child.pid) throw new Error('gradlew 启动失败')
+  child.on('error', () => { /* 启动失败由 pid/退出状态体现，避免 unhandled error */ })
+  child.stdout?.pipe(out)
+  child.stderr?.pipe(out)
+  trackRunClient(projectDir, child)
+  child.unref()
+  return { pid: child.pid, logPath, stoppedNote }
+}
+
+/** 登记 runClient 状态；退出回调必须重新读 state，不能拿 spawn 时的旧 map 整份覆盖 */
+function trackRunClient(projectDir: string, child: ChildProcess) {
+  if (!child.pid) return
+  const map = readMcState()
+  const cur: McProjectState = map[projectDir] ?? {}
+  cur.runClient = { pid: child.pid, startedAt: Date.now() }
+  map[projectDir] = cur
+  writeMcState(map)
+  child.on('exit', () => {
+    const fresh = readMcState()
+    const entry = fresh[projectDir]
+    if (!entry?.runClient || entry.runClient.pid !== child.pid) return
+    delete entry.runClient
+    writeMcState(fresh)
   })
 }
 
-/** 停掉工程正在跑的 runClient（进程树终止） */
+/** UI「测试 Mod」按钮：与 mc_gradle background 共用 launchClient（镜像 seed / GRADLE_USER_HOME / 状态登记） */
+async function startRunClient(projectDir: string, root: string): Promise<{ pid: number; logPath: string }> {
+  const env = {
+    ...process.env,
+    JAVA_HOME: process.env.JAVA_HOME ?? 'F:/sdk_java/jdk-17',
+    GRADLE_USER_HOME: process.env.OPENMODS_GRADLE_HOME ?? process.env.GRADLE_USER_HOME ?? WARM_GRADLE_HOME ?? join(root, '.gradle-home'),
+  }
+  await seedMavenCache(env.GRADLE_USER_HOME)
+  await seedWrapperDist(env.GRADLE_USER_HOME, projectDir)
+  const r = await launchClient(projectDir, env)
+  return { pid: r.pid, logPath: r.logPath }
+}
+
+/** 停掉工程正在跑的 runClient（进程树终止，最多等 2s 确认退出） */
 function stopRunClient(projectDir: string): boolean {
-  const s = readMcState()[projectDir]?.runClient
-  if (!s || !pidAlive(s.pid)) {
+  const clear = () => {
     const map = readMcState()
     if (map[projectDir]?.runClient) { delete map[projectDir].runClient; writeMcState(map) }
-    return false
   }
+  const s = readMcState()[projectDir]?.runClient
+  if (!s) return false
+  if (!pidAlive(s.pid)) { clear(); return false }
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(s.pid), '/T', '/F'], { windowsHide: true })
+    spawnSync('taskkill', ['/pid', String(s.pid), '/T', '/F'], { windowsHide: true })
   } else {
     try { process.kill(-s.pid, 'SIGTERM') } catch { try { process.kill(s.pid, 'SIGTERM') } catch { /* 已退出 */ } }
   }
+  // 等进程树真正退出，避免新客户端刚启动就撞上旧的窗口/端口
+  const until = Date.now() + 2000
+  while (pidAlive(s.pid) && Date.now() < until) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
+  }
+  if (process.platform !== 'win32' && pidAlive(s.pid)) {
+    try { process.kill(-s.pid, 'SIGKILL') } catch { try { process.kill(s.pid, 'SIGKILL') } catch { /* 已退出 */ } }
+  }
+  if (pidAlive(s.pid)) return false
+  clear()
   return true
 }
