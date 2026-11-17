@@ -8,6 +8,7 @@ import { MessageText } from '../markdown.js'
 import { ModelPicker } from './ModelPicker.js'
 import { SubagentActivity } from './SubagentActivity.js'
 import { ContextMeter } from './ContextMeter.js'
+import { McIcon } from './McIcon.js'
 
 // composer dock 状态条 —— 复刻 dsh InputBar 的 dock：ActivityPill / UsagePill / StatusPill / ContextMeter
 function fmtTok(n: number): string {
@@ -208,8 +209,8 @@ export function SessionView(props: {
               <h2>{isSubagent ? '子代理的对话' : '开始建模'}</h2>
               <p className="dim">
                 {isSubagent
-                  ? '这个子代理属于当前会话：它和主代理、其它子代理在同一块画布上工作，右侧画布随改动实时更新。这里是它的对话记录，可以继续给它派活，或回到主会话查看整体。'
-                  : '描述你想要的模型，AI 会派子代理在当前会话里并行完成，改动实时出现在右侧画布上。'}
+                  ? '这个子代理属于当前会话：每个子代理在自己的独立画布上建模，右侧拓展可以切换查看各自的画布。这里是它的对话记录，可以继续给它派活，或回到主会话查看整体。'
+                  : '描述你想要的模型，AI 会派子代理各自在独立画布上并行建模，改动实时出现在右侧画布上。'}
               </p>
               {!isSubagent && (
                 <button
@@ -275,7 +276,7 @@ export function SessionView(props: {
             placeholder={waitingLocked
               ? `等待 ${waiting.length} 个子代理完成中…（结算后会自动汇总，不能插话）`
               : isSubagent
-                ? '给这个子代理继续下达指令（画布与主会话共用）'
+                ? '给这个子代理继续下达指令（独立画布）'
                 : refineMode ? '描述你的想法，AI 帮你完善…' : '输入消息，可粘贴图片 · 输入 / 调用命令'}
             value={text}
             onChange={e => { setText(e.target.value); setSlashIdx(0) }}
@@ -333,14 +334,14 @@ export function SessionView(props: {
             </div>
           )}
           <div className="input-row">
-            <button className="icon-btn" title="附图（支持 Ctrl+V 粘贴）" onClick={() => fileRef.current?.click()}>＋</button>
+            <button className="icon-btn" title="附图（支持 Ctrl+V 粘贴）" onClick={() => fileRef.current?.click()}><McIcon name="attach" size={16} /></button>
             <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={e => { onAddFiles(e.target.files); e.target.value = '' }} />
             <button
               className={`model-chip coop-chip ${planMode ? 'on' : ''}`}
               onClick={onTogglePlan}
               title={planMode ? '退出计划模式（恢复正常读写）' : '进入计划模式：AI 先出方案，你批准后再执行'}
             >
-              ☰ {planMode ? '计划·只读' : '计划'}
+              <McIcon name="plan" size={14} /> {planMode ? '计划·只读' : '计划'}
             </button>
             <button
               className={`model-chip coop-chip ${permission === 'auto' ? 'auto' : ''}`}
@@ -349,6 +350,7 @@ export function SessionView(props: {
                 ? '当前自动放行写文件/命令/终端；点击改为每次询问'
                 : '当前写文件/命令/终端会弹窗询问；点击改为本会话自动放行'}
             >
+              <McIcon name={permission === 'auto' ? 'permissionAuto' : 'permissionAsk'} size={14} />
               {permission === 'auto' ? '授权·自动' : '授权·询问'}
             </button>
             <select
@@ -366,13 +368,14 @@ export function SessionView(props: {
               onClick={() => setPickerOpen(true)}
               title={currentModel ? `${currentModel.displayName}（${currentModel.providerRoute ?? 'builtin'}）` : '选择模型'}
             >
+              <McIcon name="model" size={14} />
               {currentModel?.displayName ?? '选择模型'} <span className="dim">▾</span>
             </button>
             {waitingLocked
-              ? <button className="btn stop" onClick={onStop} title="取消等待：中止这些子代理并解锁输入">取消等待</button>
+              ? <button className="btn stop" onClick={onStop} title="取消等待：中止这些子代理并解锁输入"><McIcon name="stop" size={14} /> 取消等待</button>
               : busy
-                ? <button className="btn stop" onClick={onStop}>停止</button>
-                : <button className="send-btn" onClick={submit} disabled={!text.trim() && pendingAtts.length === 0} title={enterToSend ? '发送（Enter）' : '发送（⌘/Ctrl+Enter）'}>↑</button>}
+                ? <button className="btn stop" onClick={onStop}><McIcon name="stop" size={14} /> 停止</button>
+                : <button className="send-btn" onClick={submit} disabled={!text.trim() && pendingAtts.length === 0} title={enterToSend ? '发送（Enter）' : '发送（⌘/Ctrl+Enter）'}><McIcon name="send" size={16} /></button>}
           </div>
         </div>
       </div>
@@ -416,7 +419,7 @@ export function SubagentNoticeRow({ notice, onOpen }: { notice: NonNullable<Turn
         </span>
         {notice.summary && <span className="notice-summary">{notice.summary}</span>}
       </span>
-      <button className="notice-open" onClick={onOpen} title="查看这个子代理的对话（画布共用一个）">对话</button>
+      <button className="notice-open" onClick={onOpen} title="查看这个子代理的对话（独立画布）">对话</button>
     </div>
   )
 }

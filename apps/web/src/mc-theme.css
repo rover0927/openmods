@@ -1,0 +1,1104 @@
+/* ==========================================================================
+   openmods · Minecraft 像素皮肤
+   在 styles.css 之后加载：只覆盖令牌与组件选择器，不改原有布局规则。
+   素材：物品图标 / 方块贴图来自 Minecraft 官方资源（public/mc），仅本地原型用途。
+   ========================================================================== */
+
+/* ---- A. 令牌覆盖：强制 MC 深色 ---------------------------------------- */
+/* 同时匹配 light/dark 主题块，避免被 styles.css 里更高特异性的浅色令牌覆盖 */
+:root,
+:root[data-theme='light'],
+:root[data-theme='dark'] {
+  --bg-base: #1b1712;
+  --bg-layer-1: #231d16;
+  --bg-layer-2: #2a231b;
+  --bg-layer-3: #332b21;
+  --bg-layer-4: #3d3327;
+  --panel: #2a231b;
+  --sidebar-fill: #231d16;
+  --border-l1: #0f0c08;
+  --border-l2: #0f0c08;
+  --border-l3: #6b5a44;
+  --border-l4: #8a7458;
+  --label-primary: #efe9dd;
+  --label-secondary: #cec3b2;
+  --label-tertiary: #9b8c78;
+  --accent: #8bdc5a;
+  --accent-hover: #63b83f;
+  --success: #8bdc5a;
+  --warn: #e0a020;
+  --danger: #d64545;
+  --interactive-hover: #3a3024;
+  --interactive-active: #2f271d;
+
+  --mc-bevel-light: #6b5a44;
+  --mc-bevel-dark: #0f0c08;
+  --mc-face: #2a231b;
+  --mc-face-raised: #382f24;
+  --mc-slot: #16110c;
+
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 2px;
+  --radius-lg: 2px;
+  --radius-panel: 0px;
+}
+
+body {
+  background-color: #191410;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.022) 0 2px, transparent 2px 16px),
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.07) 0 2px, transparent 2px 16px);
+  color: var(--label-primary);
+}
+
+/* 草方块主题：品牌头做「草皮在上、泥土在下」的分界，名字用草绿 */
+.sb-brand {
+  background: linear-gradient(#3a3025, var(--mc-face));
+  border-bottom: 3px solid #5d8c2f;
+  box-shadow: inset 0 -1px 0 #2f4a18;
+}
+.sb-brand-main { gap: 12px; }
+.sb-name {
+  color: var(--accent);
+  text-shadow: 2px 2px 0 #10240a;
+}
+.chat-head { border-bottom: 3px solid #5d8c2f; }
+
+/* 标题类文字：MC 的硬阴影，不做平滑发光 */
+.sb-name,
+.chat-title,
+.settings-title,
+.dock-empty,
+.sb-section-title {
+  letter-spacing: 0.04em;
+  text-shadow: 2px 2px 0 #000;
+}
+
+/* ---- B. 组件皮肤 ------------------------------------------------------ */
+
+/* 面板：像素描边（亮上左 / 暗下右）+ 极浅内高光，去掉圆角与毛玻璃 */
+.left-sidebar,
+.main-panel,
+.dock,
+.settings-panel,
+.lib-drawer,
+.float-menu,
+.dock-menu {
+  background: var(--mc-face);
+  border: 2px solid;
+  border-color: var(--mc-bevel-light) var(--mc-bevel-dark) var(--mc-bevel-dark) var(--mc-bevel-light);
+  border-radius: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.dock.collapsed { border-width: 2px; }
+.settings-mask { backdrop-filter: none; background: rgba(0, 0, 0, 0.62); }
+
+/* 按钮：MC 凸起面 */
+.btn,
+.icon-btn,
+.sb-new,
+.sb-rail-btn,
+.sb-toggle,
+.dock-act,
+.dock-add,
+.dock-tab-btn,
+.dock-expand,
+.seg-btn,
+.model-chip,
+.suggestion,
+.lib-chip,
+.ds-stop,
+.attach-remove,
+.settings-link,
+.settings-close,
+.settings-nav-cell {
+  background: linear-gradient(#8b8b8b, #6f6f6f);
+  color: #f4f4f4;
+  border: 2px solid;
+  border-color: #b9b9b9 #2b2b2b #2b2b2b #b9b9b9;
+  border-radius: 0;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.55);
+  box-shadow: none;
+  transition: background 0.1s steps(1), transform 0.05s steps(1);
+}
+
+.btn:hover:not(:disabled),
+.icon-btn:hover:not(:disabled),
+.sb-new:hover,
+.sb-rail-btn:hover,
+.sb-toggle:hover,
+.dock-act:hover,
+.dock-add:hover,
+.dock-tab-btn:hover,
+.dock-expand:hover,
+.seg-btn:hover:not(:disabled),
+.model-chip:hover:not(:disabled),
+.suggestion:hover:not(:disabled),
+.lib-chip:hover,
+.ds-stop:hover,
+.attach-remove:hover,
+.settings-link:hover,
+.settings-close:hover,
+.settings-nav-cell:hover {
+  background: linear-gradient(#9d9d9d, #7d7d7d);
+  color: #ffffff;
+}
+
+.btn:active:not(:disabled),
+.icon-btn:active:not(:disabled),
+.sb-new:active,
+.sb-rail-btn:active,
+.sb-toggle:active,
+.dock-act:active,
+.dock-add:active,
+.dock-tab-btn:active,
+.seg-btn:active,
+.model-chip:active,
+.suggestion:active:not(:disabled),
+.lib-chip:active,
+.ds-stop:active,
+.settings-link:active,
+.settings-close:active,
+.settings-nav-cell:active {
+  transform: translateY(2px);
+  border-color: #2b2b2b #b9b9b9 #b9b9b9 #2b2b2b;
+}
+
+.btn:disabled,
+.icon-btn:disabled,
+.send-btn:disabled,
+.suggestion:disabled {
+  background: linear-gradient(#4a4a4a, #3f3f3f);
+  color: #8f8f8f;
+  border-color: #5a5a5a #222 #222 #5a5a5a;
+}
+
+/* 选中的开关 / 分段 / chip：草绿高亮 */
+.seg-btn.active,
+.model-chip.on,
+.model-chip.auto,
+.lib-chip.active {
+  background: linear-gradient(#5fbb46, #468a33);
+  border-color: #8ee06b #1f3d16 #1f3d16 #8ee06b;
+  color: #f2fff0;
+}
+
+/* 发送键：草绿凸起，带箭头的像素跳动 */
+.send-btn {
+  background: linear-gradient(#7ed957, #56a33c);
+  border: 2px solid;
+  border-color: #a8f08a #1f3d16 #1f3d16 #a8f08a;
+  border-radius: 0;
+  color: #14270d;
+  text-shadow: none;
+  transition: background 0.1s steps(1), transform 0.05s steps(1);
+}
+.send-btn:hover:not(:disabled) { background: linear-gradient(#8ee06b, #5fbb46); }
+.send-btn:active:not(:disabled) {
+  transform: translateY(2px);
+  border-color: #1f3d16 #a8f08a #a8f08a #1f3d16;
+}
+
+/* 输入：内凹槽位 */
+textarea,
+input[type='text'],
+input[type='search'],
+.sb-view,
+select.model-chip,
+.model-chip select {
+  background: var(--mc-slot);
+  color: var(--label-primary);
+  border: 2px solid;
+  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-radius: 0;
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.45);
+  caret-color: var(--accent);
+}
+textarea:focus,
+input[type='text']:focus,
+.sb-view:focus,
+select.model-chip:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* 输入区：MC GUI 窗口（凸起外框）+ 底部物品栏工具条（深色槽位） */
+.input-card,
+.composer-wrap > .input-card {
+  background: #2f2f2f;
+  border: 2px solid;
+  border-color: #7a7a7a #141414 #141414 #7a7a7a;
+  border-radius: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 3px 0 rgba(0, 0, 0, 0.4);
+}
+
+.input-row {
+  margin-top: 2px;
+  padding: 6px 8px 0;
+  gap: 6px;
+  border-top: 2px solid #141414;
+}
+.input-row .icon-btn,
+.input-row .model-chip,
+.input-row select.model-chip,
+.input-row .btn.stop {
+  height: 26px;
+  max-width: 220px;
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-radius: 0;
+  color: #c6c6c6;
+  text-shadow: none;
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.45);
+  transition: background 0.1s steps(1), color 0.1s steps(1);
+}
+.input-row .icon-btn { width: 26px; max-width: 26px; padding: 0; }
+.input-row .icon-btn:hover,
+.input-row .model-chip:hover,
+.input-row .btn.stop:hover {
+  background: #2a2a2a;
+  color: #ffffff;
+  border-color: #0d0d0d #5a5a5a #5a5a5a #0d0d0d;
+  transform: none;
+}
+.input-row .model-chip.on,
+.input-row .model-chip.auto {
+  background: #26361e;
+  border-color: #1f3d16 #8ee06b #8ee06b #1f3d16;
+  color: #b6f09b;
+}
+.input-row .model-chip:active,
+.input-row .icon-btn:active {
+  transform: none;
+  box-shadow: inset 3px 3px 0 rgba(0, 0, 0, 0.6);
+}
+.input-row .send-btn {
+  width: 34px;
+  height: 26px;
+  margin-left: auto;
+  box-shadow: none;
+}
+
+/* 右侧标签：物品栏页签；激活页签与面板连成一体 */
+.dock-head { border-bottom: 2px solid var(--mc-bevel-dark); }
+.dock-tab {
+  background: #232323;
+  border: 2px solid;
+  border-color: #4a4a4a #141414 #141414 #4a4a4a;
+  border-bottom: 0;
+  border-radius: 0;
+  margin-right: 2px;
+}
+.dock-tab.active {
+  background: var(--mc-face);
+  border-color: #7a7a7a #141414 transparent #7a7a7a;
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.dock-tab.active .dock-tab-btn { background: transparent; border: 0; color: #fff; }
+.dock-tab-btn { background: transparent; border: 0; }
+
+/* 菜单项 / 列表行：悬停草绿 */
+.dock-menu-item:hover,
+.menu-item:hover {
+  background: #3a3a3a;
+  color: var(--accent);
+}
+.menu-backdrop { backdrop-filter: none; }
+
+/* 消息：用户气泡是深灰面板，助手保持无底 */
+.user-bubble {
+  background: #3a3a3a;
+  border: 2px solid;
+  border-color: #5a5a5a #141414 #141414 #5a5a5a;
+  border-radius: 0;
+}
+.assistant-bubble { background: transparent; border: 0; }
+.msg-img {
+  border: 2px solid;
+  border-color: var(--mc-bevel-dark) var(--mc-bevel-light) var(--mc-bevel-light) var(--mc-bevel-dark);
+  border-radius: 0;
+}
+
+/* 代码块：黑底 + 草绿左边框 */
+pre,
+code {
+  background: #141414;
+  border-radius: 0;
+}
+pre {
+  border: 2px solid #0d0d0d;
+  border-left: 4px solid var(--accent);
+}
+
+/* 滚动条：12px 像素轨道 */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: #1a1a1a; border-left: 1px solid #0d0d0d; }
+::-webkit-scrollbar-thumb {
+  background: #6f6f6f;
+  border: 2px solid;
+  border-color: #9d9d9d #3a3a3a #3a3a3a #9d9d9d;
+}
+::-webkit-scrollbar-thumb:hover { background: #8b8b8b; }
+::-webkit-scrollbar-corner { background: #1a1a1a; }
+
+/* 提示条：成就弹窗 */
+.toast {
+  background: #2b2b2b;
+  border: 2px solid #e0a020;
+  border-radius: 0;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.6);
+  color: var(--label-primary);
+}
+
+/* 设置窗口 */
+.settings-title {
+  background: #3a3a3a;
+  border-bottom: 2px solid var(--mc-bevel-dark);
+  letter-spacing: 0.08em;
+}
+.settings-nav-cell { background: transparent; border: 0; border-radius: 0; }
+.settings-nav-cell.active {
+  background: linear-gradient(#5fbb46, #468a33);
+  color: #f2fff0;
+}
+.settings-nav-icon { color: inherit; }
+
+/* 槽位（左栏底部入口 / 素材库） */
+.sb-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+}
+
+/* 旧品牌色块退役（品牌位已换成草方块） */
+.sb-mark { display: none; }
+
+/* ---- C. 草方块立方体 -------------------------------------------------- */
+.mc-stage {
+  display: inline-block;
+  flex: none;
+  width: var(--mc-size);
+  height: var(--mc-size);
+  perspective: 400px;
+  line-height: 0;
+}
+.mc-iso-tilt {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transform: rotateX(-20deg) rotateY(-30deg);
+  transition: transform 0.2s steps(3);
+}
+/* 基础状态：动画暂停在 0°，即静止的等轴测角度 */
+.mc-cube {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  animation: mc-brand-spin 4.2s linear infinite;
+  animation-play-state: paused;
+}
+.mc-cube .face {
+  position: absolute;
+  inset: 0;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  backface-visibility: hidden;
+}
+.mc-cube .face.top { background-image: url(/mc/block/grass_block_top.png); transform: rotateX(90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.bottom { background-image: url(/mc/block/dirt.png); transform: rotateX(-90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.front { background-image: url(/mc/block/grass_block_side.png); transform: translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.back { background-image: url(/mc/block/grass_block_side.png); transform: rotateY(180deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.right { background-image: url(/mc/block/grass_block_side.png); transform: rotateY(90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.left { background-image: url(/mc/block/grass_block_side.png); transform: rotateY(-90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+
+/* 悬停 / 键盘聚焦：旋转 + 草绿辉光（不放大，避免贴住/压住品牌名） */
+.sb-brand-main:hover .mc-cube,
+.sb-brand-main:focus-visible .mc-cube { animation-play-state: running; }
+.sb-brand-main:hover .mc-iso-tilt,
+.sb-brand-main:focus-visible .mc-iso-tilt { transform: rotateX(-20deg) rotateY(-30deg) scale(1); }
+.sb-brand-main:hover .mc-brand-cube .face,
+.sb-brand-main:focus-visible .mc-brand-cube .face {
+  filter: drop-shadow(0 0 5px rgba(126, 217, 87, 0.6));
+}
+.sb-brand-main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.sb-brand-main { align-items: center; gap: 10px; }
+
+/* 会话列表：当前会话 = 深色木纹 + 草绿左标（扁平高亮，不做按下的灰按钮） */
+.sb-row.sb-session.selected {
+  background-color: #33291c;
+  background-image:
+    linear-gradient(rgba(16, 13, 10, 0.35), rgba(16, 13, 10, 0.35)),
+    var(--mc-tex-dark-oak);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  color: #ffffff;
+  border: 0;
+  border-left: 3px solid var(--accent);
+  border-radius: 0;
+  box-shadow: inset 0 0 0 1px rgba(126, 217, 87, 0.16);
+  transform: none;
+}
+.sb-row.sb-session.selected:hover {
+  background-color: #3a2f20;
+}
+.sb-row.sb-session.selected .sb-time { color: #bdbdbd; }
+
+@keyframes mc-brand-spin {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(360deg); }
+}
+
+/* 点击品牌位：整排（方块 + 名字）一起横向 3D 位移，方块不会压住 openmods 字样 */
+.sb-brand { perspective: 320px; }
+.sb-brand-main.mc-kick {
+  animation: mc-brand-shove 0.9s cubic-bezier(0.34, 0, 0.2, 1);
+}
+
+@keyframes mc-brand-shove {
+  0% { transform: translate3d(0, 0, 0) rotateY(0deg); }
+  45% { transform: translate3d(14px, 0, 12px) rotateY(16deg); }
+  60% { transform: translate3d(14px, 0, 12px) rotateY(16deg); }
+  100% { transform: translate3d(0, 0, 0) rotateY(0deg); }
+}
+
+/* ---- D. 物品图标 ------------------------------------------------------ */
+.mc-ico {
+  display: inline-block;
+  flex: none;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  vertical-align: -0.15em;
+  transition: transform 0.08s steps(2);
+}
+.dock-tab-btn:hover .mc-ico,
+.sb-row:hover .mc-ico,
+.sb-rail-btn:hover .mc-ico,
+.sb-new:hover .mc-ico,
+.model-chip:hover .mc-ico,
+.send-btn:hover .mc-ico,
+.btn:hover .mc-ico {
+  transform: translateY(-2px);
+}
+.dock-tab.active .mc-ico { animation: mc-ico-pop 0.25s steps(3); }
+
+@keyframes mc-ico-pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+
+/* 图标与文字并排时的间距 */
+.mc-ico + span,
+.mc-ico + .dock-tab-label,
+.sb-slot + .sb-title { margin-left: 6px; }
+
+/* ---- D2. 右侧拓展内部分区 --------------------------------------------- */
+.canvas-tabs {
+  background: #232323;
+  border-bottom: 2px solid #141414;
+}
+.canvas-tab {
+  background: #232323;
+  border: 2px solid;
+  border-color: #4a4a4a #141414 #141414 #4a4a4a;
+  border-bottom: 0;
+  border-radius: 0;
+  color: var(--label-secondary);
+}
+.canvas-tab.active {
+  background: var(--mc-face);
+  color: #ffffff;
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.canvas-tab.add { color: var(--label-tertiary); }
+.canvas-tab.add:hover { background: #2f2f2f; color: var(--accent); }
+.canvas-tab-close:hover { color: var(--danger); }
+.canvas-empty-title { text-shadow: 2px 2px 0 #000; }
+
+/* 画布状态条 / 动画条 / 拓展输入区：统一深色工具条 */
+.canvas-status,
+.anim-strip,
+.dock-composer {
+  background: #232323;
+  border-top: 2px solid #141414;
+}
+.anim-chip {
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-radius: 0;
+  color: var(--label-secondary);
+}
+.anim-chip:hover:not(:disabled) { background: #2a2a2a; color: #ffffff; }
+.anim-chip.playing { border-color: #1f3d16 #8ee06b #8ee06b #1f3d16; color: #b6f09b; }
+.input-foot,
+.dock-owner { color: var(--label-tertiary); }
+
+/* 文件 / 网页预览：工具条与控件同皮肤 */
+.file-bar,
+.web-bar {
+  background: #232323;
+  border-bottom: 2px solid #141414;
+}
+.file-crumb,
+.web-nav,
+.web-notice-btn {
+  background: #3a3a3a;
+  border: 2px solid;
+  border-color: #5a5a5a #141414 #141414 #5a5a5a;
+  border-radius: 0;
+  color: var(--label-secondary);
+}
+.file-crumb:hover:not(:disabled),
+.web-nav:hover:not(:disabled),
+.web-notice-btn:hover {
+  background: #4a4a4a;
+  color: #ffffff;
+}
+.web-url {
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-radius: 0;
+}
+.img-cell {
+  border: 2px solid;
+  border-color: #141414 #5a5a5a #5a5a5a #141414;
+  border-radius: 0;
+}
+.web-start-icon,
+.ds-empty { color: var(--label-tertiary); }
+
+/* ---- F. 弹窗 / 设置表单 / 模型选择 / 素材抽屉 -------------------------- */
+/* 弹窗统一 MC GUI 窗口：凸起外框 + 深色标题条 */
+.modal-mask,
+.dialog-backdrop,
+.ask-backdrop { background: rgba(0, 0, 0, 0.72); }
+.modal,
+.dialog,
+.ask-card {
+  background: #2f2f2f;
+  border: 2px solid;
+  border-color: #7a7a7a #141414 #141414 #7a7a7a;
+  border-radius: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 6px 0 rgba(0, 0, 0, 0.45);
+}
+.picker-head,
+.dialog-title,
+.dialog-title-row,
+.ask-head {
+  background: #232323;
+  border-bottom: 2px solid #141414;
+  text-shadow: 2px 2px 0 #000;
+}
+
+/* 表单控件：深色内凹槽 */
+.dialog-input,
+.ask-input,
+.lib-search,
+.lib-import,
+.mod-output-input,
+.settings-card .field input,
+.settings-card .field select,
+.model-edit-row input {
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-radius: 0;
+  color: var(--label-primary);
+}
+
+/* 按钮：默认灰凸起，primary 草绿，danger 红 */
+.dialog-btn,
+.btn.ghost {
+  background: linear-gradient(#8b8b8b, #6f6f6f);
+  border: 2px solid;
+  border-color: #b9b9b9 #2b2b2b #2b2b2b #b9b9b9;
+  border-radius: 0;
+  color: #ffffff;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+}
+.dialog-btn:hover:not(:disabled),
+.btn.ghost:hover:not(:disabled) { background: linear-gradient(#9c9c9c, #7f7f7f); }
+.dialog-btn:active:not(:disabled),
+.btn.ghost:active:not(:disabled) {
+  transform: translateY(1px);
+  border-color: #2b2b2b #b9b9b9 #b9b9b9 #2b2b2b;
+}
+.dialog-btn.primary,
+.btn.primary {
+  background: linear-gradient(#8fd96b, #5aa83e);
+  border-color: #b8f49c #2c5a1c #2c5a1c #b8f49c;
+  color: #10240a;
+  text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.25);
+}
+.dialog-btn.danger,
+.btn.danger {
+  background: linear-gradient(#d96b6b, #a83e3e);
+  border-color: #f49c9c #5a1c1c #5a1c1c #f49c9c;
+  color: #ffffff;
+}
+.danger-text { color: #ff9c9c; }
+
+/* 设置页表单：分组框、开关、分段、数字步进 */
+.setting-group {
+  background: #2b2b2b;
+  border: 2px solid;
+  border-color: #4a4a4a #141414 #141414 #4a4a4a;
+  border-radius: 0;
+}
+.setting-group-title {
+  color: var(--accent);
+  text-shadow: 2px 2px 0 #000;
+}
+.setting-row + .setting-row { border-top: 1px dashed #3a3a3a; }
+.setting-row-hint { color: var(--label-tertiary); }
+.settings-section-head { text-shadow: 2px 2px 0 #000; }
+.switch {
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-radius: 0;
+}
+.switch-thumb {
+  background: #8b8b8b;
+  border: 2px solid;
+  border-color: #b9b9b9 #2b2b2b #2b2b2b #b9b9b9;
+  border-radius: 0;
+}
+.switch.on { background: #26361e; border-color: #1f3d16 #8ee06b #8ee06b #1f3d16; }
+.switch.on .switch-thumb { background: #7ed957; border-color: #b8f49c #2c5a1c #2c5a1c #b8f49c; }
+.seg {
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-radius: 0;
+  padding: 2px;
+}
+.seg-btn { border-radius: 0; color: var(--label-secondary); }
+.seg-btn.active {
+  background: linear-gradient(#8b8b8b, #6f6f6f);
+  border: 2px solid;
+  border-color: #b9b9b9 #2b2b2b #2b2b2b #b9b9b9;
+  color: #ffffff;
+}
+.seg-btn:disabled { opacity: 0.55; }
+.num-field {
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: #0d0d0d #4a4a4a #4a4a4a #0d0d0d;
+  border-radius: 0;
+}
+.num-btn { border-radius: 0; }
+
+/* 模型选择弹窗 */
+.model-row { border-radius: 0; }
+.model-row:hover { background: #383838; }
+.model-row.selected {
+  background: #26361e;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* 询问 / 授权弹窗选项 */
+.ask-option {
+  background: #2b2b2b;
+  border: 2px solid;
+  border-color: #4a4a4a #141414 #141414 #4a4a4a;
+  border-radius: 0;
+}
+.ask-option:hover,
+.ask-option.selected {
+  background: #26361e;
+  border-color: #1f3d16 #8ee06b #8ee06b #1f3d16;
+}
+
+/* 素材抽屉 */
+.lib-chip {
+  background: #3a3a3a;
+  border: 2px solid;
+  border-color: #5a5a5a #141414 #141414 #5a5a5a;
+  border-radius: 0;
+  color: var(--label-secondary);
+}
+.lib-chip:hover { background: #4a4a4a; color: #ffffff; }
+.lib-chip.on { background: #26361e; border-color: #1f3d16 #8ee06b #8ee06b #1f3d16; color: #b6f09b; }
+.lib-card {
+  border: 2px solid;
+  border-color: #141414 #5a5a5a #5a5a5a #141414;
+  border-radius: 0;
+}
+.lib-card.editing { border-color: #1f3d16 #8ee06b #8ee06b #1f3d16; }
+.lib-thumb { background: var(--mc-slot); border-radius: 0; }
+.lib-drop-hint {
+  background: rgba(126, 217, 87, 0.08);
+  border: 2px dashed var(--accent);
+  color: var(--accent);
+}
+.lib-hint { color: var(--label-tertiary); }
+
+/* 询问弹窗不锁全屏：不遮挡左侧栏 / 右侧拓展，可以边看画布边回答 */
+.ask-backdrop {
+  background: transparent;
+  pointer-events: none;
+}
+.ask-card { pointer-events: auto; }
+
+/* ---- G. 草方块配色收口：泥土色面 + 草绿主操作 ------------------------- */
+/* 主操作（新建会话）用草皮绿，和草方块呼应 */
+.sb-new {
+  background: linear-gradient(#8fd96b, #5aa83e);
+  border-color: #b8f49c #2c5a1c #2c5a1c #b8f49c;
+  color: #10240a;
+  text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.25);
+}
+.sb-new:hover { background: linear-gradient(#a2e57f, #6cbb4c); }
+.sb-new:active {
+  transform: translateY(1px);
+  border-color: #2c5a1c #b8f49c #b8f49c #2c5a1c;
+}
+
+/* 硬编码灰阶统一到泥土色，避免和面板令牌色打架 */
+.input-card,
+.composer-wrap > .input-card,
+.modal,
+.dialog,
+.ask-card {
+  background: #332b21;
+  border-color: #8a7458 #0f0c08 #0f0c08 #8a7458;
+}
+.canvas-tabs,
+.canvas-status,
+.anim-strip,
+.dock-composer,
+.file-bar,
+.web-bar,
+.picker-head,
+.dialog-title,
+.dialog-title-row,
+.ask-head {
+  background: #221c15;
+  border-color: #0f0c08;
+}
+.canvas-tab,
+.lib-card,
+.setting-group,
+.ask-option {
+  background: #2a231b;
+  border-color: #6b5a44 #0f0c08 #0f0c08 #6b5a44;
+}
+.canvas-tab.active { background: #332b21; }
+.input-row .icon-btn,
+.input-row .model-chip,
+.input-row select.model-chip,
+.input-row .btn.stop,
+.anim-chip,
+.web-url,
+.lib-thumb,
+.dialog-input,
+.ask-input,
+.lib-search,
+.lib-import,
+.mod-output-input,
+.settings-card .field input,
+.settings-card .field select,
+.model-edit-row input,
+.switch,
+.seg,
+.num-field {
+  background: var(--mc-slot);
+  border-color: #0a0806 #5c4c38 #5c4c38 #0a0806;
+}
+
+/* ---- E. 无障碍：尊重减少动态效果 -------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  /* 品牌方块的悬停/点击动画是主题核心效果，保留；只关闭图标弹跳与位移动画 */
+  .dock-tab.active .mc-ico { animation: none; }
+  .sb-brand-main:hover .mc-brand-cube .face,
+  .sb-brand-main:focus-visible .mc-brand-cube .face { filter: none; }
+  .mc-iso-tilt { transition: none; }
+  .btn,
+  .icon-btn,
+  .send-btn,
+  .mc-ico { transition: none; }
+}
+
+/* ---- H. 方块材质层：结构表面改用原版方块贴图铺底 ---------------------- */
+/* 只叠 background-*，不动边框/阴影/布局；不加 filter / backdrop-filter，避免拍平 3D 方块 */
+:root,
+:root[data-theme='light'],
+:root[data-theme='dark'] {
+  --mc-tex-stone: url('/mc/block/stone.png');
+  --mc-tex-bricks: url('/mc/block/stone_bricks.png');
+  --mc-tex-cobble: url('/mc/block/cobblestone.png');
+  --mc-tex-dark-oak: url('/mc/block/dark_oak_planks.png');
+  --mc-tex-oak: url('/mc/block/oak_planks.png');
+  --mc-tex-dirt: url('/mc/block/dirt.png');
+  --mc-tex-grass-top: url('/mc/block/grass_block_top.png');
+  --mc-tex-grass-side: url('/mc/block/grass_block_side.png');
+
+  --mc-tex-size: 32px;
+  --mc-tex-scrim: linear-gradient(rgba(14, 12, 9, 0.76), rgba(14, 12, 9, 0.76));
+  --mc-tex-scrim-soft: linear-gradient(rgba(14, 12, 9, 0.6), rgba(14, 12, 9, 0.6));
+  --mc-tex-scrim-strong: linear-gradient(rgba(10, 8, 6, 0.88), rgba(10, 8, 6, 0.88));
+  --mc-tex-grass-tint: linear-gradient(rgba(86, 150, 58, 0.5), rgba(86, 150, 58, 0.5));
+}
+
+/* 主画布 / 中央面板：石头 */
+body,
+.main-panel {
+  background-color: #191410;
+  background-image: var(--mc-tex-scrim), var(--mc-tex-stone);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+}
+
+/* 左侧栏：深色橡木 */
+.left-sidebar {
+  background-color: #231d16;
+  background-image: var(--mc-tex-scrim), var(--mc-tex-dark-oak);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+}
+
+/* 品牌头：草方块侧面（草皮线保留在顶部，底边草绿分界不变） */
+.sb-brand {
+  background-color: #3a3025;
+  background-image: var(--mc-tex-scrim-soft), var(--mc-tex-grass-side);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+  border-bottom: 3px solid #5d8c2f;
+}
+
+/* 右侧拓展面板：圆石 */
+.dock {
+  background-color: var(--mc-face);
+  background-image: var(--mc-tex-scrim), var(--mc-tex-cobble);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+}
+
+/* 激活页签：石砖，和面板表面区分开 */
+.dock-tab.active,
+.canvas-tab.active {
+  background-color: var(--mc-face);
+  background-image: var(--mc-tex-scrim-soft), var(--mc-tex-bricks);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+}
+
+/* 输入区 / 弹窗：橡木 */
+.input-card,
+.composer-wrap > .input-card {
+  background-color: #332b21;
+  background-image: var(--mc-tex-scrim), var(--mc-tex-oak);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+}
+
+.modal,
+.dialog,
+.ask-card {
+  background-color: #332b21;
+  background-image: var(--mc-tex-scrim), var(--mc-tex-oak);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+}
+
+/* 设置：面板深色橡木，左侧导航石砖 */
+.settings-panel {
+  background-color: #231d16;
+  background-image: var(--mc-tex-scrim), var(--mc-tex-dark-oak);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+}
+
+.settings-nav {
+  background-color: #231d16;
+  background-image: var(--mc-tex-scrim-soft), var(--mc-tex-bricks);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+}
+
+/* 标题条：深色橡木 + 重遮罩，保持比内容区更暗 */
+.settings-title,
+.picker-head,
+.dialog-title,
+.dialog-title-row,
+.ask-head {
+  background-color: #221c15;
+  background-image: var(--mc-tex-scrim-strong), var(--mc-tex-dark-oak);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+}
+
+/* 素材抽屉：深色橡木 */
+.lib-drawer {
+  background-color: #231d16;
+  background-image: var(--mc-tex-scrim), var(--mc-tex-dark-oak);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+}
+
+/* 槽位 / 缩略图：泥土，保留原有内凹描边 */
+.sb-slot,
+.lib-thumb {
+  background-color: var(--mc-slot);
+  background-image: var(--mc-tex-scrim-strong), var(--mc-tex-dirt);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+}
+/* 素材卡片预览区原本没有描边，补一条内凹边和左侧栏槽位对齐 */
+.lib-thumb {
+  border: 2px solid;
+  border-color: #0a0806 #5c4c38 #5c4c38 #0a0806;
+}
+
+/* 主操作按钮：草方块顶面 + 草绿遮罩 */
+.sb-new,
+.send-btn,
+.dialog-btn.primary,
+.btn.primary {
+  background-color: #4a8a30;
+  background-image: var(--mc-tex-grass-tint), var(--mc-tex-grass-top);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+}
+
+/* 悬停：同一草皮贴图 + 稍亮的草绿遮罩，避免退回纯灰 */
+.sb-new:hover,
+.send-btn:hover:not(:disabled),
+.dialog-btn.primary:hover:not(:disabled),
+.btn.primary:hover:not(:disabled) {
+  background-color: #5aa83c;
+  background-image:
+    linear-gradient(rgba(110, 180, 76, 0.5), rgba(110, 180, 76, 0.5)),
+    var(--mc-tex-grass-top);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+}
+
+/* 贴图底上的文字：加深色硬阴影保住可读性 */
+.sb-title,
+.chat-title,
+.chat-sub,
+.settings-nav-label {
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.55);
+}
+
+/* 贴图容器上的 pixelated 会继承到内容图片，用户截图/缩略图保持平滑缩放 */
+img { image-rendering: auto; }
+
+/* ---- I. 左栏层次：项目条 / 会话行 / 底部入口 --------------------------- */
+/* 项目行：深色橡木木板条 + 草绿左侧标识，作为分组标题，不再是灰色按钮 */
+.sb-group .sb-project {
+  background-color: #2a231b;
+  background-image:
+    linear-gradient(rgba(16, 13, 10, 0.5), rgba(16, 13, 10, 0.5)),
+    var(--mc-tex-dark-oak);
+  background-size: auto, var(--mc-tex-size) var(--mc-tex-size);
+  background-repeat: repeat, repeat;
+  image-rendering: pixelated;
+  border: 0;
+  border-left: 3px solid #5d8c2f;
+  border-bottom: 2px solid #14100b;
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  color: var(--label-primary);
+  font-weight: 500;
+}
+.sb-group .sb-project:hover {
+  background-color: #332b21;
+  border-left-color: #8bdc5a;
+}
+.sb-group .sb-project:active { transform: none; }
+.sb-project .sb-folder { font-size: 10px; }
+
+/* 会话行：扁平列表项，只有悬停/选中才亮，与项目条拉开层次 */
+.sb-session {
+  background: transparent;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--label-secondary);
+}
+.sb-session:hover {
+  background: rgba(126, 217, 87, 0.1);
+  border-left-color: rgba(93, 140, 47, 0.55);
+  color: var(--label-primary);
+}
+.sb-session:active { transform: none; }
+.sb-session .sb-time { color: var(--label-caption); }
+
+/* 底部入口（文档素材库 / 设置）：与列表行同款扁平行 */
+.sb-settings {
+  background: transparent;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+.sb-settings:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-left-color: rgba(93, 140, 47, 0.45);
+}
+.sb-settings:active { transform: none; }
+
+/* 行内/标题栏的小图标按钮：扁平，悬停才出现草绿底 */
+.sb-icon-btn {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--label-tertiary);
+  text-shadow: none;
+  font-size: 14px;
+  line-height: 1;
+}
+.sb-icon-btn:hover {
+  background: rgba(126, 217, 87, 0.14);
+  color: var(--accent);
+}
+.sb-icon-btn:active { transform: none; }
+
+/* 左栏滚动条：细、无轨道、深木色半透明滑块，避免亮灰块突兀 */
+.sb-scroll { scrollbar-width: thin; scrollbar-color: rgba(22, 18, 13, 0.55) transparent; }
+.sb-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.sb-scroll::-webkit-scrollbar-track { background: transparent; border: 0; }
+.sb-scroll::-webkit-scrollbar-thumb {
+  background: rgba(22, 18, 13, 0.55);
+  border: 0;
+  border-radius: 0;
+}
+.sb-scroll::-webkit-scrollbar-thumb:hover { background: rgba(22, 18, 13, 0.78); }
+.sb-scroll::-webkit-scrollbar-corner { background: transparent; }

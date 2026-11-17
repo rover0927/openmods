@@ -15,10 +15,15 @@ export interface SessionMeta {
   /** 子代理：父会话 id */
   parentId?: string
   /**
-   * 会话所属画布 id（durable，等价 dsh 会话头部的 cwd）。
-   * 根会话 = 自己的 id；子代理创建时继承父会话的值，因此整棵树读写同一块画布。
+   * 会话的**活跃画布** id（durable，等价 dsh 会话头部的 cwd）。
+   * 根会话 = 自己的 id；建模子代理创建时用自己的 id（独立画布）。
    */
   canvasId?: string
+  /**
+   * 会话拥有的画布集合（durable）。老会话没有这个字段时运行时按 `[canvasId]` 计算，
+   * 不回填写盘；只有新建画布时才主动追加。
+   */
+  canvasIds?: string[]
   /** 会话绑定的本地工作目录（左栏显示；mcdev 工具的相对根） */
   cwd?: string
   /** 计划模式（只读出方案；持久化，重开/重启后仍然有效） */

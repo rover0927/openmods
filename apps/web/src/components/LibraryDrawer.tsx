@@ -372,15 +372,15 @@ export function LibraryDrawer({ open, sessionId, onClose, onToast, onOpenSession
               return (
                 <div className={`lib-card ${a.editingSessionId ? 'editing' : ''}`} key={a.id}>
                   <div className="lib-thumb">
-                    {/* 多色模型：调色板拼图比"首张贴图"（往往只是一块底色）更有辨识度 */}
-                    {(a.palette?.length ?? 0) >= 2 ? (
+                    {/* 优先 3D 模型预览（渲染不出模型时才用调色板拼图占位） */}
+                    {a.hasThumb ? (
+                      <img src={api.libraryThumb(a.id, a.updatedAt ?? a.createdAt)} alt={a.name} loading="lazy" />
+                    ) : (a.palette?.length ?? 0) >= 2 ? (
                       <span className="lib-swatch" title={`配色：${a.palette!.slice(0, 8).map(c => `#${c}`).join(' ')}`}>
                         {a.palette!.slice(0, 8).map(c => (
                           <i key={c} style={{ background: `#${c}` }} />
                         ))}
                       </span>
-                    ) : a.hasThumb ? (
-                      <img src={api.libraryThumb(a.id, a.updatedAt ?? a.createdAt)} alt={a.name} loading="lazy" />
                     ) : (
                       <span className="lib-thumb-empty">{a.jar ? `⬢ ${fmtSize(a.jar.size)}` : '无预览'}</span>
                     )}

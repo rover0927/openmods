@@ -91,7 +91,7 @@ export function SubagentActivity(props: {
             {s.status === 'running' && (
               <button className="sa-open" onClick={() => props.onStop(s.id)} title="中止这个子代理">停止</button>
             )}
-            <button className="sa-open" onClick={() => props.onOpen(s.id)} title="打开这个子代理的对话（画布共用）">对话</button>
+            <button className="sa-open" onClick={() => props.onOpen(s.id)} title="打开这个子代理的对话（独立画布）">对话</button>
           </div>
         ))}
       </div>

@@ -5,7 +5,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve, sep } from 'node:path'
 import type { Plugin, ToolExecContext, ToolDef, ToolResult } from '@openmods/plugin-kit'
 import { WORKSPACE_TOOL_NAMES } from '@openmods/plugin-kit'
-import { createDoc, addCube, addGroup, findGroup, docCounts, outlineText, type BbDoc, type BbAnimation, type BbAnimKeyframe } from './bbmodel.js'
+import { createDoc, addCube, addGroup, findGroup, docCounts, outlineText, type BbDoc, type BbGroup, type BbAnimation, type BbAnimKeyframe } from './bbmodel.js'
 import { materialListForPrompt, resolveColor } from './materials.js'
 import { solidPngDataUrl } from './png.js'
 
@@ -65,7 +65,7 @@ const tools: ToolDef[] = [
   {
     name: 'create_model',
     mutates: true,
-    description: '创建新的空白模型项目（清空当前会话画布）。画布是主代理与所有子代理共享的：已有部件时默认拒绝，确需清空重做要显式传 reset:true。',
+    description: '创建新的空白模型项目（清空**当前会话的活跃画布**）；画布已有部件时默认拒绝，确需清空重做要显式传 reset:true。',
     parameters: {
       type: 'object',
       properties: {
@@ -79,7 +79,7 @@ const tools: ToolDef[] = [
       const count = existing?.elements.length ?? 0
       if (count > 0 && args.reset !== true) {
         return {
-          forModel: `画布上已经有 ${count} 个部件——这是与主代理/其它子代理共享的画布，不能直接清空。继续在当前工程上增量建模即可（先 list_outline 看结构）；确实要清空重做，请带 reset:true 再调用。`,
+          forModel: `当前活跃画布已有 ${count} 个部件。继续增量建模即可（先 list_outline 看结构）；确实要清空重做，请带 reset:true 再调用。`,
           isError: true,
         }
       }
@@ -322,7 +322,7 @@ const tools: ToolDef[] = [
   },
   {
     name: 'canvas_export',
-    description: '把当前画布工程**完整**导出为 Blockbench 项目 JSON 写入会话工作目录：全部分组骨骼与 pivot、每个方块的 from/to/rotation/UV、全部贴图（dataURL）、全部动画关键帧——与用户在画布上看到的 100% 一致。这是把画布模型落地成文件的唯一可靠途径：不要派子代理"抄写"画布（读 193 个方块再吐出来必然截断/失真），不要用原版 item 模型导出（没有骨骼概念，分组/pivot/动画全丢）。导出后用脚本解析这个 JSON 生成模型类/贴图即可。',
+    description: '把**当前活跃画布**的完整工程导出为 Blockbench 项目 JSON 写入会话工作目录：全部分组骨骼与 pivot、每个方块的 from/to/rotation/UV、全部贴图（dataURL）、全部动画关键帧——与用户在画布上看到的 100% 一致。这是把画布模型落地成文件的唯一可靠途径：不要派子代理"抄写"画布（读 193 个方块再吐出来必然截断/失真），不要用原版 item 模型导出（没有骨骼概念，分组/pivot/动画全丢）。导出后用脚本解析这个 JSON 生成模型类/贴图即可。',
     parameters: {
       type: 'object',
       properties: {
@@ -350,19 +350,141 @@ const tools: ToolDef[] = [
       walk(doc.outliner ?? [])
       const kb = Math.round(Buffer.byteLength(json) / 1024)
       return ok([
-        `已导出画布工程 → ${rel}（${kb} KB）`,
+        `已导出当前活跃画布工程 → ${rel}（${kb} KB）`,
         `内容：${doc.elements.length} 个方块、${groups.length} 个分组骨骼、${doc.textures.length} 张贴图（dataURL 内嵌）、${doc.animations.length} 套动画关键帧。`,
-        `骨骼树（outliner）、每块的 from/to/rotation、贴图引用与 UV、动画 bones 关键帧全部在内，与画布所见一致。直接解析此文件生成模型/贴图，不要再派子代理读画布。`,
+        `骨骼树（outliner）、每块的 from/to/rotation、贴图引用与 UV、动画 bones 关键帧全部在内，与当前活跃画布所见一致。直接解析此文件生成模型/贴图，不要再派子代理读画布。`,
       ].join('\n'))
+    },
+  },
+  {
+    name: 'split_canvas_group',
+    mutates: true,
+    description: '把当前活跃画布上的一个**顶层分组**（含子树）迁移到指定**直属子代理**的画布，并把几何平移到原点；用于修复旧版"所有子代理共用一块画布"留下的堆叠模型。动画不随分组迁移。',
+    parameters: {
+      type: 'object',
+      properties: {
+        group: { type: 'string', description: '当前活跃画布上的顶层分组名' },
+        target_session: { type: 'string', description: '目标直属子代理的会话 id（用 list_subagents 查）' },
+      },
+      required: ['group', 'target_session'],
+    },
+    async execute(args, ctx) {
+      const sourceCanvas = ctx.canvas.idOf(ctx.sessionId)
+      const targetSession = String(args.target_session ?? '').trim()
+      const groupName = String(args.group ?? '').trim()
+      if (targetSession === ctx.sessionId) {
+        return { forModel: '目标必须是子代理会话，不能是当前会话。', isError: true }
+      }
+      if (!groupName) return { forModel: '缺少 group（顶层分组名）。', isError: true }
+
+      const treeIds = new Set(ctx.canvas.listTree(ctx.sessionId).map(c => c.canvasId))
+      const targetActive = ctx.canvas.idOf(targetSession)
+      if (!treeIds.has(targetActive)) {
+        return { forModel: 'target_session 不是本会话的直属子代理（用 list_subagents 查子代理 id）。', isError: true }
+      }
+
+      const doc = ctx.canvas.read(ctx.sessionId) as BbDoc | undefined
+      if (!doc) return { forModel: '当前活跃画布还没有内容。', isError: true }
+      // 只认顶层分组：顶层字符串项是元素，嵌套分组要迁移得先把它提到顶层
+      const node = (doc.outliner ?? []).find(n => typeof n !== 'string' && n.name === groupName) as BbGroup | undefined
+      if (!node) {
+        const tops = (doc.outliner ?? []).filter((n): n is BbGroup => typeof n !== 'string').map(n => n.name)
+        return { forModel: `顶层分组 "${groupName}" 不存在（只能迁移顶层分组）。现有顶层分组：${tops.join('、') || '无——先用 list_outline 查看结构'}。`, isError: true }
+      }
+
+      const uuids = new Set<string>()
+      collectGroupUuids(node, uuids)
+      const moving = (doc.elements ?? []).filter(e => uuids.has(e.uuid))
+
+      // 平移量 = 被迁移元素每轴最小坐标（空分组取分组 origin），迁移时每轴减去它
+      const shift = [0, 0, 0]
+      if (moving.length) {
+        for (let axis = 0; axis < 3; axis++) {
+          const values = moving.flatMap(e => [Number(e.from[axis]) || 0, Number(e.to[axis]) || 0])
+          shift[axis] = Math.min(...values)
+        }
+      } else {
+        for (let axis = 0; axis < 3; axis++) shift[axis] = Number(node.origin?.[axis] ?? 0) || 0
+      }
+
+      let targetCanvasId: string
+      let targetDoc: BbDoc
+      let created = false
+      if (targetActive === sourceCanvas) {
+        // 旧共享画布：给该子代理新建一块独立画布并设为活跃
+        created = true
+        targetCanvasId = ctx.canvas.createCanvas(targetSession, { name: groupName, activate: true })
+        targetDoc = ctx.canvas.readCanvas(targetCanvasId) as BbDoc
+      } else {
+        targetCanvasId = targetActive
+        const existing = ctx.canvas.readCanvas(targetCanvasId) as BbDoc | null
+        if ((existing?.elements?.length ?? 0) > 0) {
+          return { forModel: '目标子代理的画布不是空的（已有部件）。换一个空画布的子代理，或先清空它的画布。', isError: true }
+        }
+        targetDoc = existing ?? createDoc('未命名模型')
+      }
+
+      const moved = moving.map(e => {
+        const el = structuredClone(e)
+        el.from = el.from.map((v, axis) => Number(v) - shift[axis])
+        el.to = el.to.map((v, axis) => Number(v) - shift[axis])
+        return el
+      })
+      const copyGroup = (g: BbGroup): BbGroup => ({
+        name: g.name,
+        uuid: g.uuid,
+        origin: (g.origin ?? [0, 0, 0]).map((v, axis) => Number(v) - shift[axis]),
+        children: g.children.map(c => (typeof c === 'string' ? c : copyGroup(c))),
+      })
+
+      // 贴图按 uuid 一起搬过去，避免目标画布丢材质
+      const texIds = new Set(targetDoc.textures.map(t => t.uuid))
+      for (const el of moved) {
+        for (const face of Object.values(el.faces ?? {})) {
+          const texId = (face as any)?.texture
+          if (!texId || texIds.has(texId)) continue
+          const tex = (doc.textures ?? []).find(t => t.uuid === texId)
+          if (!tex) continue
+          targetDoc.textures.push(structuredClone(tex))
+          texIds.add(texId)
+        }
+      }
+
+      targetDoc.elements.push(...moved)
+      targetDoc.outliner.push(copyGroup(node))
+      if (targetDoc.name === '未命名模型') targetDoc.name = groupName
+
+      doc.elements = (doc.elements ?? []).filter(e => !uuids.has(e.uuid))
+      doc.outliner = (doc.outliner ?? []).filter(n => (typeof n === 'string' ? !uuids.has(n) : n.uuid !== node.uuid))
+      ctx.canvas.commit(ctx.sessionId, doc)
+      ctx.canvas.commitCanvas(targetCanvasId, targetDoc, targetSession)
+
+      const boneNames = new Set<string>()
+      const walkBones = (g: BbGroup) => {
+        boneNames.add(g.name)
+        for (const c of g.children) if (typeof c !== 'string') walkBones(c)
+      }
+      walkBones(node)
+      const stuckAnims = (doc.animations ?? []).filter(a => Object.keys(a.bones ?? {}).some(b => boneNames.has(b)))
+
+      const offset = shift.map(v => -v)
+      const lines = [
+        `已把顶层分组 "${groupName}" 迁移到子代理画布：${moved.length} 个方块，平移量 [${offset.map(v => +(Number(v) || 0).toFixed(2)).join(', ')}]。`,
+        `目标会话：${targetSession} · 目标画布：${targetCanvasId}${created ? '（旧共享画布场景：已为它新建独立画布并设为活跃）' : ''}`,
+        `源画布剩余 ${doc.elements.length} 个部件。目标子代理画布已置为活跃，可在右侧拓展的画布页签查看。`,
+      ]
+      if (stuckAnims.length) {
+        lines.push(`注意：动画 ${stuckAnims.map(a => a.name).join('、')} 仍引用被迁移的骨骼名，相关动画仍留在源画布。`)
+      }
+      return ok(lines.join('\n'))
     },
   },
 ]
 
 /** modeling 子代理的提示词归画布插件：关掉 canvas 开关后画布工具与角色一起消失 */
-const MODELING_PROMPT = '你是建模子代理（modeling）：执行主代理派发的建模/动画任务。你工作在**当前会话的画布**上（与主代理、其它子代理共用同一份工程），'
-  + '你的每次修改都会实时显示给用户，因此要只做自己负责的部分、增量追加，不要清空或重建整个工程。'
-  + '动手前先 list_outline 看清已有分组与部件：已有同名骨骼（如 head、body）就直接往里加，用 place_cubes 的 group 参数指定父分组；'
-  + '确实需要新骨骼时才 add_group。除非主代理明确要求重做，否则不要调用 create_model（它会清空共享画布）。'
+const MODELING_PROMPT = '你是建模子代理（modeling）：执行主代理派发的建模/动画任务。你拥有本次建模的**独立画布**（本会话的活跃画布），不与主代理或其它子代理共用，你的每次修改都会实时显示给用户。'
+  + '通常画布是空的，直接 create_model 建工程，从**原点**开始搭建；不要为了避让他人做 X/Y/Z 偏移。'
+  + '若画布已有内容（用户预置或上一步留下的），先 list_outline 核对，用 place_cubes 的 group 参数增量追加：已有同名骨骼（如 head、body）就直接往里加，确实需要新骨骼时才 add_group；只有任务要求重做时才 create_model（会清空**当前活跃画布**）。'
   + '收尾一次简短总结（你新增/修改了什么、部件数、画布现状），不与用户寒暄，不派发任务。'
   + '总结最后一行固定写「验收点：……」——列出你最没把握、最需要用户亲自确认的部位/动画/比例，供主代理在向用户请求验收时转述；'
   + '自己拿不准的设计决定不要硬猜，在总结里写成待确认项。'

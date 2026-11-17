@@ -81,7 +81,7 @@ export function AskDialog(props: {
   }
 
   return (
-    <div className="ask-backdrop" role="dialog" aria-modal="true" aria-label="需要你的确认">
+    <div className="ask-backdrop" role="dialog" aria-modal="false" aria-label="需要你的确认">
       <div className="ask-card">
         <div className="ask-head">
           <span className={`ask-kind ${ask.kind}`}>

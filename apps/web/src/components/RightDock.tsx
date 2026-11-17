@@ -1,25 +1,28 @@
 import { useCallback, useRef, useState, type RefObject } from 'react'
-import type { CanvasState, SessionImageDto, SessionSummaryDto, StatsDto, TerminalDto, TodoItemDto } from '../types.js'
+import type {
+  CanvasPageDto, CanvasRefDto, CanvasState, SessionImageDto, SessionSummaryDto, StatsDto, TerminalDto, TodoItemDto,
+} from '../types.js'
 import { CanvasPane } from './CanvasPane.js'
 import { StatsTab } from './StatsTab.js'
 import { FilesPane, ImagesPane, WebPane } from './DockPreview.js'
 import { TerminalPane } from './TerminalPane.js'
 import { PlanPane } from './PlanPane.js'
+import { McIcon, type McIconName } from './McIcon.js'
 
 export type DockTabId = 'canvas' | 'subagents' | 'stats' | 'images' | 'files' | 'web' | 'terminal' | 'plan'
 
 /** 可开的所有标签（顺序即 ＋ 菜单顺序） */
 export const DOCK_TABS: DockTabId[] = ['canvas', 'images', 'files', 'web', 'terminal', 'plan', 'subagents', 'stats']
 
-const TAB_META: Record<DockTabId, { label: string; icon: string }> = {
-  canvas: { label: '建模', icon: '◧' },
-  images: { label: '图片', icon: '▦' },
-  files: { label: '文件', icon: '▣' },
-  web: { label: '网页', icon: '◫' },
-  terminal: { label: '终端', icon: '▻' },
-  plan: { label: '计划', icon: '☰' },
-  subagents: { label: '子代理', icon: '◉' },
-  stats: { label: '上下文', icon: '▤' },
+const TAB_META: Record<DockTabId, { label: string; icon: McIconName }> = {
+  canvas: { label: '建模', icon: 'canvas' },
+  images: { label: '图片', icon: 'images' },
+  files: { label: '文件', icon: 'files' },
+  web: { label: '网页', icon: 'web' },
+  terminal: { label: '终端', icon: 'terminal' },
+  plan: { label: '计划', icon: 'plan' },
+  subagents: { label: '子代理', icon: 'subagents' },
+  stats: { label: '上下文', icon: 'stats' },
 }
 
 function statusLabel(status: string): string {
@@ -48,14 +51,30 @@ export function RightDock(props: {
   onClose: (tab: DockTabId) => void
   onOpen: (tab: DockTabId) => void
   canvas: CanvasState
-  /** 当前画布所属会话（查看子代理时显示其名称） */
+  /** 当前页画布的归属（「独立画布 · 子代理名」） */
   canvasOwner?: string
-  /** 画布多开标签：'session' = 会话画布，其余 = 素材库打开的只读标签 */
-  canvasTabs: { assetId: string; name: string }[]
-  activeCanvasTab: 'session' | string
-  sessionCanvasDirty: boolean
-  onSwitchCanvasTab: (tab: 'session' | string) => void
-  onCloseCanvasTab: (assetId: string) => void
+  /** 建模页签：画布页（key=canvasId）/ 素材只读预览 / 空白页 */
+  canvasPages: CanvasPageDto[]
+  /** 当前选中的页签 key */
+  activeCanvasPage: string
+  /** 画布页 key → 有未查看的改动（素材页签不参与） */
+  canvasDirty: Record<string, boolean>
+  /** 会话树里的全部画布（页签名称/活跃徽标 + 空白页的选择列表） */
+  canvases: CanvasRefDto[]
+  /** 当前会话的活跃画布：下载按钮只对它可用 */
+  activeSessionCanvasId: string
+  onSwitchCanvasPage: (key: string) => void
+  onCloseCanvasPage: (key: string) => void
+  /** ＋：新建一个空白页（不建后端画布） */
+  onNewBlankPage: () => void
+  /** 空白页里点选一块画布：在原页打开并开始监听 */
+  onPickCanvas: (canvasId: string) => void
+  /** 空白页底部：调用接口新建一块空白画布 */
+  onCreateCanvas: () => void
+  /** 把当前页画布设为其 owner 会话的活跃画布 */
+  onActivateCanvas: () => void
+  /** 重新拉一次当前画布页的模型（没有缓存时用） */
+  onReloadCanvas: () => void
   onOpenLibrary: () => void
   iframeRef: RefObject<HTMLIFrameElement>
   onIframeReady: () => void
@@ -114,7 +133,7 @@ export function RightDock(props: {
   if (props.collapsed) {
     return (
       <aside className="dock collapsed">
-        <button className="dock-expand" onClick={props.onToggle} title="展开右侧拓展">◧ 拓展</button>
+        <button className="dock-expand" onClick={props.onToggle} title="展开右侧拓展"><McIcon name="canvas" size={16} /> 拓展</button>
       </aside>
     )
   }
@@ -122,6 +141,26 @@ export function RightDock(props: {
   const available = props.availableTabs ?? DOCK_TABS
   const active = props.active && props.tabs.includes(props.active) ? props.active : (props.tabs[0] ?? null)
   const closedTabs = available.filter(t => !props.tabs.includes(t))
+
+  /** 建模页签：当前页 & 当前页对应的画布引用（页签名/活跃徽标/下载可用性都看它） */
+  const activePage = props.canvasPages.find(p => p.key === props.activeCanvasPage) ?? null
+  const activeCanvasRef = activePage?.kind === 'canvas'
+    ? props.canvases.find(c => c.canvasId === activePage.key) ?? null
+    : null
+  const canDownload = activePage?.kind === 'canvas' && !!props.activeSessionCanvasId
+    && activePage.key === props.activeSessionCanvasId
+  const pageLabel = (p: CanvasPageDto) => {
+    if (p.kind === 'asset') return p.assetName || '素材预览'
+    if (p.kind === 'blank') return '空白页'
+    const ref = props.canvases.find(c => c.canvasId === p.key)
+    return ref?.name || '未命名模型'
+  }
+  const pageSource = (p: CanvasPageDto) => {
+    if (p.kind === 'asset') return '素材预览'
+    if (p.kind === 'blank') return ''
+    return props.canvases.find(c => c.canvasId === p.key)?.ownerName ?? ''
+  }
+  const showPicker = !activePage || activePage.kind === 'blank'
 
   return (
     <aside className="dock" style={{ width: props.width }}>
@@ -138,7 +177,7 @@ export function RightDock(props: {
                 onClick={() => props.onSelect(t)}
                 title={`切换到${TAB_META[t].label}`}
               >
-                <span aria-hidden="true">{TAB_META[t].icon}</span>
+                <McIcon name={TAB_META[t].icon} size={16} />
                 {TAB_META[t].label}
                 {t === 'subagents' && props.subagents.length > 0 ? ` ${props.subagents.length}` : ''}
                 {t === 'terminal' && props.terminals.length > 0 ? ` ${props.terminals.length}` : ''}
@@ -150,10 +189,18 @@ export function RightDock(props: {
         </div>
         <div className="dock-head-actions">
           {active === 'canvas' && props.canvasOwner && (
-            <span className="dock-owner" title="子代理与主会话共用同一块画布">{props.canvasOwner}</span>
+            <span className="dock-owner" title="每个子代理在自己的独立画布上建模，这里只是查看其中一块">{props.canvasOwner}</span>
+          )}
+          {active === 'canvas' && activeCanvasRef && !activeCanvasRef.active && (
+            <button className="dock-act" onClick={props.onActivateCanvas} title="把这块画布设为它所属会话的活跃画布">设为活跃</button>
           )}
           {active === 'canvas' && (
-            <button className="dock-act" onClick={props.onDownload} title="下载当前模型">下载</button>
+            <button
+              className="dock-act"
+              onClick={props.onDownload}
+              disabled={!canDownload}
+              title={canDownload ? '下载当前模型' : '只有当前会话的活跃画布可以下载；先在页头把这块画布「设为活跃」'}
+            >下载</button>
           )}
           <button className="dock-act" onClick={props.onToggle} title="折叠右侧拓展">»</button>
         </div>
@@ -170,7 +217,7 @@ export function RightDock(props: {
                 className="dock-menu-item"
                 onClick={() => { props.onOpen(t); setMenuOpen(false) }}
               >
-                <span aria-hidden="true">{TAB_META[t].icon}</span> {TAB_META[t].label}
+                <McIcon name={TAB_META[t].icon} size={16} /> {TAB_META[t].label}
               </button>
             ))}
             {props.tabs.length > 0 && (
@@ -197,37 +244,70 @@ export function RightDock(props: {
 
         {active === 'canvas' && (
           <div className="dock-pane">
-            {/* 画布多开：会话画布 + 素材库打开的模型（只读预览，互不覆盖） */}
+            {/* 多画布页签：主会话/子代理各自一块画布 + 素材只读预览 + 空白页 */}
             <div className="canvas-tabs">
-              <button
-                className={`canvas-tab ${props.activeCanvasTab === 'session' ? 'active' : ''}`}
-                onClick={() => props.onSwitchCanvasTab('session')}
-                title={props.canvas.modelName || '会话画布（AI 工具的工作区）'}
-              >
-                {props.sessionCanvasDirty && props.activeCanvasTab !== 'session' && <span className="canvas-tab-dirty" title="会话画布有新改动">●</span>}
-                <span className="canvas-tab-label">{props.canvas.modelName || '会话画布'}</span>
-              </button>
-              {props.canvasTabs.map(t => (
-                <button
-                  key={t.assetId}
-                  className={`canvas-tab ${props.activeCanvasTab === t.assetId ? 'active' : ''}`}
-                  onClick={() => props.onSwitchCanvasTab(t.assetId)}
-                  title={`素材：${t.name}（只读预览；要修改请用素材库的「接着改」）`}
-                >
-                  <span className="canvas-tab-label">{t.name}</span>
-                  <span
-                    className="canvas-tab-close"
-                    onClick={e => { e.stopPropagation(); props.onCloseCanvasTab(t.assetId) }}
-                    title="关闭标签"
-                  >✕</span>
+              {props.canvasPages.map(p => {
+                const ref = p.kind === 'canvas' ? props.canvases.find(c => c.canvasId === p.key) : null
+                const src = pageSource(p)
+                return (
+                  <button
+                    key={p.key}
+                    className={`canvas-tab ${props.activeCanvasPage === p.key ? 'active' : ''}`}
+                    onClick={() => props.onSwitchCanvasPage(p.key)}
+                    title={p.kind === 'asset'
+                      ? `素材：${pageLabel(p)}（只读预览；要修改请用素材库的「接着改」）`
+                      : p.kind === 'blank' ? '空白页：从列表里选一块画布' : `${pageLabel(p)}${src ? ` · ${src}` : ''}${ref?.active ? ' · 活跃画布' : ''}`}
+                  >
+                    {props.canvasDirty[p.key] && props.activeCanvasPage !== p.key && (
+                      <span className="canvas-tab-dirty" title="这块画布有新改动">●</span>
+                    )}
+                    <span className="canvas-tab-label">{pageLabel(p)}</span>
+                    {src && <span className="canvas-tab-src">{src}</span>}
+                    {ref?.active && <span className="canvas-tab-badge" title="这是它所属会话的活跃画布">活跃</span>}
+                    <span
+                      className="canvas-tab-close"
+                      onClick={e => { e.stopPropagation(); props.onCloseCanvasPage(p.key) }}
+                      title="关闭页签"
+                    >✕</span>
+                  </button>
+                )
+              })}
+              <button className="canvas-tab add" onClick={props.onNewBlankPage} title="新建一个空白画布页">＋</button>
+              <button className="canvas-tab add" onClick={props.onOpenLibrary} title="从素材库打开模型（只读预览，不影响会话画布）">▤</button>
+            </div>
+            {showPicker ? (
+              <div className="canvas-picker">
+                <div className="canvas-picker-head">选择要查看的画布（主会话与每个子代理各有一块）</div>
+                {props.canvases.length === 0 && (
+                  <div className="canvas-picker-empty">还没有可用画布。发送第一条消息后，主会话会创建画布；子代理也会各自建一块。</div>
+                )}
+                {props.canvases.map(c => (
+                  <button key={c.canvasId} className="canvas-pick-row" onClick={() => props.onPickCanvas(c.canvasId)}>
+                    <span className="canvas-pick-main">
+                      <span className="canvas-pick-name">
+                        {c.name || '未命名模型'}
+                        {c.active && <span className="canvas-tab-badge">活跃</span>}
+                      </span>
+                      <span className="canvas-pick-sub">{c.ownerName} · {c.elements} 个部件 · {c.textures} 张贴图</span>
+                    </span>
+                  </button>
+                ))}
+                <button className="canvas-pick-new" disabled={!props.sessionId} onClick={props.onCreateCanvas} title="在当前会话下新建一块空白画布并设为活跃">
+                  ＋ 新建空白画布
                 </button>
-              ))}
-              <button className="canvas-tab add" onClick={props.onOpenLibrary} title="从素材库打开模型（新标签，不影响会话画布）">＋</button>
-            </div>
-            <div className="dock-canvas">
-              <CanvasPane canvas={props.canvas} iframeRef={props.iframeRef} onIframeReady={props.onIframeReady} />
-            </div>
-            {props.activeAnimations.length > 0 && (
+              </div>
+            ) : (
+              <div className="dock-canvas">
+                <CanvasPane
+                  canvas={props.canvas}
+                  iframeRef={props.iframeRef}
+                  onIframeReady={props.onIframeReady}
+                  onReload={props.onReloadCanvas}
+                  reloadEnabled={activePage?.kind === 'canvas' && !props.canvas.hasModel}
+                />
+              </div>
+            )}
+            {!showPicker && props.activeAnimations.length > 0 && (
               <div className="anim-strip">
                 <span className="anim-label dim">动画</span>
                 <div className="anim-chips">
@@ -248,28 +328,30 @@ export function RightDock(props: {
                 </div>
               </div>
             )}
-            <div className="dock-composer">
-              {!props.canvas.hasModel && (
-                <div className="suggestions">
-                  {props.suggestions.map(s => (
-                    <button key={s} className="suggestion" disabled={props.busy} onClick={() => props.onSuggestion(s)}>{s}</button>
-                  ))}
+            {!showPicker && (
+              <div className="dock-composer">
+                {!props.canvas.hasModel && (
+                  <div className="suggestions">
+                    {props.suggestions.map(s => (
+                      <button key={s} className="suggestion" disabled={props.busy} onClick={() => props.onSuggestion(s)}>{s}</button>
+                    ))}
+                  </div>
+                )}
+                {props.pendingAtts.length > 0 && (
+                  <div className="attach-row" style={{ padding: 0 }}>
+                    {props.pendingAtts.map((a, i) => (
+                      <span key={i} className="attach-thumb" title={a.name}>
+                        <img src={a.dataUrl} alt={a.name} />
+                        <button className="attach-remove" onClick={() => props.onRemoveDockAtt(i)} title="移除">✕</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="input-foot dim">
+                  在中间输入框输入并回车发送。{props.modelTagline}
                 </div>
-              )}
-              {props.pendingAtts.length > 0 && (
-                <div className="attach-row" style={{ padding: 0 }}>
-                  {props.pendingAtts.map((a, i) => (
-                    <span key={i} className="attach-thumb" title={a.name}>
-                      <img src={a.dataUrl} alt={a.name} />
-                      <button className="attach-remove" onClick={() => props.onRemoveDockAtt(i)} title="移除">✕</button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div className="input-foot dim">
-                在中间输入框输入并回车发送。{props.modelTagline}
               </div>
-            </div>
+            )}
           </div>
         )}
 

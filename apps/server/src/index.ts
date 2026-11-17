@@ -225,7 +225,7 @@ function saveSkillsOverrides() {
 if (bootFeatures.canvas !== false) {
 tools.push({
   name: 'spawn_modeling_subagent',
-  description: '在当前会话里派发一个建模/动画任务（后台并行，共享当前画布）。可连续调用多次，同时派出多个子代理并行工作；它们的改动会实时出现在同一块画布上。立即返回子代理名，随后你就该结束这一轮——主会话进入等待态（用户不能插话），全部子代理结算后系统会自动开一轮汇总回合，把它们的收尾汇报交给你。不要轮询 list_subagents 等结果。description 为 3-5 字任务简述（面板展示），prompt 为完整任务描述（外形/配色/细节/动画；多子代理时写明各自负责的部件，避免抢同一块）。',
+  description: '在当前会话里派发一个建模/动画任务（后台并行，每个子代理在自己的独立画布上建模）。可连续调用多次，同时派出多个子代理并行工作；它们各自在自己的独立画布上建模，画布可通过右侧拓展页签查看，互不覆盖。立即返回子代理名，随后你就该结束这一轮——主会话进入等待态（用户不能插话），全部子代理结算后系统会自动开一轮汇总回合，把它们的收尾汇报交给你。不要轮询 list_subagents 等结果。description 为 3-5 字任务简述（面板展示），prompt 为完整任务描述（外形/配色/细节/动画；多子代理时写明各自负责的部件）。',
   parameters: {
     type: 'object',
     properties: {
@@ -244,7 +244,7 @@ tools.push({
       name: args.name ? String(args.name).trim() : undefined,
     })
     return {
-      forModel: `started subagent ${child.agentName}（${child.id}，后台运行）。它和你在同一会话、共用当前画布，改动会实时显示。本轮到此即可收尾：主会话进入等待态，全部子代理结算后系统自动开一轮汇总回合，把结果交给你；不要轮询等结果。`,
+      forModel: `started subagent ${child.agentName}（${child.id}，后台运行）。它和你在同一会话、在自己的独立画布上建模（画布可通过右侧拓展页签查看），改动会实时显示。本轮到此即可收尾：主会话进入等待态，全部子代理结算后系统自动开一轮汇总回合，把结果交给你；不要轮询等结果。`,
     }
   },
 })
@@ -361,11 +361,13 @@ interface SessionEntry {
   sse: SseWriter
   abortController: AbortController | null
   busy: boolean
-  /** root=主会话；subagent=子代理（同一会话树里的一个 agent，共享画布，不是独立 workspace） */
+  /** root=主会话；subagent=子代理（同一会话树里的一个 agent，各自拥有独立画布） */
   mode: 'root' | 'subagent'
   parentId?: string
-  /** 会话所属画布（durable；子代理继承父会话，整棵树读写同一份文档） */
+  /** 会话的活跃画布（durable；模型工具、导出、素材捕获都只作用到它） */
   canvasId: string
+  /** 会话拥有的画布集合（durable；老会话缺省时运行时不回填，按单一活跃画布计算） */
+  canvasIds?: string[]
   agentName?: string
   description?: string
   /** 本会话使用的代理角色（lead / mcmod / modeling）；每个回合都可以切换 */
@@ -451,7 +453,7 @@ class SseWriter {
 
 
 type MetaFields = Partial<Pick<SessionEntry,
-  'mode' | 'parentId' | 'canvasId' | 'agentName' | 'description' | 'status' | 'lastError' | 'lastText' | 'durationMs' | 'outputTokens'>>
+  'mode' | 'parentId' | 'canvasId' | 'canvasIds' | 'agentName' | 'description' | 'status' | 'lastError' | 'lastText' | 'durationMs' | 'outputTokens'>>
 
 /** 会话元数据落盘：模型选择 + 创建时间 + 标题 + 画布归属 + 子代理结果。任何"会话状态变了"的时机都要调它 */
 function persistMeta(entry: SessionEntry) {
@@ -463,6 +465,8 @@ function persistMeta(entry: SessionEntry) {
     }
     // 画布归属是 durable 契约：等价 dsh 把 cwd 钉在会话头部
     if (entry.canvasId) patch.canvasId = entry.canvasId
+    // 画布集合：只在已知（新建/已登记）时写，老会话缺字段不回填
+    if (entry.canvasIds?.length) patch.canvasIds = entry.canvasIds
     // 工作目录同样 durable（左栏会读它显示"这个会话在改哪个目录"）
     if (entry.cwd) patch.cwd = entry.cwd
     // 只有真的取到标题才写：否则 merge 会把已有标题抹掉
@@ -515,7 +519,7 @@ interface CreateSessionOptions {  parentId?: string
   agentName?: string
   description?: string
   modelId?: string
-  /** 会话所属画布：子代理在这里继承父会话的画布（等价 dsh 子会话继承 cwd） */
+  /** 显式指定会话的活跃画布（一般不传：根会话用自己的 id，建模子代理用自己的独立画布） */
   canvasId?: string
   /** 会话绑定的本地工作目录；缺省给新会话建独立工作区（data/workspaces/<id>），子代理继承父会话 */
   cwd?: string
@@ -534,9 +538,15 @@ function createSession(id = randomUUID().slice(0, 8), opts: CreateSessionOptions
   const parentId = meta.parentId ?? opts.parentId
   const agentName = meta.agentName ?? opts.agentName
   const description = meta.description ?? opts.description
-  // 画布归属：durable 值优先，其次继承父会话，最后才是自己——永不产生"第二个 workspace"
-  const canvasId = meta.canvasId ?? opts.canvasId ?? (mode === 'root' ? id : canvas.idOf(parentId ?? id))
+  // 画布归属：durable 值优先；新子代理用自己的 id 作为独立画布；
+  // 只对"已存在但没有 canvasId"的老会话保留沿父链回溯的兼容逻辑（不改写旧数据）
+  const canvasId = meta.canvasId ?? opts.canvasId
+    ?? (mode === 'root' ? id : (existed ? canvas.idOf(parentId ?? id) : id))
   canvas.adopt(id, canvasId)
+  // 画布集合：新会话登记自己的画布；老会话只有磁盘上已有 canvasIds 时才沿用（缺字段不回填）
+  const canvasIds = Array.isArray(meta.canvasIds) && meta.canvasIds.length
+    ? meta.canvasIds
+    : (existed ? undefined : [canvasId])
   // 工作目录：durable 值优先 → 创建参数 → 父会话继承 → 新会话独立工作区（老会话保持 DEFAULT_CWD）
   const parentCwd = parentId ? (sessions.get(parentId)?.cwd ?? sessionStore.readMeta(parentId).cwd) : undefined
   const cwd = meta.cwd ?? opts.cwd ?? parentCwd
@@ -623,6 +633,7 @@ function createSession(id = randomUUID().slice(0, 8), opts: CreateSessionOptions
     mode,
     parentId,
     canvasId,
+    canvasIds,
     cwd,
     agentName,
     description,
@@ -681,6 +692,21 @@ function descendantIds(rootId: string): string[] {
     }
   }
   return out
+}
+
+/**
+ * 磁盘会话树归属：沿 parentId 链判断 id 是否落在 rootId 这棵树下。
+ * 统计接口走磁盘列表（重启后内存 sessions 不完整），按链判断比"直属子代理"更稳。
+ */
+function inSessionTree(id: string, rootId: string, parentById: Map<string, string | undefined>): boolean {
+  let cursor: string | undefined = id
+  const seen = new Set<string>()
+  while (cursor && !seen.has(cursor)) {
+    if (cursor === rootId) return true
+    seen.add(cursor)
+    cursor = parentById.get(cursor) ?? sessionStore.readMeta(cursor).parentId
+  }
+  return false
 }
 
 /** 归档准入探测：这一轮还跑着、或有子代理在跑，就不许静默归档 */
@@ -945,10 +971,10 @@ function formatSettlementPrompt(batch: SettledChild[]): string {
   parts.push(
     '',
     '[runtime] 子代理已全部结算，这一轮是自动开启的汇总回合。收尾前必须完成验收：',
-    '1) 用 list_outline / list_animations 核对画布现状（部件数、贴图、动画、分组命名），确认每个子代理负责的部分都在；',
+    '1) 用 list_outline / list_animations 逐个核对每个子代理的**独立画布**（用 list_subagents 看 id，再按需切活跃画布/读取；不要假设它们在同一块画布上），确认部件数、贴图、动画、分组命名都对；',
     '2) 有重叠部件、命名冲突、漏做或明显错误就直接修（只补缺口，不要重做整块，更不要 create_model）；',
     '3) 修补完用 ask_user_question **请用户验收**：用户正看着画布，只有他能判断像不像。选项至少含「验收通过，继续下一步 / 要改（用户说明哪里）/ 重做某部分」。用户通过之前不要进入下一阶段（导出、写代码、构建都不行）。',
-    '4) 汇报里写清：每个子代理做了什么、画布最终状态、你没把握的点（有就直接在提问里一并问，不要自己猜）。落地画布数据用 canvas_export 一次导出成 JSON，严禁派子代理"抄写"画布或让子代理用文字汇报几何坐标。',
+    '4) 汇报里写清：每个子代理做了什么、各自的画布状态、你没把握的点（有就直接在提问里一并问，不要自己猜）。落地画布数据用 canvas_export 导出目标模型的**当前活跃画布**；要导出某个子代理的模型，先切换到它的画布（会让它成为活跃画布）。严禁派子代理"抄写"画布或让子代理用文字汇报几何坐标。',
   )
   return parts.join('\n')
 }
@@ -956,7 +982,8 @@ function formatSettlementPrompt(batch: SettledChild[]): string {
 /**
  * 启动子代理：立即返回，后台并发执行。
  * 子代理是**同一会话树**里的一个 agent（复刻 dsh startActivation 的 parent/child 关系）：
- * 有自己的对话日志与上下文，但共享当前会话的画布——它改的就是用户正在看的那块画布。
+ * 有自己的对话日志、上下文与**独立画布**（用自己的 id 作为活跃画布），
+ * 只有 cwd 继承父会话；它改的是自己那块画布，不会占用父会话正在看的画布。
  * 不占用父会话的 busy gate，但会登记到父会话的 `waiting`：主会话从此进入等待态
  * （用户不能插话），最后一只结算时自动开一轮汇总（dsh 的 settlement → 新回合）。
  */
@@ -973,8 +1000,7 @@ function startSubagent(parent: SessionEntry, input: { description: string; promp
   const id = randomUUID().slice(0, 8)
   const child = createSession(id, {
     parentId: parent.id,
-    // 子代理继承父会话的画布与工作区（dsh：childSessionMeta 带上 parentHeader.cwd）
-    canvasId: parent.canvasId,
+    // 画布独立（createSession 用自己的 id）；只有工作目录继承父会话（dsh：childSessionMeta 带上 parentHeader.cwd）
     cwd: parent.cwd,
     agentName: name,
     description: input.description,
@@ -1994,8 +2020,10 @@ app.get('/api/sessions/:id', async (req, reply) => {
       modelId: s.runtime.currentModelId,
       mode: s.mode,
       parentId: s.parentId,
-      /** 画布归属：同一会话树共享的画布 id（durable，等价 dsh 会话的 cwd） */
+      /** 画布归属：canvasId 是活跃画布（durable，等价 dsh 会话的 cwd） */
       canvasId: s.canvasId,
+      /** 会话拥有的画布集合（活跃画布在第一项） */
+      canvasIds: canvas.listOf(s.id),
       /** 会话绑定的本地工作目录 */
       cwd: s.cwd,
       /** 素材绑定（就地编辑会话）：页头显示「改动自动保存到素材」 */
@@ -2023,6 +2051,61 @@ app.get('/api/sessions/:id', async (req, reply) => {
   } catch (e: any) { return reply.code(404).send({ error: e.message }) }
 })
 
+// ---- 会话多画布（活跃画布）----
+/** 画布接口的公共载荷：会话树画布列表 + 当前活跃画布 */
+function canvasTreePayload(s: SessionEntry) {
+  return { sessionId: s.id, activeCanvasId: canvas.idOf(s.id), canvases: canvas.listTree(s.id) }
+}
+
+/** 画布集合/活跃画布变化：向本会话与父会话 SSE 广播（父会话的面板要同步子代理画布） */
+function broadcastCanvases(s: SessionEntry, data: ReturnType<typeof canvasTreePayload>) {
+  s.sse.send('canvases/update', data)
+  const parent = s.parentId ? sessions.get(s.parentId) : undefined
+  parent?.sse.send('canvases/update', data)
+}
+
+/** 活跃画布变更后同步内存会话并落盘（CanvasService 已写 meta，这里补齐 entry 字段） */
+function syncCanvasEntry(s: SessionEntry) {
+  s.canvasId = canvas.idOf(s.id)
+  s.canvasIds = canvas.listOf(s.id)
+  persistMeta(s)
+}
+
+app.get('/api/sessions/:id/canvases', async (req, reply) => {
+  try {
+    const s = await ensureSession((req.params as any).id)
+    return canvasTreePayload(s)
+  } catch (e: any) { return reply.code(404).send({ error: e.message }) }
+})
+
+app.post('/api/sessions/:id/canvases', async (req, reply) => {
+  let s: SessionEntry
+  try { s = await ensureSession((req.params as any).id) } catch (e: any) { return reply.code(404).send({ error: e.message }) }
+  try {
+    const body = (req.body ?? {}) as { name?: string; activate?: boolean }
+    const canvasId = canvas.createCanvas(s.id, {
+      name: typeof body.name === 'string' ? body.name : undefined,
+      activate: body.activate !== false,
+    })
+    syncCanvasEntry(s)
+    const payload = canvasTreePayload(s)
+    broadcastCanvases(s, payload)
+    return { ...payload, canvasId }
+  } catch (e: any) { return reply.code(400).send({ error: e.message }) }
+})
+
+app.post('/api/sessions/:id/canvases/:canvasId/activate', async (req, reply) => {
+  let s: SessionEntry
+  try { s = await ensureSession((req.params as any).id) } catch (e: any) { return reply.code(404).send({ error: e.message }) }
+  try {
+    canvas.activateCanvas(s.id, String((req.params as any).canvasId))
+    syncCanvasEntry(s)
+    const payload = canvasTreePayload(s)
+    broadcastCanvases(s, payload)
+    return payload
+  } catch (e: any) { return reply.code(400).send({ error: e.message }) }
+})
+
 // 子代理目录（dsh SubagentHeaderLineage 的数据源）：直接子会话 + 实时状态
 app.get('/api/sessions/:id/subagents', async (req, reply) => {
   try {
@@ -2046,7 +2129,9 @@ app.get('/api/sessions/:id/stream', async (req, reply) => {
   const write = (frame: string) => {
     try { reply.raw.write(frame) } catch { /* 客户端已断开 */ }
   }
-  write(`data: ${JSON.stringify({ topic: 'open', sessionId: s.id, busy: s.busy, status: s.status, mode: s.mode, canvasId: s.canvasId, waiting: waitingRows(s) })}\n\n`)
+  // 会话树画布列表：open 帧带上，客户端据此渲染多画布页签
+  const tree = canvas.listTree(s.id)
+  write(`data: ${JSON.stringify({ topic: 'open', sessionId: s.id, busy: s.busy, status: s.status, mode: s.mode, canvasId: s.canvasId, canvases: tree, waiting: waitingRows(s) })}\n\n`)
 
   // 晚连/断线重连：补发当前进行中回合的帧（EventSource 会自动带 Last-Event-ID）
   const headerSince = (req.headers['last-event-id'] as string | undefined) ?? (req.query as any)?.since
@@ -2057,13 +2142,17 @@ app.get('/api/sessions/:id/stream', async (req, reply) => {
   const sendCanvas = (topic: string, data: Record<string, any>) => {
     write(`id: ${s.sse.nextId()}\ndata: ${JSON.stringify({ topic, ...data })}\n\n`)
   }
-  const model = canvas.model(s.id)
-  if (model) {
-    const doc = canvas.read(s.id)
+  // 树里每块有模型的画布各下发一次快照（主会话与子代理的独立画布都能直接看到）
+  for (const entry of tree) {
+    if (!entry.hasModel) continue
+    // 多画布时不能走 canvas.model(sessionId)——它解析的是会话的活跃画布
+    const bbmodel = canvas.modelOf(entry.canvasId)
+    if (!bbmodel) continue
+    const doc = canvas.readCanvas(entry.canvasId)
     sendCanvas('model_update', {
-      sessionId: s.canvasId,
-      originId: s.canvasId,
-      bbmodel: model,
+      sessionId: entry.canvasId,
+      originId: entry.ownerSessionId,
+      bbmodel,
       elements: doc?.elements?.length ?? 0,
       textures: doc?.textures?.length ?? 0,
       view: doc?.view ?? '3d',
@@ -2072,11 +2161,16 @@ app.get('/api/sessions/:id/stream', async (req, reply) => {
   }
 
   const unsub = s.sse.subscribe(write)
-  // 画布订阅：同一 canvasId 的任意 agent 改动都会推给这条连接（主会话与子代理因此实时同步）
+  // 画布订阅：会话树里任意画布的改动都推给这条连接（子代理的独立画布实时可见）
+  let treeIds = new Set(tree.map(c => c.canvasId))
   const unsubCanvas = canvas.onChange(change => {
-    if (change.canvasId !== s.canvasId) return
+    if (!treeIds.has(change.canvasId)) {
+      // 新画布（刚创建）还没进缓存：重算一次树再判断
+      treeIds = new Set(canvas.listTree(s.id).map(c => c.canvasId))
+      if (!treeIds.has(change.canvasId)) return
+    }
     if (change.kind === 'view') {
-      sendCanvas('view_update', { view: change.view, originId: change.originId })
+      sendCanvas('view_update', { sessionId: change.canvasId, view: change.view, originId: change.originId })
       return
     }
     sendCanvas('model_update', {
@@ -2196,14 +2290,15 @@ app.get('/api/sessions/:id/stats', async (req, reply) => {
     const frame = statsFrame(s)
     const stats = frame.stats
     const figures = { contextTokens: frame.contextTokens, modelWindow: frame.modelWindow, contextBreakdown: frame.contextBreakdown }
-    // 编队：同一画布下的子代理累计输出（面板「主 / 子代理」那一行）
+    // 编队：同一会话树（按 parentId）下的子代理累计输出（面板「主 / 子代理」那一行）
     // 走磁盘列表而不是内存 sessions：重启后子代理的执行态已丢失，但它们的 token 账还在日志里
-    const rootCanvas = s.canvasId ?? s.id
+    const rows = sessionStore.list()
+    const parentById = new Map(rows.map(r => [r.id, r.parentId]))
     let subagentTokens = 0
     let subagentCount = 0
-    for (const row of sessionStore.list()) {
+    for (const row of rows) {
       if (row.mode !== 'subagent' || !row.parentId) continue
-      if ((row.canvasId ?? row.id) !== rootCanvas) continue
+      if (!inSessionTree(row.id, s.id, parentById)) continue
       subagentCount++
       subagentTokens += row.outputTokens ?? 0
     }
@@ -2541,7 +2636,7 @@ canvas.onChange(change => {
     if (prev) clearTimeout(prev)
     libSyncTimers.set(libId, setTimeout(() => {
       libSyncTimers.delete(libId)
-      const doc = canvas.read(change.canvasId)
+      const doc = canvas.readCanvas(change.canvasId)
       if (!doc) return
       const meta = library.updateDoc(libId, doc)
       if (!meta) console.warn(`[library] 素材 ${libId} 已不存在，跳过回写`)
@@ -2556,7 +2651,7 @@ canvas.onChange(change => {
   if (prevAuto) clearTimeout(prevAuto)
   autoLibTimers.set(change.canvasId, setTimeout(() => {
     autoLibTimers.delete(change.canvasId)
-    const doc = canvas.read(change.canvasId)
+    const doc = canvas.readCanvas(change.canvasId)
     if (!doc) return
     try {
       const meta = library.upsertByCanvas({ canvasId: change.canvasId, sessionId: change.originId, doc })

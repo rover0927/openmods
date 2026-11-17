@@ -1,7 +1,7 @@
 // 后端 API 封装 + POST SSE 流解析
 import type {
   ArchivedView, FeaturesDto, ModelInfoDto, PrefsDto, ProjectBaselineDto, ProjectDto,
-  SessionInfoDto, SessionSummaryDto, SettingsDto, StatsFrameDto, LibraryAssetDto,
+  SessionInfoDto, SessionSummaryDto, SettingsDto, StatsFrameDto, LibraryAssetDto, CanvasTreeDto,
 } from './types.js'
 
 export interface SseFrame {
@@ -157,6 +157,22 @@ export const api = {
     jfetch<{ ok: boolean; archivedSessionIds: string[] }>(`/api/sessions/${id}/unarchive`, { method: 'POST' }),
   getSession: (id: string) => jfetch<SessionInfoDto>(`/api/sessions/${id}`),
   subagents: (id: string) => jfetch<{ subagents: SessionSummaryDto[] }>(`/api/sessions/${id}/subagents`),
+
+  // ---- 会话多画布（主会话与各子代理各自一块独立画布） ----
+  /** 会话树的画布列表 + 当前会话的活跃画布 */
+  canvases: (id: string) => jfetch<CanvasTreeDto>(`/api/sessions/${id}/canvases`),
+  /** 新建一块空白画布（activate=false 时不抢占活跃画布） */
+  createCanvas: (id: string, body?: { name?: string; activate?: boolean }) =>
+    jfetch<CanvasTreeDto & { canvasId: string }>(`/api/sessions/${id}/canvases`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body ?? {}),
+    }),
+  /** 把某块画布设为它 owner 会话的活跃画布 */
+  activateCanvas: (sessionId: string, canvasId: string) =>
+    jfetch<CanvasTreeDto>(`/api/sessions/${sessionId}/canvases/${encodeURIComponent(canvasId)}/activate`, {
+      method: 'POST',
+    }),
   /** 统一会话事件流（EventSource）；since=0 表示补发当前进行中回合的帧 */
   streamUrl: (id: string, since = -1) => `/api/sessions/${id}/stream?since=${since}`,
   setSessionModel: (id: string, modelId: string) =>
@@ -275,8 +291,8 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId }),
     }),
-  /** 缩略图带上 updatedAt 做缓存键：就地回写后浏览器不会继续显示上一版 */
-  libraryThumb: (id: string, version?: number) => `/api/library/${id}/thumb${version ? `?v=${version}` : ''}`,
+  /** 缩略图带上 updatedAt 做缓存键：就地回写后浏览器不会继续显示上一版；pv=3 让旧贴图/方向错误的预览失效 */
+  libraryThumb: (id: string, version?: number) => `/api/library/${id}/thumb?pv=3${version ? `&v=${version}` : ''}`,
   /** 下载素材编译出的 jar 产物 */
   libraryJarUrl: (id: string) => `/api/library/${id}/jar`,
   /** 素材编译成 bbmodel（画布「新标签打开」用，不覆盖会话画布） */

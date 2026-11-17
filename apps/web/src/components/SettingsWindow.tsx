@@ -1,76 +1,17 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import type { PrefsDto, WakeEntry } from '../types.js'
 import { SettingsPage, type SettingsSectionId } from './SettingsPage.js'
+import { McIcon, type McIconName } from './McIcon.js'
 
 /** 设置分区：对齐 dsh 的分区粒度（通用 / 模型 / 子代理 / 自动化） */
-const SECTIONS: { id: SettingsSectionId; label: string; icon: ReactNode }[] = [
-  {
-    id: 'general',
-    label: '通用',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-        <circle cx="8" cy="8" r="2.4" />
-        <path d="M8 1.6v1.5M8 12.9v1.5M1.6 8h1.5M12.9 8h1.5M3.5 3.5l1 1M11.5 11.5l1 1M12.5 3.5l-1 1M4.5 11.5l-1 1" strokeLinecap="round" />
-      </svg>
-    ),
-  },
-  {
-    id: 'features',
-    label: '功能',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-        <rect x="2" y="2.4" width="5" height="5" rx="1" />
-        <rect x="9" y="2.4" width="5" height="5" rx="1" />
-        <rect x="2" y="9" width="5" height="5" rx="1" />
-        <rect x="9" y="9" width="5" height="5" rx="1" />
-      </svg>
-    ),
-  },
-  {
-    id: 'models',
-    label: '模型',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-        <ellipse cx="8" cy="4.2" rx="4.8" ry="2.2" />
-        <path d="M3.2 4.2v7.6c0 1.2 2.1 2.2 4.8 2.2s4.8-1 4.8-2.2V4.2" strokeLinecap="round" />
-        <path d="M3.2 8c0 1.2 2.1 2.2 4.8 2.2s4.8-1 4.8-2.2" strokeLinecap="round" />
-      </svg>
-    ),
-  },
-  {
-    id: 'agents',
-    label: '代理与技能',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-        <rect x="2.2" y="2.6" width="4.6" height="4.6" rx="1" />
-        <rect x="9.2" y="2.6" width="4.6" height="4.6" rx="1" />
-        <rect x="2.2" y="9.2" width="4.6" height="4.6" rx="1" />
-        <path d="M11.5 9.4v4.2M9.4 11.5h4.2" strokeLinecap="round" />
-      </svg>
-    ),
-  },
-  {
-    id: 'subagent',
-    label: '子代理',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-        <circle cx="6" cy="5.6" r="2.2" />
-        <path d="M2.2 13.2c0-2.1 1.7-3.6 3.8-3.6s3.8 1.5 3.8 3.6" strokeLinecap="round" />
-        <circle cx="11.6" cy="6.4" r="1.6" />
-        <path d="M10.4 13.2c0-1.6 1.1-2.7 2.6-2.7" strokeLinecap="round" />
-      </svg>
-    ),
-  },
-  {
-    id: 'automation',
-    label: '自动化',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-        <path d="M8.9 1.6 3.4 9.2h3.4L6.9 14.4 12.6 6.6H9.1l-.2-5Z" strokeLinejoin="round" />
-      </svg>
-    ),
-  },
+const SECTIONS: { id: SettingsSectionId; label: string; icon: McIconName }[] = [
+  { id: 'general', label: '通用', icon: 'settings' },
+  { id: 'features', label: '功能', icon: 'features' },
+  { id: 'models', label: '模型', icon: 'model' },
+  { id: 'agents', label: '代理与技能', icon: 'agents' },
+  { id: 'subagent', label: '子代理', icon: 'subagents' },
+  { id: 'automation', label: '自动化', icon: 'automation' },
 ]
 
 // 设置窗口 —— 复刻 dsh SettingsRoot：overlay + mask + 800×800 面板
@@ -126,7 +67,7 @@ export function SettingsWindow(props: {
                 aria-current={section === s.id ? 'true' : undefined}
                 onClick={() => setSection(s.id)}
               >
-                <span className="settings-nav-icon" aria-hidden="true">{s.icon}</span>
+                <span className="settings-nav-icon" aria-hidden="true"><McIcon name={s.icon} size={16} /></span>
                 <span className="settings-nav-label">{s.label}</span>
               </button>
             ))}

@@ -5,9 +5,12 @@ interface Props {
   canvas: CanvasState
   iframeRef: RefObject<HTMLIFrameElement>
   onIframeReady: () => void
+  /** 重新拉一次当前画布的模型（非活跃画布没有缓存时用；不阻塞界面） */
+  onReload?: () => void
+  reloadEnabled?: boolean
 }
 
-export function CanvasPane({ canvas, iframeRef, onIframeReady }: Props) {
+export function CanvasPane({ canvas, iframeRef, onIframeReady, onReload, reloadEnabled }: Props) {
   const readySent = useRef(false)
 
   useEffect(() => {
@@ -37,6 +40,9 @@ export function CanvasPane({ canvas, iframeRef, onIframeReady }: Props) {
         <span>{canvas.elements} 个部件</span>
         <span>{canvas.textures} 张贴图</span>
         {canvas.hasModel && <span className="dim">视角: {canvas.view}</span>}
+        {reloadEnabled && onReload && (
+          <button className="canvas-reload" onClick={onReload} title="重新拉取这块画布的模型">重新加载</button>
+        )}
       </div>
     </section>
   )

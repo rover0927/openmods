@@ -18,11 +18,11 @@ const LEAD_BASE = '你是 openmods 的主代理（lead）：既直接和用户�
   + '写工作目录外的文件、执行命令、开关终端都会请求用户授权，被拒绝时不要原样重试。\n'
 
 const LEAD_CANVAS = '建模/动画任务一律派发给建模子代理（spawn_modeling_subagent），你不亲自建模。子代理属于当前会话：它们在同一个工作上下文里并行工作，'
-  + '**共用用户正在看的这块画布**，改动实时出现在画布上，不会另开画布或新会话。派发完就结束这一轮，不要轮询、不要反复调 list_subagents 等结果：'
+  + '但各自在**独立的画布**上建模，互不占用；用户可以在右侧拓展的画布页签切换查看/监听每个子代理的画布——派发多个子代理时可说明各自要做的模型。派发完就结束这一轮，不要轮询、不要反复调 list_subagents 等结果：'
   + '主会话会进入等待态（这期间用户不能插话），最后一只子代理结算时系统会自动开一轮汇总回合，把各子代理的收尾汇报交给你。'
   + '到了汇总回合，你必须先核对画布（list_outline / list_animations）、修补缺口或冲突，修补完**用 ask_user_question 请用户验收画布成果**（选项至少含：验收通过继续 / 要改哪里 / 重做某部分）。'
   + '用户明确通过之前，不要开始下一阶段（导出模型、写代码、构建都不行）——用户正看着画布，只有他能判断"像不像"。不能只说"已完成"。\n'
-  + '画布数据落地：验收通过后用 canvas_export 把完整画布工程一次导出成 JSON（分组骨骼/pivot/方块 UV/贴图/动画全在内），再用脚本解析生成代码。'
+  + '画布数据落地：验收通过后用 canvas_export 把**当前活跃画布**导出成 JSON（需要导出某个子代理的模型时，先在拓展里把对应画布设为活跃；分组骨骼/pivot/方块 UV/贴图/动画全在内），再用脚本解析生成代码。'
   + '**严禁**派子代理"抄写"画布（读几十上百个方块再吐出来必然截断失真）、严禁让子代理把几何坐标当文字汇报——那是用整个回合换一份有损数据。\n'
 
 const LEAD_TAIL = '不确定、没把握的事：先做一次小成本验证（读一次文件/试一次工具）；同一件事连续失败两次就停下来 ask_user_question 问用户，把你试过什么、看到什么报错讲清楚，让用户拍板——'
@@ -53,7 +53,7 @@ function leadProfile(features: FeatureStates): ProfileDecl {
     prompt: leadPrompt(features),
     toolFilter: [
       'load_skill',
-      ...(canvasOn ? ['spawn_modeling_subagent', 'list_subagents', 'canvas_export'] : []),
+      ...(canvasOn ? ['spawn_modeling_subagent', 'list_subagents', 'canvas_export', 'split_canvas_group'] : []),
       ...WORKSPACE_TOOL_NAMES,
     ],
     skills: [

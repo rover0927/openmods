@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, type SseFrame } from './api.js'
 import type {
-  AgentProfileDto, AnimationMetaDto, CanvasState, ContextBreakdownDto, FeaturesDto, McProjectUiDto, ModelInfoDto, PendingInteractionDto, PrefsDto, SessionInfoDto,
+  AgentProfileDto, AnimationMetaDto, CanvasPageDto, CanvasRefDto, CanvasState, ContextBreakdownDto, FeaturesDto, McProjectUiDto, ModelInfoDto, PendingInteractionDto, PrefsDto, SessionInfoDto,
   SessionSummaryDto, StatsDto, SubagentNoticeDto, SubagentWaitDto, TerminalDto, TodoItemDto, TurnEntry, WakeEntry,
 } from './types.js'
 import { EMPTY_CONTEXT_STATS } from './types.js'
@@ -31,6 +31,18 @@ function toAnims(model: any): AnimationMetaDto[] {
     length: a.length ?? 1,
     loop: a.loop ?? 'loop',
   }))
+}
+
+/** bbmodel → 画布状态（非活跃画布的缓存与直连接口共用） */
+function modelToCanvasState(model: any): CanvasState {
+  return {
+    hasModel: (model?.elements?.length ?? 0) > 0,
+    modelName: model?.name ?? '',
+    elements: model?.elements?.length ?? 0,
+    textures: model?.textures?.length ?? 0,
+    view: model?.view ?? '3d',
+    animations: toAnims(model),
+  }
 }
 
 /** 结算消息的 source → 通知行（dsh `form:'notice'`：不展开成用户气泡） */
@@ -134,20 +146,36 @@ export default function App() {
     return Number.isFinite(w) && w >= 280 && w <= 760 ? w : 420
   })
   const [refineMode, setRefineMode] = useState(false)
-  // 画布多开：'session' = 会话画布（AI 工具的工作区），其余 = 从素材库打开的只读标签（互不覆盖）
-  const [canvasTabs, setCanvasTabs] = useState<{ assetId: string; name: string }[]>([])
-  const [activeCanvasTab, setActiveCanvasTab] = useState<'session' | string>('session')
-  const [sessionCanvasDirty, setSessionCanvasDirty] = useState(false)
-  const activeCanvasTabRef = useRef<'session' | string>('session')
+  // 画布多开（多画布页签）：画布页 key=canvasId，素材页 key=asset:<assetId>，空白页 key=blank:<n>
+  // 启动时先拿本地会话 id 占位一页（openSession 拿到真实活跃画布后会重置）
+  const bootSid = localStorage.getItem('openmods.sid') ?? ''
+  const [canvasPages, setCanvasPages] = useState<CanvasPageDto[]>(
+    () => (bootSid ? [{ key: bootSid, kind: 'canvas' }] : []),
+  )
+  const [activeCanvasPage, setActiveCanvasPage] = useState(bootSid)
+  const activeCanvasPageRef = useRef('')
+  const canvasPagesRef = useRef<CanvasPageDto[]>([])
+  /** 画布页 key → 未查看的改动（●）；素材页签是只读预览，不参与 */
+  const [canvasDirty, setCanvasDirty] = useState<Record<string, boolean>>({})
+  /** 会话树里的全部画布（页签名称/来源/活跃徽标 + 空白页选择列表） */
+  const [canvases, setCanvases] = useState<CanvasRefDto[]>([])
+  const canvasesRef = useRef<CanvasRefDto[]>([])
+  /** 当前会话的活跃画布：下载与「重新加载」只对它走直连接口 */
+  const [activeSessionCanvasId, setActiveSessionCanvasId] = useState('')
+  /** canvasId → 最近一次 model_update 的状态与 bbmodel（切页签时直接用缓存，不等网络） */
+  const canvasStatesRef = useRef<Map<string, CanvasState>>(new Map())
+  const canvasModelsRef = useRef<Map<string, any>>(new Map())
   /** 素材标签的动画列表（assetId → animations）：打开/切换时从 bbmodel 记下，关闭时清理 */
   const [assetAnims, setAssetAnims] = useState<Record<string, AnimationMetaDto[]>>({})
   /** 当前画布是否正在加载（动画条据此禁用播放按钮，而不是因为会话 busy） */
   const [canvasLoading, setCanvasLoading] = useState(false)
-  useEffect(() => { activeCanvasTabRef.current = activeCanvasTab }, [activeCanvasTab])
+  activeCanvasPageRef.current = activeCanvasPage
+  canvasPagesRef.current = canvasPages
+  canvasesRef.current = canvases
   /** 动画播放失败自动重载后要重试的动画名（bb_loaded 后消费） */
   const pendingAnimRef = useRef<string | null>(null)
-  /** 发起播放时所在的画布标签：重载完成后只在同一标签上重试 */
-  const pendingAnimTabRef = useRef<'session' | string>('session')
+  /** 发起播放时所在的画布页 key：重载完成后只在同一页上重试 */
+  const pendingAnimTabRef = useRef<string>('')
   /** 最近一次请求播放的动画名：自动重载重试仍失败时用它识别二次失败 */
   const animNameRef = useRef<string | null>(null)
   /** 自动重载重试次数：第二次仍失败就 toast 提示，不再循环 */
@@ -176,8 +204,6 @@ export default function App() {
   const [currentModelId, setCurrentModelId] = useState<string | null>(null)
   // 画布
   const [canvas, setCanvas] = useState<CanvasState>(emptyCanvas)
-  /** 最近改动画布的 agent（子代理共享画布时显示「共享画布 · staff-1」） */
-  const [canvasOrigin, setCanvasOrigin] = useState<string | null>(null)
   const [playingAnim, setPlayingAnim] = useState<string | null>(null)
   const [pendingAtts, setPendingAtts] = useState<{ name: string; dataUrl: string }[]>([])
   // 看板
@@ -227,7 +253,8 @@ export default function App() {
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const lastModelRef = useRef<any>(null)
   const openSeqRef = useRef(0)
-  const canvasSessionRef = useRef('')
+  /** 空白页序号（＋ 新建空白页用的本地 key，不建后端画布） */
+  const blankSeqRef = useRef(0)
   /** 草稿会话：点「新对话」不立即建（服务端不落盘），发首条消息时才真正创建；记着在哪个分组下建的 */
   const draftProjectRef = useRef<string | undefined>(undefined)
   /** 草稿会话里先选好的工作目录（首条消息创建会话时带过去） */
@@ -284,6 +311,17 @@ export default function App() {
   const sendToBridge = useCallback((msg: any) => {
     iframeRef.current?.contentWindow?.postMessage(msg, '*')
   }, [])
+
+  /** 拉一次会话树的画布列表（页签名称/来源/活跃徽标、空白页选择列表都靠它） */
+  const refreshCanvases = useCallback((sid?: string) => {
+    const id = sid ?? sessionId
+    if (!id) return
+    api.canvases(id).then(r => {
+      canvasesRef.current = r.canvases
+      setCanvases(r.canvases)
+      setActiveSessionCanvasId(r.activeCanvasId)
+    }).catch(() => { /* 服务未起：保持空列表 */ })
+  }, [sessionId])
 
   // 事件只作用于"当前对话轮"，跳过插在末尾的子代理通知行
   const updateLastTurn = useCallback((patch: (t: TurnEntry) => TurnEntry) => {
@@ -433,31 +471,66 @@ export default function App() {
         break
       case 'llm/usage':
         break
-      case 'model_update':
-        setCanvas({
+      case 'model_update': {
+        // sessionId 现在是 canvasId（不再是会话 id）：按画布分流，只有当前页才送进 iframe
+        const canvasId = String(f.sessionId ?? '')
+        if (!canvasId) break
+        const next: CanvasState = {
           hasModel: (f.elements ?? 0) > 0,
           modelName: f.bbmodel?.name ?? '',
           elements: f.elements ?? 0,
           textures: f.textures ?? 0,
           view: f.view ?? '3d',
           animations: f.animations ?? [],
-        })
-        // 子代理共享画布：标明这次改动来自哪个 agent（主会话画布也能看到）
-        setCanvasOrigin(f.agentName ?? null)
-        lastModelRef.current = f.bbmodel
-        // 用户正看着素材标签时不打扰 iframe：会话画布标脏，切回去再重载（素材视图不被覆盖）
-        if (activeCanvasTabRef.current !== 'session') {
-          setSessionCanvasDirty(true)
-        } else {
+        }
+        canvasStatesRef.current.set(canvasId, next)
+        if (f.bbmodel) canvasModelsRef.current.set(canvasId, f.bbmodel)
+        // 未知画布（子代理刚建 / 拆分工具自动建画布）：补拉一次画布列表
+        if (!canvasesRef.current.some(c => c.canvasId === canvasId)) refreshCanvases()
+        if (activeCanvasPageRef.current === canvasId) {
+          lastModelRef.current = f.bbmodel
+          setCanvas(next)
+          setCanvasDirty(d => (d[canvasId] ? { ...d, [canvasId]: false } : d))
           sendToBridge({ type: 'load_bbmodel', model: f.bbmodel })
+        } else if (canvasPagesRef.current.some(p => p.key === canvasId)) {
+          // 页签开着但没在看：只更新缓存并标脏，切回去再重载（素材预览不被覆盖）
+          setCanvasDirty(d => (d[canvasId] ? d : { ...d, [canvasId]: true }))
         }
         // AI 改了画布：自己把右侧拓展唤醒（设置 → 自动化可关）
         wakeRef.current(f.agentName ? `${f.agentName} 更新了画布` : '画布已更新')
         break
-      case 'view_update':
-        setCanvas(c => ({ ...c, view: f.view }))
-        if (activeCanvasTabRef.current === 'session') sendToBridge({ type: 'set_view', view: f.view })
+      }
+      case 'view_update': {
+        // 同样按 canvasId 分流：只更新对应画布的缓存，当前页才应用视角
+        const canvasId = String(f.sessionId ?? '')
+        if (!canvasId) break
+        const st = canvasStatesRef.current.get(canvasId)
+        if (st) canvasStatesRef.current.set(canvasId, { ...st, view: f.view })
+        if (activeCanvasPageRef.current === canvasId) {
+          setCanvas(c => ({ ...c, view: f.view }))
+          sendToBridge({ type: 'set_view', view: f.view })
+        }
         break
+      }
+      case 'canvases/update': {
+        // 画布集合变化：本会话或父会话里新建/切换画布时广播
+        const list: CanvasRefDto[] = Array.isArray(f.canvases) ? f.canvases : []
+        const fromSelf = String(f.sessionId ?? '') === sessionId
+        let merged = list
+        if (!fromSelf) {
+          // 子代理广播的列表只是它自己视角的画布：合并进来，再补拉一次自己这边的完整树
+          const byId = new Map(canvasesRef.current.map(c => [c.canvasId, c]))
+          for (const c of list) byId.set(c.canvasId, c)
+          merged = [...byId.values()]
+        }
+        canvasesRef.current = merged
+        setCanvases(merged)
+        if (!fromSelf) refreshCanvases()
+        // 只认当前会话自己那块活跃画布（活跃徽标按各自 owner 计算，不受视角影响）
+        const mine = merged.find(c => c.ownerSessionId === sessionId && c.active)
+        if (mine) setActiveSessionCanvasId(mine.canvasId)
+        break
+      }
       case 'compaction':
         showToast(`上下文已压缩：影子 ${f.shadowedTokens} → 摘要 ${f.summaryTokens} tokens（省下 ${f.saved}）`)
         break
@@ -574,7 +647,7 @@ export default function App() {
         if (rootSessionId) refreshSubagents(rootSessionId)
         break
     }
-  }, [sendToBridge, updateLastTurn, showToast, refreshModels, refreshSubagents, rootSessionId])
+  }, [sendToBridge, updateLastTurn, showToast, refreshModels, refreshSubagents, rootSessionId, refreshCanvases, sessionId])
 
   // 统一事件流：当前打开的会话（主会话或子代理）都订阅同一条 SSE
   useEffect(() => {
@@ -590,6 +663,12 @@ export default function App() {
       if (frame.topic === 'open') {
         setBusy(!!frame.busy)
         setWaiting(Array.isArray(frame.waiting) ? frame.waiting : [])
+        // 画布集合随 open 帧下发（快照也随之而来：每块有模型的画布各一条 model_update）
+        if (Array.isArray(frame.canvases)) {
+          canvasesRef.current = frame.canvases
+          setCanvases(frame.canvases)
+        }
+        if (frame.canvasId) setActiveSessionCanvasId(String(frame.canvasId))
         return
       }
       handleEvent(frame)
@@ -625,105 +704,279 @@ export default function App() {
     } catch { /* 服务未起：保持空列表 */ }
   }, [])
 
-  const loadCanvas = useCallback((id: string, opts?: { force?: boolean }) => {
-    // 子代理与主会话共享同一块画布：切换会话时不必清空重载，避免画布闪空
-    if (!opts?.force && canvasSessionRef.current === id && lastModelRef.current) return
-    canvasSessionRef.current = id
-    setCanvasOrigin(null)
+  /** 切换会话：画布页重置成该会话的活跃画布，缓存（状态/bbmodel/脏标）全部作废 */
+  const resetCanvasPages = useCallback((canvasId: string) => {
+    canvasStatesRef.current.clear()
+    canvasModelsRef.current.clear()
+    const def: CanvasPageDto = { key: canvasId, kind: 'canvas' }
+    canvasPagesRef.current = [def]
+    setCanvasPages([def])
+    setCanvasDirty({})
+    setAssetAnims({})
+    setActiveCanvasPage(canvasId)
+    activeCanvasPageRef.current = canvasId
+  }, [])
+
+  /** 打开会话时拉一次它的活跃画布（SSE 快照之外的第一帧兜底） */
+  const loadCanvas = useCallback((ownerSessionId: string, canvasId: string) => {
+    canvasModelsRef.current.delete(canvasId)
+    canvasStatesRef.current.delete(canvasId)
     setCanvas(emptyCanvas())
     setPlayingAnim(null)
     pendingAnimRef.current = null
     lastModelRef.current = null
     setCanvasLoading(true)
     sendToBridge({ type: 'load_bbmodel', model: null })
-    api.bbmodel(id).then(model => {
-      if (canvasSessionRef.current !== id) return
+    api.bbmodel(ownerSessionId).then(model => {
+      const state = modelToCanvasState(model)
+      canvasStatesRef.current.set(canvasId, state)
+      canvasModelsRef.current.set(canvasId, model)
+      if (activeCanvasPageRef.current !== canvasId) return
       lastModelRef.current = model
-      setCanvas({
-        hasModel: (model.elements?.length ?? 0) > 0,
-        modelName: model.name ?? '',
-        elements: model.elements?.length ?? 0,
-        textures: model.textures?.length ?? 0,
-        view: model.view ?? '3d',
-        animations: toAnims(model),
-      })
+      setCanvas(state)
       setCanvasLoading(false)
       sendToBridge({ type: 'load_bbmodel', model })
-    }).catch(() => { setCanvasLoading(false) /* 该会话还没有模型 */ })
+    }).catch(() => { if (activeCanvasPageRef.current === canvasId) setCanvasLoading(false) })
   }, [sendToBridge])
 
   /** 动画播放/停止（chips 统一入口）：记下意图，模型失同步时 bb_animation_error 能自动重载重试 */
   const playAnim = useCallback((name: string | null) => {
     pendingAnimRef.current = name
-    pendingAnimTabRef.current = activeCanvasTabRef.current
+    pendingAnimTabRef.current = activeCanvasPageRef.current
     animNameRef.current = name
     animRetryRef.current = 0
     iframeRef.current?.contentWindow?.postMessage(name ? { type: 'play_animation', name } : { type: 'stop_animation' }, '*')
   }, [])
 
-  // ---- 画布多开：素材库模型开新标签，绝不覆盖会话画布 ----
-  const openLibModel = useCallback((asset: { id: string; name: string }) => {
-    setCanvasTabs(tabs => (tabs.some(t => t.assetId === asset.id) ? tabs : [...tabs, { assetId: asset.id, name: asset.name }]))
-    setActiveCanvasTab(asset.id)
-    setSessionCanvasDirty(dirty => (activeCanvasTabRef.current === 'session' ? dirty : true))
-    activeCanvasTabRef.current = asset.id
+  /**
+   * 换页：画布页直接用缓存（有 bbmodel 就灌进 iframe，没有就空态等「重新加载」），
+   * 素材页重新取只读模型，空白页展示可选画布列表。
+   */
+  const showCanvasPage = useCallback((page: CanvasPageDto) => {
+    setActiveCanvasPage(page.key)
+    activeCanvasPageRef.current = page.key
     setPlayingAnim(null)
     pendingAnimRef.current = null
-    setCanvasLoading(true)
-    api.libraryModel(asset.id).then(model => {
-      if (activeCanvasTabRef.current !== asset.id) return
-      lastModelRef.current = null // 素材标签不影响会话画布的重载缓存
-      setAssetAnims(prev => ({ ...prev, [asset.id]: toAnims(model) }))
+    if (page.kind === 'canvas') {
+      setCanvasDirty(d => (d[page.key] ? { ...d, [page.key]: false } : d))
+      const model = canvasModelsRef.current.get(page.key) ?? null
+      const state = canvasStatesRef.current.get(page.key)
+        ?? { ...emptyCanvas(), modelName: canvasesRef.current.find(c => c.canvasId === page.key)?.name ?? '' }
+      lastModelRef.current = model
+      setCanvas(state)
       setCanvasLoading(false)
       sendToBridge({ type: 'load_bbmodel', model })
-    }).catch(e => { setCanvasLoading(false); showToast(`打开素材失败：${e.message}`) })
-  }, [sendToBridge, showToast])
-
-  const switchCanvasTab = useCallback((tab: 'session' | string) => {
-    if (tab === activeCanvasTabRef.current) return
-    setActiveCanvasTab(tab)
-    activeCanvasTabRef.current = tab
-    setPlayingAnim(null)
-    pendingAnimRef.current = null
-    if (tab === 'session') {
-      // 回到会话画布：吃掉期间的 AI 改动（素材标签期间 model_update 只标脏不加载）
-      setSessionCanvasDirty(false)
-      if (sessionId) loadCanvas(sessionId, { force: true })
-    } else {
-      const t = canvasTabs.find(x => x.assetId === tab)
-      if (t) {
-        setCanvasLoading(true)
-        api.libraryModel(tab).then(model => {
-          if (activeCanvasTabRef.current !== tab) return
-          setAssetAnims(prev => ({ ...prev, [tab]: toAnims(model) }))
-          setCanvasLoading(false)
-          sendToBridge({ type: 'load_bbmodel', model })
-        }).catch(() => setCanvasLoading(false))
-      }
+      return
     }
-  }, [canvasTabs, loadCanvas, sendToBridge, sessionId])
+    if (page.kind === 'asset' && page.assetId) {
+      const assetId = page.assetId
+      lastModelRef.current = null // 素材页签不影响画布页的缓存
+      setCanvasLoading(true)
+      sendToBridge({ type: 'load_bbmodel', model: null })
+      api.libraryModel(assetId).then(model => {
+        if (activeCanvasPageRef.current !== page.key) return
+        setAssetAnims(prev => ({ ...prev, [assetId]: toAnims(model) }))
+        setCanvasLoading(false)
+        sendToBridge({ type: 'load_bbmodel', model })
+      }).catch(e => { setCanvasLoading(false); showToast(`打开素材失败：${e.message}`) })
+      return
+    }
+    // 空白页：列出可选画布（顺手刷新，部件数/活跃标记才是最新的）
+    lastModelRef.current = null
+    setCanvas(emptyCanvas())
+    setCanvasLoading(false)
+    sendToBridge({ type: 'load_bbmodel', model: null })
+    refreshCanvases()
+  }, [sendToBridge, showToast, refreshCanvases])
 
-  const closeCanvasTab = useCallback((assetId: string) => {
-    setCanvasTabs(tabs => {
-      const next = tabs.filter(t => t.assetId !== assetId)
-      if (activeCanvasTabRef.current === assetId) {
-        activeCanvasTabRef.current = 'session'
-        setActiveCanvasTab('session')
-        setSessionCanvasDirty(false)
-        setPlayingAnim(null)
-        pendingAnimRef.current = null
-        if (sessionId) loadCanvas(sessionId, { force: true })
+  const switchCanvasPage = useCallback((key: string) => {
+    if (key === activeCanvasPageRef.current) return
+    const page = canvasPagesRef.current.find(p => p.key === key)
+    if (page) showCanvasPage(page)
+  }, [showCanvasPage])
+
+  /** ＋：新建一个空白页（不建后端画布，也不抢占活跃画布） */
+  const newBlankPage = useCallback(() => {
+    blankSeqRef.current += 1
+    const page: CanvasPageDto = { key: `blank:${blankSeqRef.current}`, kind: 'blank' }
+    const next = [...canvasPagesRef.current, page]
+    canvasPagesRef.current = next
+    setCanvasPages(next)
+    showCanvasPage(page)
+  }, [showCanvasPage])
+
+  const closeCanvasPage = useCallback((key: string) => {
+    const pages = canvasPagesRef.current
+    const idx = pages.findIndex(p => p.key === key)
+    if (idx < 0) return
+    const page = pages[idx]
+    const next = pages.filter(p => p.key !== key)
+    canvasPagesRef.current = next
+    setCanvasPages(next)
+    // 关掉的素材页不再保留动画列表
+    if (page.kind === 'asset' && page.assetId) {
+      const assetId = page.assetId
+      setAssetAnims(prev => {
+        if (!(assetId in prev)) return prev
+        const copied = { ...prev }
+        delete copied[assetId]
+        return copied
+      })
+    }
+    setCanvasDirty(d => {
+      if (!(key in d)) return d
+      const copied = { ...d }
+      delete copied[key]
+      return copied
+    })
+    if (key !== activeCanvasPageRef.current) return
+    // 关到最后一页：落到空态（页签区为空，主体是可选画布列表）
+    const fallback = next[idx] ?? next[idx - 1] ?? next[0]
+    if (fallback) {
+      showCanvasPage(fallback)
+    } else {
+      activeCanvasPageRef.current = ''
+      setActiveCanvasPage('')
+      lastModelRef.current = null
+      setCanvas(emptyCanvas())
+      setCanvasLoading(false)
+      sendToBridge({ type: 'load_bbmodel', model: null })
+    }
+  }, [showCanvasPage, sendToBridge])
+
+  /** 素材库模型开一个只读页签（已开过就直接切过去），绝不覆盖画布页 */
+  const openLibModel = useCallback((asset: { id: string; name: string }) => {
+    const key = `asset:${asset.id}`
+    const existing = canvasPagesRef.current.find(p => p.key === key)
+    if (existing) { showCanvasPage(existing); return }
+    const page: CanvasPageDto = { key, kind: 'asset', assetId: asset.id, assetName: asset.name }
+    const next = [...canvasPagesRef.current, page]
+    canvasPagesRef.current = next
+    setCanvasPages(next)
+    showCanvasPage(page)
+  }, [showCanvasPage])
+
+  /** 空白页里点选一块画布：已开过就切过去，否则把当前空白页原位换成画布页 */
+  const pickCanvas = useCallback((canvasId: string) => {
+    if (canvasPagesRef.current.some(p => p.key === canvasId)) {
+      switchCanvasPage(canvasId)
+      return
+    }
+    const key = activeCanvasPageRef.current
+    const page = canvasPagesRef.current.find(p => p.key === key)
+    if (!page || page.kind !== 'blank') return
+    const next = canvasPagesRef.current.map(p => (p.key === key ? { key: canvasId, kind: 'canvas' as const } : p))
+    canvasPagesRef.current = next
+    setCanvasPages(next)
+    showCanvasPage({ key: canvasId, kind: 'canvas' })
+  }, [switchCanvasPage, showCanvasPage])
+
+  /** 空白页底部：新建空白画布（当前会话下创建并设为活跃），随后在原空白页打开 */
+  const createCanvas = useCallback(async () => {
+    if (!sessionId) {
+      showToast('先发送一条消息创建会话，再新建画布')
+      return
+    }
+    try {
+      const r = await api.createCanvas(sessionId)
+      canvasesRef.current = r.canvases
+      setCanvases(r.canvases)
+      setActiveSessionCanvasId(r.activeCanvasId)
+      const key = activeCanvasPageRef.current
+      const page = canvasPagesRef.current.find(p => p.key === key)
+      const def: CanvasPageDto = { key: r.canvasId, kind: 'canvas' }
+      const next = page?.kind === 'blank'
+        ? canvasPagesRef.current.map(p => (p.key === key ? def : p))
+        : [...canvasPagesRef.current, def]
+      canvasPagesRef.current = next
+      setCanvasPages(next)
+      canvasStatesRef.current.set(r.canvasId, { ...emptyCanvas(), modelName: '未命名模型' })
+      showCanvasPage(def)
+    } catch (e: any) {
+      showToast(`新建画布失败：${e.message}`)
+    }
+  }, [sessionId, showToast, showCanvasPage])
+
+  /** 当前页画布「设为活跃」：调它 owner 会话的激活接口，成功后刷新列表与徽标 */
+  const activateCurrentCanvas = useCallback(async () => {
+    const canvasId = activeCanvasPageRef.current
+    const ref = canvasesRef.current.find(c => c.canvasId === canvasId)
+    if (!ref) return
+    try {
+      const r = await api.activateCanvas(ref.ownerSessionId, canvasId)
+      let merged = r.canvases
+      if (ref.ownerSessionId !== sessionId) {
+        // 子代理视角的列表不含父会话的画布：合并后补拉自己的完整树
+        const byId = new Map(canvasesRef.current.map(c => [c.canvasId, c]))
+        for (const c of r.canvases) byId.set(c.canvasId, c)
+        merged = [...byId.values()]
+        refreshCanvases()
       }
-      return next
-    })
-    // 关掉的素材标签不再保留动画列表
-    setAssetAnims(prev => {
-      if (!(assetId in prev)) return prev
-      const next = { ...prev }
-      delete next[assetId]
-      return next
-    })
-  }, [loadCanvas, sessionId])
+      canvasesRef.current = merged
+      setCanvases(merged)
+      const mine = merged.find(c => c.ownerSessionId === sessionId && c.active)
+      if (mine) setActiveSessionCanvasId(mine.canvasId)
+      showToast(`已把「${ref.name || '未命名模型'}」设为 ${ref.ownerName} 的活跃画布`)
+    } catch (e: any) {
+      showToast(`设为活跃失败：${e.message}`)
+    }
+  }, [sessionId, refreshCanvases, showToast])
+
+  /** 重新加载某页的模型：缓存没有时用直连（owner 活跃画布）或一条临时 SSE 取快照，不阻塞界面 */
+  const reloadCanvasPage = useCallback((key: string) => {
+    const page = canvasPagesRef.current.find(p => p.key === key)
+    if (!page) return
+    if (page.kind === 'asset' && page.assetId) {
+      const assetId = page.assetId
+      setCanvasLoading(true)
+      api.libraryModel(assetId).then(model => {
+        if (activeCanvasPageRef.current !== key) return
+        setAssetAnims(prev => ({ ...prev, [assetId]: toAnims(model) }))
+        setCanvasLoading(false)
+        sendToBridge({ type: 'load_bbmodel', model })
+      }).catch(() => setCanvasLoading(false))
+      return
+    }
+    if (page.kind !== 'canvas') return
+    const canvasId = key
+    const ref = canvasesRef.current.find(c => c.canvasId === canvasId)
+    const apply = (model: any) => {
+      const state = modelToCanvasState(model)
+      canvasStatesRef.current.set(canvasId, state)
+      canvasModelsRef.current.set(canvasId, model)
+      if (activeCanvasPageRef.current !== canvasId) return
+      lastModelRef.current = model
+      setCanvas(state)
+      setCanvasLoading(false)
+      sendToBridge({ type: 'load_bbmodel', model })
+    }
+    if (ref?.active) {
+      // 它正是 owner 会话的活跃画布：有直连接口
+      setCanvasLoading(true)
+      api.bbmodel(ref.ownerSessionId).then(apply).catch(() => setCanvasLoading(false))
+      return
+    }
+    if (!ref) return
+    // 非活跃画布没有模型接口：开一条临时 SSE 只取快照帧（聊天帧全部忽略）
+    setCanvasLoading(true)
+    const es = new EventSource(api.streamUrl(ref.ownerSessionId, 0))
+    let closed = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const done = () => {
+      if (closed) return
+      closed = true
+      es.close()
+      if (timer) clearTimeout(timer)
+    }
+    timer = setTimeout(() => { setCanvasLoading(false); done() }, 3000)
+    es.onmessage = ev => {
+      let f: SseFrame
+      try { f = JSON.parse(ev.data) } catch { return }
+      if (f.topic !== 'model_update' || String(f.sessionId) !== canvasId || !f.bbmodel) return
+      apply(f.bbmodel)
+      done()
+    }
+  }, [sendToBridge])
 
   // 打开会话（主会话或子代理）：先读 meta，再一起更新 sessionId + 流起点，避免双连接
   // silent=true：启动恢复时静默失败（存储的 sid 可能是被清理的空会话，不该开局弹错）
@@ -760,14 +1013,11 @@ export default function App() {
       setStreamChars(0)
       setThinkTail('')
       if (res.modelId) setCurrentModelId(res.modelId)
-      // 画布归属由服务端给出（子代理 → 主会话的画布）
-      // 新会话重置素材标签（auto 素材都在库里，不会丢）
-      setCanvasTabs([])
-      setAssetAnims({})
-      setActiveCanvasTab('session')
-      activeCanvasTabRef.current = 'session'
-      setSessionCanvasDirty(false)
-      loadCanvas(res.canvasId ?? id)
+      // 画布：默认打开该会话的活跃画布页（子代理各有自己的独立画布）
+      const activeCanvasId = res.canvasId ?? id
+      resetCanvasPages(activeCanvasId)
+      loadCanvas(id, activeCanvasId)
+      refreshCanvases(id)
       // MC 工程状态（dock 顶部「测试 Mod」按钮）：有会话就拉，服务端扫 cwd 下的工程
       setMcProjects([])
       if (featureOn('mc')) api.mcState(id).then(r => setMcProjects(r.projects ?? [])).catch(() => {})
@@ -787,7 +1037,7 @@ export default function App() {
       setSessionId('')
       setRootSessionId('')
     }
-  }, [loadCanvas, loadTerminals, refreshSubagents, showToast, featureOn])
+  }, [loadCanvas, loadTerminals, refreshSubagents, showToast, featureOn, refreshCanvases, resetCanvasPages])
 
   // MC 工程：标题栏的「▶ 测试 Mod」= 后台 gradlew runClient（Minecraft 客户端窗口直接弹出来）
   const mcRun = useCallback((project: string) => {
@@ -831,20 +1081,10 @@ export default function App() {
     if (lastModelRef.current) sendToBridge({ type: 'load_bbmodel', model: lastModelRef.current })
   }, [sendToBridge])
 
-  /** 动画失同步时重载"当前正在看的画布"（会话画布或素材标签） */
-  const reloadActiveCanvas = useCallback((tab: 'session' | string) => {
-    if (tab === 'session') {
-      if (sessionId) loadCanvas(sessionId, { force: true })
-      return
-    }
-    setCanvasLoading(true)
-    api.libraryModel(tab).then(model => {
-      if (activeCanvasTabRef.current !== tab) return
-      setAssetAnims(prev => ({ ...prev, [tab]: toAnims(model) }))
-      setCanvasLoading(false)
-      sendToBridge({ type: 'load_bbmodel', model })
-    }).catch(() => setCanvasLoading(false))
-  }, [sessionId, loadCanvas, sendToBridge])
+  /** 动画失同步时重载"当前正在看的画布页"（画布页或素材页签） */
+  const reloadActiveCanvas = useCallback((key: string) => {
+    if (key) reloadCanvasPage(key)
+  }, [reloadCanvasPage])
 
   // 画布动画播放状态（bridge 回传）
   useEffect(() => {
@@ -879,7 +1119,7 @@ export default function App() {
         pendingAnimRef.current = null
         // 模型刚灌进去，动画注册完成后再播（只在发起播放的同一标签上重试）
         setTimeout(() => {
-          if (activeCanvasTabRef.current === tab) {
+          if (activeCanvasPageRef.current === tab) {
             iframeRef.current?.contentWindow?.postMessage({ type: 'play_animation', name }, '*')
           }
         }, 300)
@@ -921,7 +1161,6 @@ export default function App() {
         if (created.cwd) setDraftCwd(created.cwd)
         sid = created.id
         openSeqRef.current++
-        canvasSessionRef.current = ''
         setSessionId(sid)
         setRootSessionId(sid)
         setSessionInfo(null)
@@ -930,6 +1169,15 @@ export default function App() {
         setSessionsVersion(v => v + 1)
         // 草稿里改过计划模式：会话刚建好，把当前状态同步到服务端（真实模式默认本就是开启）
         await api.setPlanMode(sid, planMode).catch(() => {})
+        // 新会话的活跃画布：拿到列表后把草稿里的空白页换成画布页
+        const newSid = sid
+        void api.canvases(newSid).then(r => {
+          canvasesRef.current = r.canvases
+          setCanvases(r.canvases)
+          setActiveSessionCanvasId(r.activeCanvasId)
+          resetCanvasPages(r.activeCanvasId)
+          loadCanvas(newSid, r.activeCanvasId)
+        }).catch(() => { /* 拉不到就等 SSE 的 open 帧补上 */ })
       } catch (e: any) {
         showToast(`无法创建会话：${e.message}（检查 server 是否运行）`)
         return
@@ -957,7 +1205,7 @@ export default function App() {
       updateLastTurn(t => ({ ...t, error: e.message }))
       setBusy(false)
     }
-  }, [sessionId, currentModelId, updateLastTurn, showToast, pendingAtts, waiting.length, agentProfile, planMode])
+  }, [sessionId, currentModelId, updateLastTurn, showToast, pendingAtts, waiting.length, agentProfile, planMode, resetCanvasPages, loadCanvas])
 
   const stop = useCallback(async () => {
     if (!sessionId) return
@@ -1103,7 +1351,6 @@ export default function App() {
     draftCwdRef.current = ''
     setDraftCwd('')
     openSeqRef.current++
-    canvasSessionRef.current = ''
     localStorage.removeItem('openmods.sid')
     setSessionId('')
     setRootSessionId('')
@@ -1111,8 +1358,20 @@ export default function App() {
     setStreamSince(0)
     setTurns([])
     setStats(null)
+    // 草稿会话还没有画布：先给一个空白页（列表为空，首条消息创建会话后换成活跃画布）
+    blankSeqRef.current += 1
+    const blankPage: CanvasPageDto = { key: `blank:${blankSeqRef.current}`, kind: 'blank' }
+    canvasPagesRef.current = [blankPage]
+    setCanvasPages([blankPage])
+    setActiveCanvasPage(blankPage.key)
+    activeCanvasPageRef.current = blankPage.key
+    canvasStatesRef.current.clear()
+    canvasModelsRef.current.clear()
+    setCanvasDirty({})
+    setAssetAnims({})
+    setCanvases([])
+    setActiveSessionCanvasId('')
     setCanvas(emptyCanvas())
-    setCanvasOrigin(null)
     setPlayingAnim(null)
     setBusy(false)
     setWaiting([])
@@ -1171,6 +1430,13 @@ export default function App() {
 
   const currentModel = models.find(m => m.id === currentModelId)
   const activeIsChild = !!sessionInfo?.parentId
+  /** 当前选中的画布页（页签名/来源/活跃/动画条/下载可用性都从它推导） */
+  const activeCanvasPageData = canvasPages.find(p => p.key === activeCanvasPage)
+  /** 当前页画布的归属：主会话或某个子代理（每块画布各有一个 owner） */
+  const activeCanvasOwnerName = activeCanvasPageData?.kind === 'canvas'
+    ? canvases.find(c => c.canvasId === activeCanvasPageData.key)?.ownerName
+      ?? (activeIsChild ? sessionInfo?.agentName ?? '子代理' : '主会话')
+    : undefined
   /** 当前功能开关下可用的右侧标签（关闭画布后 canvas 不出现） */
   const dockAvailable = useMemo(
     () => (featureOn('canvas') ? DOCK_TABS : DOCK_TABS.filter(t => t !== 'canvas')),
@@ -1264,11 +1530,7 @@ export default function App() {
         onClose={closeDockTab}
         onOpen={openDockTab}
         canvas={canvas}
-        canvasOwner={
-          activeIsChild || canvasOrigin
-            ? `共享画布${canvasOrigin ? ` · ${canvasOrigin}` : ''}`
-            : undefined
-        }
+        canvasOwner={activeCanvasOwnerName ? `独立画布 · ${activeCanvasOwnerName}` : undefined}
         iframeRef={iframeRef}
         onIframeReady={onIframeReady}
         busy={busy}
@@ -1277,13 +1539,24 @@ export default function App() {
         onDownload={download}
         playingAnim={playingAnim}
         onPlayAnim={playAnim}
-        activeAnimations={activeCanvasTab === 'session' ? canvas.animations : (assetAnims[activeCanvasTab] ?? [])}
+        activeAnimations={
+          activeCanvasPageData?.kind === 'asset' && activeCanvasPageData.assetId
+            ? (assetAnims[activeCanvasPageData.assetId] ?? [])
+            : canvas.animations
+        }
         canvasLoading={canvasLoading}
-        canvasTabs={canvasTabs}
-        activeCanvasTab={activeCanvasTab}
-        sessionCanvasDirty={sessionCanvasDirty}
-        onSwitchCanvasTab={switchCanvasTab}
-        onCloseCanvasTab={closeCanvasTab}
+        canvasPages={canvasPages}
+        activeCanvasPage={activeCanvasPage}
+        canvasDirty={canvasDirty}
+        canvases={canvases}
+        activeSessionCanvasId={activeSessionCanvasId}
+        onSwitchCanvasPage={switchCanvasPage}
+        onCloseCanvasPage={closeCanvasPage}
+        onNewBlankPage={newBlankPage}
+        onPickCanvas={pickCanvas}
+        onCreateCanvas={createCanvas}
+        onActivateCanvas={activateCurrentCanvas}
+        onReloadCanvas={() => reloadCanvasPage(activeCanvasPage)}
         onOpenLibrary={() => setLibraryOpen(true)}
         pendingAtts={pendingAtts}
         onAddFiles={addPendingFiles}

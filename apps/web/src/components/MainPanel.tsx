@@ -3,6 +3,7 @@ import type {
   AgentProfileDto, ContextBreakdownDto, McProjectUiDto, ModelInfoDto, SessionInfoDto, SessionSummaryDto, StatsDto, SubagentWaitDto, TurnEntry,
 } from '../types.js'
 import { SessionView } from './SessionView.js'
+import { McIcon } from './McIcon.js'
 
 function childStatusClass(info: SessionInfoDto | null, busy: boolean): string {
   if (busy) return 'ongoing'
@@ -118,7 +119,7 @@ export function MainPanel(props: {
               className="lib-bind"
               title={`这个会话是素材「${props.sessionInfo.libraryName}」的编辑会话：画布改动会自动保存回素材`}
             >
-              <span className="lib-bind-icon" aria-hidden="true">▤</span>
+              <McIcon name="library" size={14} className="lib-bind-icon" />
               {props.sessionInfo.libraryName}
               <span className="lib-bind-sub">自动保存</span>
             </span>
@@ -147,22 +148,22 @@ export function MainPanel(props: {
                 ))}
               </select>
               {mcSel.runClientRunning
-                ? <button className="dock-act mc-stop" onClick={() => props.onMcStop(mcSel.name)} title="停掉正在运行的 Minecraft 客户端">■</button>
+                ? <button className="dock-act mc-stop" onClick={() => props.onMcStop(mcSel.name)} title="停掉正在运行的 Minecraft 客户端"><McIcon name="mcStop" size={16} /></button>
                 : <button
                     className={`dock-act mc-run ${mcSelOk ? '' : 'disabled'}`}
                     disabled={!mcSelOk}
                     onClick={() => props.onMcRun(mcSel.name)}
                     title={mcSelOk ? `启动 gradlew runClient，把「${mcSel.name}」装进 Minecraft 1.20.1 测试` : '先 mc_gradle build 通过后才能测试'}
-                  >▶</button>}
+                  ><McIcon name="mcRun" size={16} /></button>}
               {mcSelJar && (
                 props.modOutput
                   ? <button
                       className="dock-act mc-jar"
                       onClick={() => props.onMcExport(mcSel.name)}
                       title={`把 ${mcSelJar.name}（${(mcSelJar.size / 1024).toFixed(0)} KB）复制到 mod-output：${props.modOutput}`}
-                    >jar ⤓</button>
+                    ><McIcon name="mcJar" size={14} /> jar ⤓</button>
                   : <a className="dock-act mc-jar" href={`/api/mc/jar?path=${encodeURIComponent(mcSelJar.path)}`} download={mcSelJar.name}
-                      title={`下载构建产物（${(mcSelJar.size / 1024).toFixed(0)} KB）；在设置里配置 mod-output 可一键导出到目录`}>jar ⤓</a>
+                      title={`下载构建产物（${(mcSelJar.size / 1024).toFixed(0)} KB）；在设置里配置 mod-output 可一键导出到目录`}><McIcon name="mcJar" size={14} /> jar ⤓</a>
               )}
               <span className="mc-menu-wrap">
                 <button className="dock-act mc-more" onClick={() => setMcMenuOpen(o => !o)} title="运行配置">⋮</button>

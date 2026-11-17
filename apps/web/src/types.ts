@@ -185,8 +185,10 @@ export interface SessionInfoDto {
   profile?: string
   mode: 'root' | 'subagent'
   parentId?: string
-  /** 画布归属（子代理与主会话共用同一块画布 = 根会话 id） */
+  /** 会话的活跃画布（画布 id，不再是会话 id） */
   canvasId?: string
+  /** 会话拥有的画布集合（活跃画布在第一项） */
+  canvasIds?: string[]
   /** 会话绑定的本地工作目录 */
   cwd?: string
   /** 素材绑定：本会话是某个素材的编辑会话（改动自动回写素材） */
@@ -223,6 +225,39 @@ export interface CanvasState {
   textures: number
   view: '3d' | 'front' | 'side' | 'back'
   animations: AnimationMetaDto[]
+}
+
+/** 会话树里的一块画布（GET /api/sessions/:id/canvases 的每一项） */
+export interface CanvasRefDto {
+  canvasId: string
+  name: string
+  /** 拥有这块画布的会话（主会话或某个子代理） */
+  ownerSessionId: string
+  /** 展示名：主会话 / 子代理名 */
+  ownerName: string
+  elements: number
+  textures: number
+  hasModel: boolean
+  /** 是否是 owner 会话的活跃画布 */
+  active: boolean
+}
+
+export interface CanvasTreeDto {
+  sessionId: string
+  activeCanvasId: string
+  canvases: CanvasRefDto[]
+}
+
+/**
+ * 右侧「建模」页签里的一页：
+ * key=canvasId（画布页）/ `asset:<assetId>`（素材只读预览）/ `blank:<n>`（空白页，展示可选画布列表）
+ */
+export interface CanvasPageDto {
+  key: string
+  kind: 'canvas' | 'asset' | 'blank'
+  assetId?: string
+  /** 素材页签的标题（画布页的工程名从 canvases 列表里取） */
+  assetName?: string
 }
 
 export interface StepRowDto {

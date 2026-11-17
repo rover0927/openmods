@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api.js'
 import type { ArchivedView, ProjectDto, SessionSummaryDto } from '../types.js'
+import { GrassCube } from './GrassCube.js'
+import { McIcon } from './McIcon.js'
 
 // 时间：复刻 dsh 的 relativeTime 分桶（刚刚 / n 分钟前 / n 小时前 / 昨天 / n 天前 / 月-日）
 function formatTime(ts: number): string {
@@ -64,7 +66,7 @@ export function LeftSidebar(props: {
     return stored === 'all' || stored === 'only' ? stored : 'hide'
   })
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
-  /** 新建分组弹窗（dsh 新建工作区语义：名称 + 可关联本地目录） */
+  /** 新建项目弹窗（dsh 新建工作区语义：名称 + 可关联本地目录） */
   const [creating, setCreating] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newCwd, setNewCwd] = useState('')
@@ -75,6 +77,16 @@ export function LeftSidebar(props: {
   const [menu, setMenu] = useState<{ session: SessionSummaryDto; at: Anchor } | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ project: ProjectDto; at: Anchor } | null>(null)
   const { onToast } = props
+
+  /** 品牌位草方块：点击只播一段横向移动动画（新建会话走下方按钮） */
+  const brandRef = useRef<HTMLButtonElement>(null)
+  const kickCube = () => {
+    const el = brandRef.current
+    if (!el) return
+    el.classList.remove('mc-kick')
+    void el.offsetWidth // 强制重排，让连续点击能重新播放
+    el.classList.add('mc-kick')
+  }
 
   const reload = useCallback(async () => {
     const [base, list] = await Promise.all([api.projects(), api.listSessions(archivedView)])
@@ -165,9 +177,9 @@ export function LeftSidebar(props: {
       setNewCwd('')
       setCreating(false)
       await reload()
-      onToast(newCwd ? `已创建分组并关联目录：${dirName(newCwd)}` : `已创建分组：${title}`)
+      onToast(newCwd ? `已创建项目并关联目录：${dirName(newCwd)}` : `已创建项目：${title}`)
     } catch (e: any) {
-      onToast(`新建分组失败：${e.message}`)
+      onToast(`新建项目失败：${e.message}`)
     }
   }, [newTitle, newCwd, reload, onToast])
 
@@ -229,7 +241,7 @@ export function LeftSidebar(props: {
         if (editProjectId) {
           await api.setProjectCwd(editProjectId, r.path)
           await reload()
-          onToast(`已为该分组关联目录：${dirName(r.path)}`)
+          onToast(`已为该项目关联目录：${dirName(r.path)}`)
         } else {
           setNewCwd(r.path)
         }
@@ -336,8 +348,16 @@ export function LeftSidebar(props: {
   return (
     <aside className={`left-sidebar ${rail ? 'rail' : ''}`}>
       <div className="sb-brand">
-        <button className="sb-brand-main" onClick={() => props.onNewSession()} title="新建会话">
-          <span className="sb-mark" aria-hidden="true" />
+        <button
+          ref={brandRef}
+          className="sb-brand-main"
+          onClick={kickCube}
+          onAnimationEnd={e => {
+            if (e.animationName === 'mc-brand-shove') e.currentTarget.classList.remove('mc-kick')
+          }}
+          title={rail ? 'openmods' : 'openmods · 点击草方块横向移动'}
+        >
+          <GrassCube size={rail ? 20 : 24} />
           {!rail && <span className="sb-name">openmods</span>}
         </button>
         <button className="sb-toggle" onClick={() => setRail(r => !r)} title={rail ? '展开侧栏' : '收起侧栏'}>
@@ -345,25 +365,25 @@ export function LeftSidebar(props: {
         </button>
       </div>
 
-      <button className="sb-new" onClick={() => props.onNewSession()} title="新建会话（⌘/Ctrl+N）">
-        <span aria-hidden="true" className="sb-new-plus">＋</span>
-        {!rail && <span>新会话</span>}
+      <button className="sb-new" onClick={() => { setCreating(true); setNewTitle(''); setNewCwd('') }} title="新建项目">
+        <McIcon name="newGroup" size={16} className="sb-new-plus" />
+        {!rail && <span>新建项目</span>}
       </button>
 
       {rail ? (
         <div className="sb-rail-list">
-          <button className="sb-rail-btn" title="新建分组" onClick={() => { setRail(false); setCreating(true); setNewTitle(''); setNewCwd('') }}>▣</button>
+          <button className="sb-rail-btn" title="新建项目" onClick={() => { setRail(false); setCreating(true); setNewTitle(''); setNewCwd('') }}><McIcon name="newGroup" size={16} /></button>
           {props.libraryEnabled !== false && (
-            <button className="sb-rail-btn" title="文档素材库" onClick={props.onOpenLibrary}>▤</button>
+            <button className="sb-rail-btn" title="文档素材库" onClick={props.onOpenLibrary}><McIcon name="library" size={16} /></button>
           )}
-          <button className="sb-rail-btn" title="设置" onClick={props.onOpenSettings}>⚙</button>
+          <button className="sb-rail-btn" title="设置" onClick={props.onOpenSettings}><McIcon name="settings" size={16} /></button>
         </div>
       ) : (
         <>
           <div className="sb-section-head">
             <span className="sb-section-title">会话</span>
             <span className="sb-section-actions">
-              <button className="sb-icon-btn" title="新建分组" onClick={() => { setCreating(true); setNewTitle(''); setNewCwd('') }}>＋</button>
+              <button className="sb-icon-btn" title="新建会话" onClick={() => props.onNewSession()}><span aria-hidden="true">＋</span></button>
               <select
                 className="sb-view"
                 value={archivedView}
@@ -386,12 +406,12 @@ export function LeftSidebar(props: {
           <div className="sb-foot">
             {props.libraryEnabled !== false && (
               <button className="sb-row sb-settings" onClick={props.onOpenLibrary}>
-                <span className="sb-slot" aria-hidden="true">▤</span>
+                <span className="sb-slot" aria-hidden="true"><McIcon name="library" size={16} /></span>
                 <span className="sb-title">文档素材库</span>
               </button>
             )}
             <button className="sb-row sb-settings" onClick={props.onOpenSettings}>
-              <span className="sb-slot" aria-hidden="true">⚙</span>
+              <span className="sb-slot" aria-hidden="true"><McIcon name="settings" size={16} /></span>
               <span className="sb-title">设置</span>
             </button>
           </div>
@@ -534,18 +554,18 @@ export function LeftSidebar(props: {
           </div>
         </div>
       )}
-      {/* 新建分组弹窗（对齐 dsh/WorkBuddy：名称 + 说明 + 关联文件夹 + 取消/保存） */}
+      {/* 新建项目弹窗（对齐 dsh/WorkBuddy：名称 + 说明 + 关联文件夹 + 取消/保存） */}
       {creating && (
         <div className="dialog-backdrop" onClick={() => setCreating(false)}>
           <div className="dialog new-group-dialog" onClick={e => e.stopPropagation()}>
             <div className="dialog-title-row">
-              <div className="dialog-title">新建分组</div>
+              <div className="dialog-title">新建项目</div>
               <button className="dialog-x" title="关闭" onClick={() => setCreating(false)}>×</button>
             </div>
             <input
               autoFocus
               className="dialog-input"
-              placeholder="输入分组名称"
+              placeholder="输入项目名称"
               value={newTitle}
               onChange={e => setNewTitle(e.target.value)}
               onKeyDown={e => {
@@ -554,7 +574,7 @@ export function LeftSidebar(props: {
               }}
             />
             <div className="dialog-hint">
-              分组可用于整理你的任务列表，还可{' '}
+              项目可用于整理你的任务列表，还可{' '}
               <button className="inline-link" onClick={() => void pickDir('new-project', undefined, undefined, newCwd || undefined)}>
                 <span aria-hidden="true">▣</span> {newCwd ? '更换关联文件夹' : '关联电脑上的文件夹'}
               </button>

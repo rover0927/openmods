@@ -315,11 +315,11 @@ export function SettingsPage(props: {
 
         <div className="setting-group">
           <div className="setting-group-title">外观</div>
-          <Row label="主题" hint="深色 / 浅色，切换即时生效（建模画布与终端保持深色）">
+          <Row label="主题" hint="MC 像素皮肤固定深色，主题切换已停用">
             <Seg<'dark' | 'light'>
-              value={prefs.theme}
-              options={[{ value: 'dark', label: '深色' }, { value: 'light', label: '浅色' }]}
-              onChange={v => void patchPrefs({ theme: v })}
+              value="dark"
+              options={[{ value: 'dark', label: 'MC 像素（固定深色）', disabled: true }, { value: 'light', label: '浅色', disabled: true }]}
+              onChange={() => {}}
             />
           </Row>
           <Row label="字号" hint="对话正文与输入框的字号，行高保持 24px 节奏">

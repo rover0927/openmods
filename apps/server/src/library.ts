@@ -7,7 +7,7 @@
 // 存法（data/library/）：
 //   <id>/meta.json          列表只读它（含 files 索引与派生字段）
 //   <id>/files/f_xxx_原名    真实文件（rel 相对素材目录，路径一律由 meta 反查）
-//   <id>/thumbs/t_xxx.png   模型缩略图（第一张 PNG 贴图）
+//   <id>/thumbs/t_xxx.png   模型缩略图（等距 3D 预览；渲染不出时回退第一张 PNG 贴图）
 //
 // 素材有两种"改"法：
 //   - 引用到新会话：读快照种到新会话的画布，素材本身不动（副本迭代）；
@@ -22,6 +22,7 @@ import {
 } from 'node:fs'
 import { basename, extname, join, resolve, sep } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
+import { renderModelPreview } from './model-preview.js'
 
 export type AssetFileKind = 'model' | 'image' | 'jar' | 'archive' | 'text' | 'other'
 
@@ -67,6 +68,8 @@ export interface LibraryAsset {
     palette?: string[]
     /** thumbs/ 下的文件名 */
     thumbFileId?: string
+    /** 缩略图版本：2 = 等距 3D 预览（朝上）；旧素材没有或 <2 时首次展示懒升级 */
+    previewVersion?: number
   }
   /** 构建产物（jar / zip 归档） */
   jar?: { fileId?: string; name: string; size: number }
@@ -480,14 +483,18 @@ export function createLibraryStore(root: string) {
     const docEntry = storeFile(id, `${sanitizeFileName(meta.name)}.json`, Buffer.from(JSON.stringify(snap)), 'model')
     meta.files.push(docEntry)
     clearThumbs(id)
-    const thumb = firstPng(snap.textures)
+    const thumb = renderModelPreview(snap)
+    const legacyThumb = thumb ? undefined : firstPng(snap.textures)
+    const png = thumb ?? legacyThumb
     meta.model = {
       docFileId: docEntry.id,
       elementCount: snap.elements.length,
       textureCount: snap.textures.length,
       resolution: snap.resolution,
       palette: paletteOf(snap.textures),
-      thumbFileId: thumb ? writeThumb(id, thumb) : undefined,
+      thumbFileId: png ? writeThumb(id, png) : undefined,
+      // 2 = 已是摆正的 3D 预览；0 = 渲染失败，已回退贴图（不再重试）
+      previewVersion: thumb ? 2 : 0,
     }
     derive(meta)
   }
@@ -498,6 +505,25 @@ export function createLibraryStore(root: string) {
    */
   function adoptModelFile(id: string, meta: LibraryAsset, doc: any) {
     applySnapshot(id, meta, snapshotOf(doc))
+  }
+
+  /** 读快照（素材送进画布 / 渲染缩略图共用）；上传的 bbmodel 在这里归一化 */
+  function readDocOf(id: string): LibraryDoc | undefined {
+    const meta = readMeta(id)
+    if (!meta?.model) {
+      // 迁移失败回退：旧扁平布局
+      try {
+        return JSON.parse(readFileSync(legacyDocPath(id), 'utf8')) as LibraryDoc
+      } catch { return undefined }
+    }
+    if (!meta.model.docFileId) {
+      try {
+        return snapshotOf(JSON.parse(readFileSync(legacyDocPath(id), 'utf8')))
+      } catch { return undefined }
+    }
+    const found = store.readFile(id, meta.model.docFileId)
+    if (!found) return undefined
+    try { return snapshotOf(JSON.parse(found.data.toString('utf8'))) } catch { return undefined }
   }
 
   const store = {
@@ -721,25 +747,23 @@ export function createLibraryStore(root: string) {
 
     /** 读完整快照（送进画布 / 种到新会话用）；上传的 bbmodel 在这里归一化成快照 */
     readDoc(id: string): LibraryDoc | undefined {
-      const meta = readMeta(id)
-      if (!meta?.model) {
-        // 迁移失败回退：旧扁平布局
-        try {
-          return JSON.parse(readFileSync(legacyDocPath(id), 'utf8')) as LibraryDoc
-        } catch { return undefined }
-      }
-      if (!meta.model.docFileId) {
-        try {
-          return snapshotOf(JSON.parse(readFileSync(legacyDocPath(id), 'utf8')))
-        } catch { return undefined }
-      }
-      const found = store.readFile(id, meta.model.docFileId)
-      if (!found) return undefined
-      try { return snapshotOf(JSON.parse(found.data.toString('utf8'))) } catch { return undefined }
+      return readDocOf(id)
     },
 
     readThumb(id: string): Buffer | undefined {
       const meta = readMeta(id)
+      if (meta?.model && (meta.model.previewVersion ?? 0) < 2) {
+        // 旧素材（贴图缩略图或方向反了的旧预览）：首次展示时重渲染，失败则记 0 不再重试
+        const png = renderModelPreview(readDocOf(id) ?? { elements: [], textures: [] })
+        if (png) {
+          clearThumbs(id)
+          meta.model.thumbFileId = writeThumb(id, png)
+          meta.model.previewVersion = 2
+        } else {
+          meta.model.previewVersion = 0
+        }
+        try { writeMeta(meta) } catch { /* 写不了就下次再试 */ }
+      }
       if (meta?.model?.thumbFileId) {
         const p = safeInside(id, join('thumbs', meta.model.thumbFileId))
         if (p) {

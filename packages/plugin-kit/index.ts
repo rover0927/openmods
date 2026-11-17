@@ -128,26 +128,54 @@ export interface TerminalPort {
 }
 
 /**
- * 画布端口：会话树共享的一份 workspace 资源。
+ * 画布端口：每个会话拥有自己的画布集合，其中一块是**活跃画布**。
  *
  * dsh 里模型改的是 `session.header.cwd` 指向的目录，子代理通过
  * `childSessionMeta()` 继承父会话的 cwd，所有读写都经 `ctx.fs` / `ctx.workingDirectory`。
- * openmods 没有文件系统，画布就是那块 workspace：`canvasId` 写进会话 meta 并由子代理继承，
+ * openmods 没有文件系统，画布就是那块 workspace：每个会话的 `canvasId`（活跃画布）
+ * 与 `canvasIds`（画布集合）写进会话 meta，建模子代理用自己的 id 作为独立画布。
  * 本服务是唯一读写入口——插件不接触存储、不自己广播，只提交文档。
  */
+export interface CanvasRef {
+  canvasId: string
+  /** 工程名（画布文档的 name） */
+  name: string
+  /** 归属会话：根会话或某个子代理 */
+  ownerSessionId: string
+  /** 归属展示名：根会话为「主会话」，子代理为 agentName */
+  ownerName: string
+  elements: number
+  textures: number
+  hasModel: boolean
+  /** 是否为该归属会话的活跃画布 */
+  active: boolean
+}
+
 export interface CanvasPort {
-  /** 会话所属画布 id（同一会话树相同；durable，等价 dsh 的 cwd） */
+  /** 会话的活跃画布 id（durable，等价 dsh 的 cwd） */
   idOf(sessionId: string): string
-  /** 当前文档；从未创建过返回 undefined */
+  /** 会话拥有的画布集合（活跃画布永远第一项；老会话按单一画布计算） */
+  listOf(sessionId: string): string[]
+  /** 当前活跃画布的文档；从未创建过返回 undefined */
   read(sessionId: string): any
+  /** 按 canvasId 直接读文档（跨会话迁移工具用） */
+  readCanvas(canvasId: string): any
   /** 读或惰性建空文档 */
   ensure(sessionId: string): any
   /** 提交几何/材质/动画变更：编译 + 广播 + 原子落盘由服务统一负责 */
   commit(sessionId: string, doc: any): void
+  /** 按 canvasId 直接提交（跨会话迁移工具写目标画布用） */
+  commitCanvas(canvasId: string, doc: any, originSessionId: string): void
+  /** 新建一块空白画布并登记到该会话；返回新 canvasId */
+  createCanvas(sessionId: string, opts?: { name?: string; activate?: boolean }): string
+  /** 切换活跃画布（只能切到该会话拥有的画布） */
+  activateCanvas(sessionId: string, canvasId: string): void
   /** 提交视角变更（视角也是画布文档的一部分） */
   setView(sessionId: string, view: string): void
   /** 每轮拼进系统提示的现场描述（dsh `workingDirectory` 的 contextText） */
   contextText(sessionId: string): string
+  /** 会话树（根 + 直属子代理）的画布列表，按 canvasId 去重（根优先） */
+  listTree(rootSessionId: string): CanvasRef[]
 }
 
 export interface SkillMeta {
