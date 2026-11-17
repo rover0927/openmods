@@ -1,12 +1,25 @@
 <div align="center">
 
+<img src="docs/assets/readme-hero.png" alt="openmods — Minecraft AI 工作台" width="100%">
+
 # openmods
 
 **本地 AI 工作台 —— Minecraft 像素界面 · 多画布建模 · MC 模组开发闭环**
 
-Fastify + React + Vite 全栈 TypeScript；画布基于 Blockbench 5.2.2（GPL-3.0）
+<sub>Fastify + React + Vite 全栈 TypeScript · 画布基于 Blockbench 5.2.2（GPL-3.0）</sub>
+
+<br>
+
+[![Minecraft 1.20.1](https://img.shields.io/badge/Minecraft-1.20.1-55FF55?style=flat-square&logo=minecraft&logoColor=white)](https://www.minecraft.net/)
+[![Forge 47.4.x](https://img.shields.io/badge/Forge-47.4.x-FFAA00?style=flat-square)](https://files.minecraftforge.net/)
+[![TypeScript 5](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node ≥20](https://img.shields.io/badge/Node-%E2%89%A520-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![License MIT](https://img.shields.io/badge/License-MIT-55FF55?style=flat-square)](LICENSE)
 
 </div>
+
+| <a href="#-快速开始"><img src="apps/web/public/mc/item/compass.png" width="32" alt="快速开始"><br>快速开始</a> | <a href="#-功能一览"><img src="apps/web/public/mc/item/diamond_pickaxe.png" width="32" alt="功能一览"><br>功能一览</a> | <a href="#-界面预览"><img src="apps/web/public/mc/item/map.png" width="32" alt="界面预览"><br>界面预览</a> | <a href="#-离线构建包vendor重要"><img src="apps/web/public/mc/item/emerald.png" width="32" alt="离线构建包"><br>离线构建包</a> | <a href="#开发与实现文档"><img src="apps/web/public/mc/item/enchanted_book.png" width="32" alt="开发文档"><br>开发文档</a> |
+|:---:|:---:|:---:|:---:|:---:|
 
 ---
 
@@ -14,25 +27,26 @@ Fastify + React + Vite 全栈 TypeScript；画布基于 Blockbench 5.2.2（GPL-3
 
 界面是完整的 **Minecraft 像素皮肤**：原版方块贴图铺底、物品图标做功能入口；提供草方块 / 樱花 / 深海 / 下界 / 末地 5 套主题，结构墙与左上角品牌方块随主题换材质。
 
+> [!NOTE]
 > **路线图**：openmods 现在以独立本地工作台的形式提供。项目足够成熟之后，会考虑把它做成 **deepseek-harness（dsh）的插件**，复用 dsh 的代理运行时与插件机制，不再单独维护一套外壳。
 
-## ✨ 功能一览
+## <img src="apps/web/public/mc/item/diamond_pickaxe.png" width="16" alt=""> 功能一览
 
-| | |
+| 功能 | 说明 |
 |---|---|
-| ⛏️ **MC 像素界面** | 5 套方块主题（草方块 / 樱花 / 深海 / 下界 / 末地）；结构墙、品牌方块随主题换材质；物品图标、像素斜面、主题色主操作 |
-| 🎨 **多画布建模** | 主会话与每个建模子代理各有一块独立画布；右侧多页签查看/切换，活跃画布 durable，支持新建空白画布 |
-| 🗂 **素材库** | 模型 / Jar 构建 / 图片 / 文件四类分开；上传、拖拽、工作目录导入、从画布截取；Jar 页多选后统一启动独立 Forge 测试客户端 |
-| 🤖 **主代理全能力** | 权限审批、计划模式、询问用户、终端、文件读写、并发子代理——对标 dsh 主 agent |
-| ⚙️ **MC 开发闭环** | `mc_scaffold` 建工程 → 建模子代理出模型 → `mc_gradle build` → 标题栏「▶ 测试 Mod」→「jar ⤓」导出（Forge 1.20.1 / 国内镜像 / 离线构建包） |
-| 🧩 **代理与技能** | 三个角色（lead / mcmod / modeling）的工具与技能分配可视化；技能自注入、内置技能只读 |
-| 📊 **上下文面板** | 底部状态条与右侧面板跟随当前画布页的 owner 会话；分段占用、工具用量、耗时分布、token 环形图、每轮明细 |
-| 🖼 **图片输入** | Ctrl+V 粘贴直发视觉模型；纯文本模型按 dsh 语义诚实降级 |
-| ⌨️ **输入框自适应** | 随内容自动长高（36–196px），超过后内部滚动；发送后自动缩回单行 |
-| 💰 **省 token** | 阈值触发八段式检查点摘要 + 工具结果免费裁剪，按模型覆盖阈值 |
-| 🧰 **可裁剪功能** | 画布与建模 / Minecraft 模组开发 / 素材库可在设置里独立关闭 |
+| <img src="apps/web/public/mc/block/grass_block_top.png" width="16" alt=""> **MC 像素界面** | 5 套方块主题（草方块 / 樱花 / 深海 / 下界 / 末地）；结构墙、品牌方块随主题换材质；物品图标、像素斜面、主题色主操作 |
+| <img src="apps/web/public/mc/item/diamond_pickaxe.png" width="16" alt=""> **多画布建模** | 主会话与每个建模子代理各有一块独立画布；右侧多页签查看/切换，活跃画布 durable，支持新建空白画布 |
+| <img src="apps/web/public/mc/item/book.png" width="16" alt=""> **素材库** | 模型 / Jar 构建 / 图片 / 文件四类分开；上传、拖拽、工作目录导入、从画布截取；Jar 页多选后统一启动独立 Forge 测试客户端 |
+| <img src="apps/web/public/mc/item/totem_of_undying.png" width="16" alt=""> **主代理全能力** | 权限审批、计划模式、询问用户、终端、文件读写、并发子代理——对标 dsh 主 agent |
+| <img src="apps/web/public/mc/item/lava_bucket.png" width="16" alt=""> **MC 开发闭环** | `mc_scaffold` 建工程 → 建模子代理出模型 → `mc_gradle build` → 标题栏「▶ 测试 Mod」→「jar ⤓」导出（Forge 1.20.1 / 国内镜像 / 离线构建包） |
+| <img src="apps/web/public/mc/item/enchanted_book.png" width="16" alt=""> **代理与技能** | 三个角色（lead / mcmod / modeling）的工具与技能分配可视化；技能自注入、内置技能只读 |
+| <img src="apps/web/public/mc/item/ender_eye.png" width="16" alt=""> **上下文面板** | 底部状态条与右侧面板跟随当前画布页的 owner 会话；分段占用、工具用量、耗时分布、token 环形图、每轮明细 |
+| <img src="apps/web/public/mc/item/map.png" width="16" alt=""> **图片输入** | Ctrl+V 粘贴直发视觉模型；纯文本模型按 dsh 语义诚实降级 |
+| <img src="apps/web/public/mc/item/paper.png" width="16" alt=""> **输入框自适应** | 随内容自动长高（36–196px），超过后内部滚动；发送后自动缩回单行 |
+| <img src="apps/web/public/mc/item/experience_bottle.png" width="16" alt=""> **省 token** | 阈值触发八段式检查点摘要 + 工具结果免费裁剪，按模型覆盖阈值 |
+| <img src="apps/web/public/mc/item/redstone.png" width="16" alt=""> **可裁剪功能** | 画布与建模 / Minecraft 模组开发 / 素材库可在设置里独立关闭 |
 
-## 🖼 界面预览
+## <img src="apps/web/public/mc/item/map.png" width="16" alt=""> 界面预览
 
 | 龙模型：建模 → 构建 → 进游戏 | 枪械模型：无子弹射击 + 换弹 |
 |---|---|
@@ -42,9 +56,10 @@ Fastify + React + Vite 全栈 TypeScript；画布基于 Blockbench 5.2.2（GPL-3
 | **设置 → 功能**：三大功能开关 | **设置 → 代理与技能**：工具与技能分配 |
 | ![设置 → 功能](docs/screenshots/settings-features.png) | ![设置 → 代理与技能](docs/screenshots/settings-agents.png) |
 
+> [!NOTE]
 > 截图来自本地实机会话（龙 / 枪械 / 原版扩展）与设置页；`MOCK=1` 可离线复现画布与设置流程。
 
-## 🚀 快速开始
+## <img src="apps/web/public/mc/item/compass.png" width="16" alt=""> 快速开始
 
 ```bash
 git clone https://github.com/rover0927/openmods.git
@@ -62,14 +77,18 @@ npm start                # 或 npm run dev（tsx watch + vite）
 2. 在「**会话**」分区头部点 `＋`（或在项目行点 `＋`）新建会话；
 3. 在中央输入框或右侧建议 chip 发消息，建模任务会自动派给子代理。
 
+> [!TIP]
+> **成就达成：打开工作台** —— 浏览器访问 `http://127.0.0.1:8787`，左栏新建项目即可开始；`MOCK=1 npm start` 可离线跑通演示流程。
+
 **模式**：
 
 - `MOCK=0`（默认）：真实 LLM——模型来自设置系统（供应商 + key），按请求解析
 - `MOCK=1`：离线演示——脚本化假 LLM（冰晶法杖流程），无需任何 key
 
+> [!TIP]
 > **生产形态**：`npm run build` 后只需 server 一个进程——`http://127.0.0.1:8787` 同时托管前端、API、`/bb/` 画布。`npm run dev` 的 vite（:5173）只用于前端热更新。
 
-## 📦 离线构建包（vendor，重要）
+## <img src="apps/web/public/mc/item/emerald.png" width="16" alt=""> 离线构建包（vendor，重要）
 
 `plugins/mcdev/vendor/`（约 245M：Gradle 8.8 发行版 + ForgeGradle `maven_downloader` 全量快照 + 测试客户端安装器依赖）**不进 git**，两种获取方式：
 
@@ -78,13 +97,14 @@ npm start                # 或 npm run dev（tsx watch + vite）
 
 同页还有 `openmods-mdk-template.zip`（Forge 1.20.1 MDK 模板单独打包；模板本体也在 `plugins/mcdev/template/`）。
 
-> ⚠️ **已有旧版 vendor 的升级提醒**：v0.1.0 的完整包早于测试客户端离线安装支持，缺少 Forge 安装器处理器依赖（trove / guava 25.1 / FART / jarsplitter / srgutils 等）。请二选一：
+> [!WARNING]
+> **已有旧版 vendor 的升级提醒**：v0.1.0 的完整包早于测试客户端离线安装支持，缺少 Forge 安装器处理器依赖（trove / guava 25.1 / FART / jarsplitter / srgutils 等）。请二选一：
 > - 重新下载最新的 `openmods-vendor.zip` 覆盖解压；
 > - 或下载增量补丁 `openmods-vendor-forge-testclient-patch.zip`，解压到项目根目录（会把 10 个依赖补进 `plugins/mcdev/vendor/fg-maven/`）。
 >
 > 如果启动测试客户端时提示“本地 MDK 缓存不完整 / 缺少库”，先按上面更新 vendor，不要反复重试联网安装。
 
-## 📚 目录
+## <img src="apps/web/public/mc/item/book.png" width="16" alt=""> 目录
 
 - [快速开始](#-快速开始) · [离线构建包](#-离线构建包vendor重要)
 - **开发与实现文档**
@@ -99,19 +119,19 @@ npm start                # 或 npm run dev（tsx watch + vite）
 
 ---
 
-# 开发与实现文档
+# 开发与实现文档<img src="apps/web/public/mc/item/enchanted_book.png" width="20" alt="">
 
 > 布局与交互参考 dsh（`../deepseek-harness/`），外观已替换为 Minecraft 像素皮肤（§9）。同级参考仓库（不在本仓库内）：`../deepseek-harness/`（dsh 源码）、`../blockbench/`（Blockbench 源码）。
 
-## 1. 快速上手
+## 1. 快速上手<img src="apps/web/public/mc/item/compass.png" width="16" alt="">
 
-命令与模式说明见文首 [🚀 快速开始](#-快速开始)，这里只补充开发态：
+命令与模式说明见文首 [快速开始](#-快速开始)，这里只补充开发态：
 
 - `npm run dev` = server :8787（tsx watch）+ web :5173（vite）；生产只跑 :8787 单进程。
 - 改前端样式看 `apps/web/src/styles.css`（dsh token 基底）与 `apps/web/src/mc-theme.css`（MC 皮肤层，后加载）。
 - 改画布桥接看 `bbcanvas/bb-bridge.js`，复制到 `bbcanvas/dist/` 后刷新页面即可，无需重启 server。
 
-## 2. 目录结构
+## 2. 目录结构<img src="apps/web/public/mc/item/brick.png" width="16" alt="">
 
 ```
 openmods/
@@ -161,7 +181,7 @@ openmods/
 └── README.md
 ```
 
-## 3. Agent 架构
+## 3. Agent 架构<img src="apps/web/public/mc/item/totem_of_undying.png" width="16" alt="">
 
 ### 3.1 会话运行时（packages/agent-core/runtime.ts）
 
@@ -260,7 +280,7 @@ composer 的模型 chip 左侧有代理角色下拉（`GET /api/profiles`，选�
 
 ---
 
-## 4. 插件系统（packages/plugin-kit）
+## 4. 插件系统（packages/plugin-kit）<img src="apps/web/public/mc/item/redstone.png" width="16" alt="">
 
 ```ts
 interface Plugin { name: string; config?: object; apply(ctx: PluginContext, config): void }
@@ -294,7 +314,7 @@ interface PluginContext {
 
 ---
 
-## 5. 图片输入
+## 5. 图片输入<img src="apps/web/public/mc/item/map.png" width="16" alt="">
 
 **模型能力标记**：
 
@@ -318,7 +338,7 @@ interface PluginContext {
 
 ---
 
-## 6. 动画（set_animation）
+## 6. 动画（set_animation）<img src="apps/web/public/mc/item/arrow.png" width="16" alt="">
 
 - 服务端文档模型 `BbAnimation`：`{name, length, loop:'loop'|'once'|'hold', bones:{骨骼名:[{time, rotation?, position?}]}}`，骨骼名必须是已存在分组。
 - 编译输出 Blockbench 格式（animators/keyframes/data_points）。
@@ -330,7 +350,7 @@ interface PluginContext {
 
 ---
 
-## 7. 无头 Blockbench 画布（bbcanvas/）
+## 7. 无头 Blockbench 画布（bbcanvas/）<img src="apps/web/public/mc/item/diamond_pickaxe.png" width="16" alt="">
 
 - 构建：`npm run build:bbcanvas` → 复用/重建 `../blockbench` 的 web target → 拷贝资源 → 补丁 index.html（噪音屏蔽 stub + 错误收集器）→ 注入 bb-bridge.js。
 - **bb-bridge.js**（GPL-3.0 注记）：
@@ -341,7 +361,7 @@ interface PluginContext {
 
 ---
 
-## 8. 设置系统
+## 8. 设置系统<img src="apps/web/public/mc/item/clock.png" width="16" alt="">
 
 - **置顶子窗口**：overlay + 800×800 居中面板，188px 导航 + 内容区独立滚动；右上「打开配置文件」下载 settings.json，✕ / Esc 关闭。
 - **六个分区**：
@@ -377,7 +397,7 @@ interface PluginContext {
 
 ---
 
-## 9. 外观：MC 像素皮肤
+## 9. 外观：MC 像素皮肤<img src="apps/web/public/mc/block/grass_block_top.png" width="16" alt="">
 
 `apps/web/src/mc-theme.css` 在 `styles.css` 之后加载，只覆盖令牌与组件选择器，不改布局规则。
 
@@ -395,7 +415,7 @@ interface PluginContext {
 
 ---
 
-## 10. 右侧拓展
+## 10. 右侧拓展<img src="apps/web/public/mc/item/ender_pearl.png" width="16" alt="">
 
 ### 10.1 标签页
 
@@ -454,7 +474,7 @@ interface PluginContext {
 
 ---
 
-## 11. 省 token（compaction 插件）
+## 11. 省 token（compaction 插件）<img src="apps/web/public/mc/item/experience_bottle.png" width="16" alt="">
 
 - **上下文占用取模型自己报的数**：`estimateContextTokens()` 优先用最近一次 `llm/usage.promptTokens` 作锚点，只补之后新增的 surface；压缩后锚点失效，回落全量估算。
 - 触发：每步调用前压力检查（`threshold = min(window×thresholdRatio, budget−headroom)`）；一次压不干净按 `compactionRetries`（默认 2）继续；超限错误绕过阈值最大化收缩重试一次。
@@ -464,7 +484,7 @@ interface PluginContext {
 - 按模型覆盖：`modelPolicies: { '<route>/<modelId>': { thresholdRatio, retainRatio } }`。
 - `.env`：`COMPACTION_THRESHOLD_RATIO / _HEADROOM_TOKENS / _RETAIN_RATIO / _MIN_SHADOWED / _RETRIES / _CONTEXT_WINDOW`。
 
-## 12. 统计看板（stats 插件）
+## 12. 统计看板（stats 插件）<img src="apps/web/public/mc/item/ender_eye.png" width="16" alt="">
 
 `projectStats(events)` 纯函数折叠出 `totals`（轮/步、输出、缓存、TTFT、tok/s、耗时、压缩合成行）与 `context`（段次/步/消息/工具/思考/压缩、工具用量、命令排行、token 构成、耗时分布、每步时间轴）。
 
@@ -474,7 +494,7 @@ interface PluginContext {
 
 ---
 
-## 13. 工作目录与素材库
+## 13. 工作目录与素材库<img src="apps/web/public/mc/item/book.png" width="16" alt="">
 
 ### 13.1 会话工作目录（cwd）
 
@@ -528,7 +548,7 @@ interface PluginContext {
 
 ---
 
-## 14. API 一览
+## 14. API 一览<img src="apps/web/public/mc/item/paper.png" width="16" alt="">
 
 ```
 GET    /api/health                       {ok, mock, plugins}
@@ -614,7 +634,7 @@ SSE 帧 `{id, topic, ...}`，topic 含：`open`、`turn/start`、`user/message`�
 
 ---
 
-## 15. 已知边界与注意事项
+## 15. 已知边界与注意事项<img src="apps/web/public/mc/item/flint_and_steel.png" width="16" alt="">
 
 1. **模型选择跨刷新持久**：切换模型即写 `<id>.meta.json`，刷新/重启恢复；仅当模型已从设置删除时回落默认。
 2. **动画数据曾丢失的教训**：bbdoc 快照恢复+原子写已加固；历史快照缺 `animations` 时恢复为空，旧数据无法找回。
@@ -643,7 +663,7 @@ SSE 帧 `{id, topic, ...}`，topic 含：`open`、`turn/start`、`user/message`�
 
 ---
 
-## 16. 常见接手任务速查
+## 16. 常见接手任务速查<img src="apps/web/public/mc/item/compass.png" width="16" alt="">
 
 | 任务 | 做法 |
 |---|---|
@@ -668,7 +688,7 @@ SSE 帧 `{id, topic, ...}`，topic 含：`open`、`turn/start`、`user/message`�
 | 改 Jar 测试启动器 | `apps/server/src/mc-test-client.ts` + `index.ts` 的 `/api/mc/test` 路由 + `LibraryDrawer.tsx` 的 Jar 页 |
 | 调试前端 SSE | `App.tsx` 的 `handleEvent` 是唯一入口；`data/sessions/*.jsonl` 是权威日志 |
 
-## 17. 数据流图
+## 17. 数据流图<img src="apps/web/public/mc/item/water_bucket.png" width="16" alt="">
 
 ```
 用户输入（中央 composer / 右 dock chips）
@@ -729,6 +749,15 @@ SSE 连接按 canvasId 过滤 ◄───────────────�
 
 <div align="center">
 
+<img src="apps/web/public/mc/item/diamond_pickaxe.png" width="16" alt="">
+<img src="apps/web/public/mc/item/book.png" width="16" alt="">
+<img src="apps/web/public/mc/item/ender_pearl.png" width="16" alt="">
+<img src="apps/web/public/mc/item/redstone.png" width="16" alt="">
+<img src="apps/web/public/mc/item/emerald.png" width="16" alt="">
+<img src="apps/web/public/mc/item/experience_bottle.png" width="16" alt="">
+
 **License 说明**：本仓库自有代码以 [MIT](LICENSE) 协议开源；`bbcanvas/` 基于 Blockbench 5.2.2（GPL-3.0）构建，该部分产物需遵循 GPL-3.0 同协议开源。
+
+<sub>用 AI 造方块 · openmods</sub>
 
 </div>
