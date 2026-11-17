@@ -558,7 +558,6 @@ export interface McTestStatusDto {
 
 /** 系统日志（GET /api/logs） */
 export type LogLevel = 'info' | 'warn' | 'error'
-
 export interface LogEntryDto {
   seq: number
   ts: number
@@ -571,6 +570,40 @@ export interface LogsDto {
   seq: number
   /** 当天落盘日志文件 */
   file: string
+}
+
+/** 自更新：本地与 GitHub main 的差异（/api/update/status） */
+export interface UpdateCommitDto {
+  sha: string
+  short: string
+  subject: string
+  date: string
+  author: string
+}
+
+export interface UpdateStatusDto {
+  repo: string
+  branch: string
+  local?: UpdateCommitDto
+  remote?: UpdateCommitDto
+  state: 'identical' | 'behind' | 'ahead' | 'diverged' | 'unknown'
+  aheadBy: number
+  behindBy: number
+  commits: UpdateCommitDto[]
+  dirty: boolean
+  dirtyFiles: string[]
+  error?: string
+}
+
+export interface UpdateApplyDto {
+  ok: boolean
+  error?: string
+  before?: string
+  after?: string
+  changed?: string[]
+  build?: 'ok' | 'failed' | 'skipped'
+  output?: string
+  needsRestart?: boolean
 }
 
 /** 功能开关（/api/features） */

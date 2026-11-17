@@ -3,6 +3,7 @@ import type {
   ArchivedView, FeaturesDto, ModelInfoDto, PrefsDto, ProjectBaselineDto, ProjectDto,
   SessionInfoDto, SessionSummaryDto, SettingsDto, StatsFrameDto, LibraryAssetDto, CanvasTreeDto,
   LibraryJarItemDto, McTestJarSelectionDto, McTestStatusDto, LogsDto,
+  UpdateStatusDto, UpdateApplyDto,
 } from './types.js'
 
 export interface SseFrame {
@@ -278,6 +279,15 @@ export const api = {
   /** 系统日志增量拉取：after 为上次拿到的 seq */
   logs: (after = 0, limit = 300) =>
     jfetch<LogsDto>(`/api/logs?after=${after}&limit=${limit}`),
+  /** 自更新：检查 openmods main 与本地差异 */
+  updateStatus: () => jfetch<UpdateStatusDto>('/api/update/status'),
+  /** 自更新：手动确认后 git pull + 重建前端 */
+  updateApply: () =>
+    jfetch<UpdateApplyDto>('/api/update/apply', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }),
   /** 素材内文件地址：图片/文本默认内联，jar 等强制下载加 download=1 */
   libraryFileUrl: (id: string, fileId: string, download = false) =>
     `/api/library/${id}/files/${fileId}${download ? '?download=1' : ''}`,

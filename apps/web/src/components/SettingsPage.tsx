@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api.js'
-import type { FeaturesDto, PrefsDto, WakeEntry } from '../types.js'
+import type { FeaturesDto, PrefsDto, WakeEntry, UpdateStatusDto } from '../types.js'
 import { AgentsSkillsPane } from './AgentSkillsPane.js'
 import { AboutContent } from './AboutDialog.js'
 
-export type SettingsSectionId = 'general' | 'features' | 'models' | 'agents' | 'subagent' | 'automation' | 'about'
+export type SettingsSectionId = 'general' | 'features' | 'models' | 'agents' | 'subagent' | 'automation' | 'about' | 'update'
 
 interface DraftModel {
   id: string
@@ -122,6 +122,15 @@ function fmtClock(ts: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
+/** ISO 提交时间 → YYYY-MM-DD；解析失败原样返回 */
+function fmtDate(iso?: string): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 // 设置页 —— 复刻 dsh ui-settings：每个分区一页，行式布局，开关即时生效
 export function SettingsPage(props: {
   section: SettingsSectionId
@@ -148,6 +157,9 @@ export function SettingsPage(props: {
   const [testClientDraft, setTestClientDraft] = useState<string | null>(null)
   /** MDK 工程目录草稿（同上） */
   const [testMdkDraft, setTestMdkDraft] = useState<string | null>(null)
+  /** 自更新状态（检查 / 手动更新） */
+  const [updateInfo, setUpdateInfo] = useState<UpdateStatusDto | null>(null)
+  const [updateBusy, setUpdateBusy] = useState(false)
   /** 功能开关的服务端视图（enabled = 本次启动实际加载，pendingRestart = 已改待重启） */
   const [featInfo, setFeatInfo] = useState<FeaturesDto | null>(null)
   const [featBusy, setFeatBusy] = useState<string | null>(null)
@@ -250,6 +262,36 @@ export function SettingsPage(props: {
 
   const patchProvider = (route: string, patch: Partial<DraftProvider>) => {
     setDraft(prev => ({ ...prev, [route]: { ...prev[route], ...patch } }))
+  }
+
+  /** 检查 GitHub main（只读，不改工作区） */
+  const checkUpdate = async () => {
+    setUpdateBusy(true)
+    try {
+      setUpdateInfo(await api.updateStatus())
+    } catch (e: any) {
+      props.onToast(`检查更新失败：${e.message}`)
+    } finally {
+      setUpdateBusy(false)
+    }
+  }
+
+  /** 手动确认后拉取 + 重建前端 */
+  const doUpdate = async () => {
+    if (!window.confirm('将执行 git pull --ff-only 并重新构建前端，完成后需要重启服务。继续？')) return
+    setUpdateBusy(true)
+    try {
+      const r = await api.updateApply()
+      if (!r.ok) props.onToast(`更新失败：${r.error ?? '未知错误'}`)
+      else if (r.build === 'failed') props.onToast(`代码已更新，但前端构建失败：${r.error ?? '请手动 npm run build'}`)
+      else if (r.needsRestart) props.onToast('更新完成，请重启服务生效')
+      else props.onToast('已是最新代码')
+      setUpdateInfo(await api.updateStatus())
+    } catch (e: any) {
+      props.onToast(`更新失败：${e.message}`)
+    } finally {
+      setUpdateBusy(false)
+    }
   }
 
   const patchModel = (route: string, idx: number, patch: Partial<DraftModel>) => {
@@ -594,6 +636,75 @@ export function SettingsPage(props: {
               ))}
             </div>
           )}
+        </div>
+      </div>
+    )
+  }
+
+  // ---- 更新 ----
+  if (props.section === 'update') {
+    const st = updateInfo
+    const stateText = !st ? '尚未检查'
+      : st.state === 'identical' ? '已是最新提交'
+        : st.state === 'behind' ? `落后远端 ${st.behindBy} 个提交`
+          : st.state === 'ahead' ? `本地领先远端 ${st.aheadBy} 个提交（未推送）`
+            : st.state === 'diverged' ? '本地与远端已分叉，请手动处理'
+              : '无法比较（本地提交可能尚未推送）'
+    return (
+      <div className="settings-section">
+        <div className="settings-section-head">
+          <h2>更新</h2>
+          <p>检查 GitHub 上的 openmods 最新代码；只有点「更新到最新」才会拉取，不会自动改动工作区。</p>
+        </div>
+
+        <div className="setting-group">
+          <div className="setting-group-title">当前版本</div>
+          <Row label="本地提交" hint={st?.local?.subject || '点击下方检查更新'}>
+            {st?.local ? `${st.local.short} · ${fmtDate(st.local.date)}` : '—'}
+          </Row>
+          <Row label="分支" hint={st?.dirty ? '有未提交的跟踪文件，更新前请先提交或暂存' : '工作区干净，可安全更新'}>
+            {st?.branch || '—'}{st?.dirty ? ` · ${st.dirtyFiles.length} 个改动` : ''}
+          </Row>
+          <Row label="远端 main" hint={st?.remote?.subject || '检查后显示 GitHub 最新提交'}>
+            {st?.remote ? `${st.remote.short} · ${fmtDate(st.remote.date)}` : '—'}
+          </Row>
+        </div>
+
+        <div className="setting-group">
+          <div className="setting-group-title">检查与更新</div>
+          <Row label="状态" hint={stateText}>
+            <button className="dialog-btn" disabled={updateBusy} onClick={() => void checkUpdate()}>
+              {updateBusy ? '处理中…' : '检查更新'}
+            </button>
+          </Row>
+          {st?.error && <div className="lib-launcher-error">{st.error}</div>}
+          {st?.state === 'behind' && (
+            <>
+              <Row label={`发现 ${st.behindBy} 个新提交`} hint="更新会执行 git pull --ff-only 并 npm run build，完成后需要重启服务">
+                <button
+                  className="dialog-btn primary"
+                  disabled={updateBusy || st.dirty}
+                  onClick={() => void doUpdate()}
+                >更新到最新</button>
+              </Row>
+              {!!st.commits.length && (
+                <div className="update-commits">
+                  {st.commits.map(c => (
+                    <div className="update-commit" key={c.sha}>
+                      <span className="update-sha">{c.short}</span>
+                      <span className="update-subject">{c.subject}</span>
+                      <span className="update-author">{c.author}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+          <div className="setting-row">
+            <span className="setting-row-hint">
+              更新不会自动重启服务；拉取后请重启 openmods。若前端构建失败，可手动执行 npm run build。
+            </span>
+          </div>
         </div>
       </div>
     )

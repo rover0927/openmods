@@ -23,6 +23,7 @@ import { probeWeb, proxyWeb } from './webview.js'
 import { createInteractionHub, type InteractionReply, type PendingInteraction } from './interaction.js'
 import { createTerminalManager } from './terminals.js'
 import { installLogCapture, getLogs, logFilePath } from './log-bus.js'
+import { applyUpdate, getUpdateStatus } from './update.js'
 import {
   getTestClientStatus, startTestClient, stopTestClient, testClientBusy, type TestClientJar,
 } from './mc-test-client.js'
@@ -1248,6 +1249,16 @@ app.get('/api/logs', async (req) => {
   const limit = Number((req.query as any)?.limit ?? 300)
   const result = getLogs(Number.isFinite(after) ? after : 0, Number.isFinite(limit) ? limit : 300)
   return { ...result, file: logFilePath() }
+})
+
+// 自更新：只检查 GitHub main；apply 由用户手动触发（git pull + 前端重建）
+app.get('/api/update/status', async () => getUpdateStatus())
+app.post('/api/update/apply', async (_req, reply) => {
+  try {
+    return await applyUpdate()
+  } catch (e: any) {
+    return reply.code(500).send({ ok: false, error: e?.message ?? String(e) })
+  }
 })
 
 // 功能关闭时相关接口统一 404（前端入口也会按 /api/features 隐藏；

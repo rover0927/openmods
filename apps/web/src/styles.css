@@ -1665,6 +1665,13 @@ select.agent-chip option { background: var(--bg-layer-2); color: var(--label-pri
 .about-links { display: flex; gap: 14px; font-size: 12px; }
 .about-links a { color: var(--accent); text-decoration: none; }
 .about-links a:hover { text-decoration: underline; }
+
+/* 设置 → 更新：待拉取的提交列表 */
+.update-commits { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px 12px; }
+.update-commit { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--label-secondary); }
+.update-sha { flex: none; font-family: ui-monospace, Consolas, monospace; color: var(--accent); }
+.update-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.update-author { flex: none; color: var(--label-caption); font-size: 11px; }
 .lib-importrow { display: flex; gap: 6px; align-items: flex-start; padding: 0 14px 8px; flex: none; }
 .lib-import {
   flex: 1; min-width: 0; min-height: 46px; max-height: 110px; resize: vertical;

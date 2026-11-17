@@ -104,6 +104,10 @@ npm start                # 或 npm run dev（tsx watch + vite）
 >
 > 如果启动测试客户端时提示“本地 MDK 缓存不完整 / 缺少库”，先按上面更新 vendor，不要反复重试联网安装。
 
+## <img src="apps/web/public/mc/item/ender_pearl.png" width="16" alt=""> 检查更新
+
+设置 → 更新：读取本地 HEAD 与 GitHub `main` 的差异；只有点击「更新到最新」才会执行 `git pull --ff-only` 并重建前端。工作区有未提交的跟踪文件时会拒绝更新；更新完成后需要重启服务。
+
 ## <img src="apps/web/public/mc/item/book.png" width="16" alt=""> 目录
 
 - [快速开始](#-快速开始) · [离线构建包](#-离线构建包vendor重要)

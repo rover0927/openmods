@@ -9,6 +9,7 @@ export const MC_ICON = {
   library: 'book',
   logs: 'paper',
   about: 'compass',
+  update: 'ender_pearl',
   settings: 'clock',
   canvas: 'diamond_pickaxe',
   images: 'map',
