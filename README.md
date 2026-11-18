@@ -38,7 +38,9 @@
 | <img src="apps/web/public/mc/item/diamond_pickaxe.png" width="16" alt=""> **多画布建模** | 主会话与每个建模子代理各有一块独立画布；右侧多页签查看/切换，活跃画布 durable，支持新建空白画布 |
 | <img src="apps/web/public/mc/item/book.png" width="16" alt=""> **素材库** | 模型 / Jar 构建 / 图片 / 文件四类分开；上传、拖拽、工作目录导入、从画布截取；Jar 页多选后统一启动独立 Forge 测试客户端 |
 | <img src="apps/web/public/mc/item/totem_of_undying.png" width="16" alt=""> **主代理全能力** | 权限审批、计划模式、询问用户、终端、文件读写、并发子代理——对标 dsh 主 agent |
-| <img src="apps/web/public/mc/item/lava_bucket.png" width="16" alt=""> **MC 开发闭环** | `mc_scaffold` 建工程 → 建模子代理出模型 → `mc_gradle build` → 标题栏「▶ 测试 Mod」→「jar ⤓」导出（Forge 1.20.1 / 国内镜像 / 离线构建包） |
+| <img src="apps/web/public/mc/item/clock.png" width="16" alt=""> **首次环境检测** | 首次打开检测 JDK 17 / Gradle 离线缓存 / Git；向导选择 JDK 与缓存路径，设置 → 环境可随时重检、整理错位 vendor |
+| <img src="apps/web/public/mc/item/redstone.png" width="16" alt=""> **角色协作** | MC 工程目录默认 mcmod；lead 收到 MC 需求可确认后一键移交并自动续跑；mcmod 的造型需求先派建模子代理 |
+| <img src="apps/web/public/mc/item/lava_bucket.png" width="16" alt=""> **MC 开发闭环** | `mc_scaffold` 建工程 → 建模子代理出模型并在独立画布导出 JSON → `mc_gradle build` → 标题栏「▶ 测试 Mod」→「jar ⤓」导出（Forge 1.20.1 / 国内镜像 / 离线构建包） |
 | <img src="apps/web/public/mc/item/enchanted_book.png" width="16" alt=""> **代理与技能** | 三个角色（lead / mcmod / modeling）的工具与技能分配可视化；技能自注入、内置技能只读 |
 | <img src="apps/web/public/mc/item/ender_eye.png" width="16" alt=""> **上下文面板** | 底部状态条与右侧面板跟随当前画布页的 owner 会话；分段占用、工具用量、耗时分布、token 环形图、每轮明细 |
 | <img src="apps/web/public/mc/item/map.png" width="16" alt=""> **图片输入** | Ctrl+V 粘贴直发视觉模型；纯文本模型按 dsh 语义诚实降级 |
@@ -73,6 +75,8 @@ npm start                # 生产：自动构建前端 → 单进程 http://127.
 
 访问 `http://127.0.0.1:8787`：
 
+首次打开会先弹出 **环境检测**：JDK 17 / Gradle 缓存 / Git。已下载 vendor 时缓存会显示「就绪」；也可以「稍后配置」，随时在 设置 → 环境 修改。
+
 1. 左栏顶部「**新建项目**」建一个项目（可关联电脑上的文件夹）；
 2. 在「**会话**」分区头部点 `＋`（或在项目行点 `＋`）新建会话；
 3. 在中央输入框或右侧建议 chip 发消息，建模任务会自动派给子代理。
@@ -88,6 +92,20 @@ npm start                # 生产：自动构建前端 → 单进程 http://127.
 > [!TIP]
 > **生产与调试**：`npm start` 会先构建前端（`apps/web/dist`），再以 server 单进程同时托管前端、API、`/bb/` 画布；`npm run dev` 是调试模式，vite（:5173）只用于前端热更新。
 
+## <img src="apps/web/public/mc/item/clock.png" width="16" alt=""> 环境检测（首次启动）
+
+首次打开工作台自动检测三项，结果与用户选择保存到 `data/settings.json` 的 `environment`：
+
+| 项 | 检测内容 | 说明 |
+|---|---|---|
+| Java | `JAVA_HOME`、`PATH`、`.jdks`、`.gradle/jdks`、常见安装目录 | 1.20.1 需要 JDK 17；非 17 会标注「不适用于 1.20.1」 |
+| Gradle 缓存 | `plugins/mcdev/vendor/`、错位目录、`MC_ROOT/.gradle-home`、`GRADLE_USER_HOME`、`~/.gradle` | 命中 vendor 时构建不再联网下载 Gradle 8.8 |
+| Git | `git --version` | 设置 → 更新 使用这个 Git；缺失时给出可读提示 |
+
+- 保存后立即作用于 `mc_gradle`、测试客户端与自更新，不需要重启。
+- 如果 `gradle-8.8/`、`fg-maven/` 被解压到 `plugins/mcdev/` 而不是 `plugins/mcdev/vendor/`，向导会显示警告并提供「整理到 vendor/」。
+- 随时可到 设置 → 环境 重新检测、选择 JDK/缓存或填写 Git 路径。
+
 ## <img src="apps/web/public/mc/item/emerald.png" width="16" alt=""> 离线构建包（vendor，重要）
 
 `plugins/mcdev/vendor/` 约 245M，不进 git。到 [Releases](https://github.com/rover0927/openmods/releases) 下载：
@@ -99,17 +117,19 @@ npm start                # 生产：自动构建前端 → 单进程 http://127.
 
 `openmods-vendor.zip` 解压后是 `gradle-8.8/`、`fg-maven/` 两个目录，直接放进 `plugins/mcdev/vendor/`。
 
+> 如果这两个目录出现在 `plugins/mcdev/` 而不是 `plugins/mcdev/vendor/`，不用重新下载：设置 → 环境 → 「整理到 vendor/」会自动移动。
+
 不下载也能跑：首次构建会走国内镜像补齐缓存，但需要联网；测试客户端离线安装可能提示缺少库。
 
 > 旧版 vendor 请重新下载当前 `openmods-vendor.zip` 覆盖；补丁包已合并，不再单独提供。
 
 ## <img src="apps/web/public/mc/item/ender_pearl.png" width="16" alt=""> 检查更新
 
-设置 → 更新：读取本地 HEAD 与 GitHub `main` 的差异；只有点击「更新到最新」才会执行 `git pull --ff-only` 并重建前端。工作区有未提交的跟踪文件时会拒绝更新；更新完成后需要重启服务。
+设置 → 更新：读取本地 HEAD 与 GitHub `main` 的差异（按 compare 的 ahead/behind 计数显示落后/领先）；落后时列出新提交。只有点击「更新到最新」才会执行 `git fetch` + `git merge --ff-only`，必要时 `npm install` 并重建前端。使用 设置 → 环境 配置的 Git；工作区有未提交的跟踪文件时会拒绝更新；更新完成后需要重启服务。
 
 ## <img src="apps/web/public/mc/item/book.png" width="16" alt=""> 目录
 
-- [快速开始](#-快速开始) · [离线构建包](#-离线构建包vendor重要)
+- [快速开始](#-快速开始) · [环境检测](#-环境检测首次启动) · [离线构建包](#-离线构建包vendor重要)
 - **开发与实现文档**
   - [1. 快速上手](#1-快速上手) · [2. 目录结构](#2-目录结构)
   - [3. Agent 架构](#3-agent-架构)（运行时 · 工作台 · 子代理与多画布 · LLM 适配器 · 项目分组 · 消息渲染 · 上下文面板 · MC 代理）
@@ -144,7 +164,8 @@ openmods/
 │   │   ├── session-store.ts 会话磁盘层：目录扫描重建、meta/doc 原子读写、id 校验
 │   │   ├── canvas.ts        多画布服务：meta.canvasIds / 活跃画布 / 载入提交广播
 │   │   ├── project-store.ts 项目分组 + 全局归档集合
-│   │   ├── settings.ts       providers/bridge/prefs/credentials 持久化 + redact + 夹取
+│   │   ├── settings.ts       providers/bridge/prefs/environment/credentials 持久化 + redact + 夹取
+│   │   ├── env-check.ts      Java 17 / Gradle 缓存 / Git 检测、环境配置应用与 vendor 整理
 │   │   ├── profiles.ts       代理角色（lead / mcmod / modeling）与提示词
 │   │   ├── features.ts       功能开关声明与启动态解析（画布 / MC / 素材库）
 │   │   ├── library.ts        素材库存储（模型/Jar/图片/文件分类）+ 模型等距预览
@@ -162,7 +183,7 @@ openmods/
 │       ├── markdown.tsx     零依赖 Markdown 渲染（先转义 + 标签白名单）
 │       └── components/      LeftSidebar / GrassCube / McIcon / MainPanel / RightDock /
 │                           SessionView / SubagentActivity / StatsTab / ModelPicker /
-│                           SettingsWindow / SettingsPage / AgentSkillsPane / CanvasPane /
+│                           SettingsWindow / SettingsPage / EnvSetupDialog / AgentSkillsPane / CanvasPane /
 │                           DockPreview / LibraryDrawer / TerminalPane / PlanPane /
 │                           AskDialog / Lightbox / ContextMeter
 │       └── public/mc/       方块贴图（block/）与物品图标（item/）
@@ -192,7 +213,7 @@ openmods/
 - **会话持久化**：`data/sessions/` 是唯一事实来源——`<id>.jsonl`（事件）、`<id>.meta.json`（标题/模型/画布/协作状态）、`<canvasId>.bbdoc.json`（画布快照）。`GET /api/sessions` 每次扫描目录重建列表；所有 JSON 落盘走 tmp+rename 原子写；标题按完整行扫描日志，首条消息带 base64 附图也能正确提取。
 - **画布归属**：`<id>.meta.json` 里的 `canvasIds` 是会话拥有的画布集合，`canvasId` 是**活跃画布**（durable）。主会话默认拥有自己的画布；**建模子代理使用自己的 id 作为独立画布**，不再继承父画布。老数据没有字段时沿父链回溯（只兼容，不回填）。
 - **runTurn**：图片链路（§5）→ 逐 step：压缩钩子 → build surface → `llm.chat` 流式 → tool_calls 逐个执行并落日志 → 无 tool_calls 收尾。`MAX_STEPS=12`，`AbortController` 支持停止。每个工具调用前过两道内核闸：① 计划模式下 `def.mutates` 一律拦截；② `guardApproval()` 处理 `def.requiresApproval`。
-- **profile**：`profiles.ts` 定义 `lead`（主代理）、`mcmod`（MC 模组开发主代理）、`modeling`（建模子代理，排除工作台与 spawn/list）。`toolFilter` 白名单 / `toolExclude` 排除双机制，`WORKSPACE_TOOLS` 统一列出工作台工具。
+- **profile**：`profiles.ts` 定义 `lead`（通用主代理/调度）、`mcmod`（MC 模组开发主代理）、`modeling`（建模子代理，排除工作台与 spawn/list）。MC 工程目录的新会话默认 `mcmod`，其他目录默认 `lead`；`lead` 收到 MC 开发需求先询问用户，确认后用 `handoff_to_mcmod` 切换角色并自动续跑。`toolFilter` 白名单 / `toolExclude` 排除双机制，`WORKSPACE_TOOLS` 统一列出工作台工具。
 
 ### 3.2 主代理工作台
 
@@ -261,9 +282,11 @@ composer 的模型 chip 左侧有代理角色下拉（`GET /api/profiles`，选�
 
 | 角色 | 定位 |
 |---|---|
-| `lead`（默认） | 通用主代理：对话 + 建模委派 |
-| `mcmod` | 只做 Java + MC 1.20.1 + Forge 47.x 的模组开发主代理 |
+| `lead`（普通目录默认） | 通用主代理：对话 + 建模委派；不直接做 MC 工程，收到 MC 需求先询问是否移交 |
+| `mcmod`（MC 工程默认） | 只做 Java + MC 1.20.1 + Forge 47.x 的模组开发主代理 |
 | `modeling` | 建模子代理（内部角色，不能派发子代理） |
+
+`lead` 在用户确认后调用 `handoff_to_mcmod`：会话角色持久化为 `mcmod`，当前回合结束后自动用原需求续跑一轮，不需要用户重发。MC 工程目录（`gradle.properties` 含 `minecraft_version`，或 `build.gradle` 含 ForgeGradle）新建会话默认直接用 `mcmod`。
 
 `mcmod` 的工具面来自 `plugins/mcdev`：
 
@@ -279,7 +302,7 @@ composer 的模型 chip 左侧有代理角色下拉（`GET /api/profiles`，选�
 
 **离线构建包**：`vendor/gradle-8.8/` 由 `seedWrapperDist` 按 URL 的 MD5 算出 wrapper 缓存 key；`vendor/fg-maven/` 由 `seedMavenCache` 整树补缺（只补缺失不覆盖），快照没盖住的才走镜像兜底。仍需网络的是 FG 插件本体、Gradle 依赖解析与 runClient 的 assets。实测缓存预热后 `build` 约 2m50s，`runClient` 到主菜单约 25s。
 
-建模衔接：造型派给 `spawn_modeling_subagent`（各自画布），汇总回合再用 `mc_export_model` 或 `canvas_export` 落地到工程。
+建模衔接：`mcmod` 的造型需求先派 `spawn_modeling_subagent`。子代理在自己的独立画布建模，收尾时按提示用 `canvas_export` 导出 JSON；`mcmod` 在汇总回合读取该 JSON 落地。主会话的 `canvas_export` 不会导出子代理画布，不要在主会话重复导出。
 
 ---
 
@@ -367,18 +390,21 @@ interface PluginContext {
 ## 8. 设置系统<img src="apps/web/public/mc/item/clock.png" width="16" alt="">
 
 - **置顶子窗口**：overlay + 800×800 居中面板，188px 导航 + 内容区独立滚动；右上「打开配置文件」下载 settings.json，✕ / Esc 关闭。
-- **六个分区**：
+- **九个分区**：
 
   | 分区 | 内容 |
   |---|---|
   | 通用 `general` | 5 套 MC 主题（草方块 / 樱花 / 深海 / 下界 / 末地）、字号、发送键、Mod 构建输出目录、revision + 打开配置文件 |
   | 功能 `features` | 画布与建模 / Minecraft 模组开发 / 素材库 三个开关；`pendingRestart` 提示需重启生效 |
+  | 环境 `environment` | Java 17 / Gradle 缓存 / Git 检测；选择 JDK 与缓存路径、整理错位 vendor，保存后立即生效 |
   | 模型 `models` | 供应商卡片（显示名 / Base URL / key write-only / 模型行编辑器）+ ⟳ 自动获取 + 桥接模型 |
   | 代理与技能 `agents` | 三角色的工具 chips 与技能勾选分配；技能库 + 自注入；内置技能只读 |
   | 子代理 `subagent` | 并发上限（1–8）、结算后自动唤醒、对话里显示运行状态 |
   | 自动化 `automation` | 画布自动唤醒开关 + 最近的唤醒记录 |
+  | 更新 `update` | 检查 GitHub main、显示领先/落后与新提交、手动更新 |
+  | 关于 `about` | 版本、协议与联系方式 |
 
-- **数据**：`data/settings.json`（`providers` / `bridge` / `prefs` 同住一个文档，共用一条 `revision` 乐观锁）+ `data/credentials.json`（API key 分离存储）。
+- **数据**：`data/settings.json`（`providers` / `bridge` / `prefs` / `environment` 同住一个文档，共用一条 `revision` 乐观锁）+ `data/credentials.json`（API key 分离存储）。
 - **prefs**：
 
   | 字段 | 默认 | 作用 |
@@ -560,11 +586,15 @@ GET    /api/health                       {ok, mock, plugins}
 GET    /api/features                     功能开关（enabled / pendingRestart）+ 可用角色 + 插件加载
 GET    /api/profiles                     当前可用代理角色
 GET    /api/models                       {models:[…], defaultModelId}（含 vision/inputModalities/contextWindow）
-GET    /api/settings                     {settings:{providers(redacted), bridge, prefs, revision}}
-PUT    /api/settings                     body {providers?, bridge?, prefs?, expectedRevision?} → {ok, revision, prefs}
+GET    /api/settings                     {settings:{providers(redacted), bridge, prefs, environment, revision}}
+PUT    /api/settings                     body {providers?, bridge?, prefs?, environment?, expectedRevision?} → {ok, revision, prefs}
 GET    /api/settings/file                下载原始 settings.json
 PUT    /api/settings/credentials/:route  写 API key
 POST   /api/settings/discover-models     探测 {baseURL}/models
+GET    /api/env/status                   环境检测（Java 17 / Gradle 缓存 / Git）
+POST   /api/env/apply                    保存环境配置 {javaHome?, gradleHome?, gitPath?, setupDone?, fixVendorLayout?}
+GET    /api/update/status                检查 GitHub main 与本地差异
+POST   /api/update/apply                 手动更新（git fetch + ff-only merge + 必要时 install/build）
 GET    /api/attachments/:id              图片字节（内容寻址，immutable）
 GET    /api/fs?path=                     工作区目录一层
 GET    /api/fs/text?path=                文本预览（>512KB 截断）
@@ -635,7 +665,7 @@ POST   /api/mc/test/run                  启动测试客户端 {jars:[{source,as
 POST   /api/mc/test/stop                 停止测试客户端
 ```
 
-SSE 帧 `{id, topic, ...}`，topic 含：`open`、`turn/start`、`user/message`、`assistant/delta`、`tool/call`、`tool/result`、`llm/usage`、`step/start|end`、`turn/end`、`session/waiting`、`model_update`（`sessionId` = canvasId）、`model/selected`、`view_update`、`canvases/update`、`stats`、`compaction`、`settings/updated`、`models/updated`、`credentials/updated`、`subagent/notice`、`subagent/updated`、`bridge/working|done`、`terminal/open|data|exit`、`error`、`done`。
+SSE 帧 `{id, topic, ...}`，topic 含：`open`、`turn/start`、`user/message`、`assistant/delta`、`tool/call`、`tool/result`、`llm/usage`、`step/start|end`、`turn/end`、`session/waiting`、`session/profile`、`model_update`（`sessionId` = canvasId）、`model/selected`、`view_update`、`canvases/update`、`stats`、`compaction`、`settings/updated`、`models/updated`、`credentials/updated`、`subagent/notice`、`subagent/updated`、`bridge/working|done`、`terminal/open|data|exit`、`error`、`done`。
 
 ---
 
@@ -665,6 +695,8 @@ SSE 帧 `{id, topic, ...}`，topic 含：`open`、`turn/start`、`user/message`�
 22. **功能开关需要重启**：`prefs.features` 改的是下次启动态；本次进程里插件不会热插拔，设置页会显示 `pendingRestart`。
 23. **主题切换即时生效**：5 套 MC 主题写在 `[data-theme]`，只影响 UI，不改数据；画布与终端保持深色。
 24. **统一测试客户端首次安装优先离线**：默认装到 `data/mc-test-client/.minecraft`，会复用本机 MDK 的 ForgeGradle 缓存 + vendor 离线包执行 `installer --offline`；缓存不完整时才联网。想强制离线/联网，可在设置 → 通用 → Mod 构建里切换「测试客户端来源」。**缺少库时请更新 Releases 里的 vendor 包**（见 [离线构建包](#-离线构建包vendor重要)），或改用 `testClientDir` 指向已有 Forge 1.20.1 `.minecraft`。
+25. **JDK 17 是 MC 构建硬性要求**：首次启动向导会检测并让用户选择；缺 Java 17 时 `mc_gradle` 与测试客户端会拒绝启动，并提示到 设置 → 环境 配置，而不是抛原始 Gradle 报错。
+26. **建模子代理的成果由子代理导出**：子代理有独立画布，收尾时按 `spawn_modeling_subagent` 的 prompt 要求调用 `canvas_export` 导出 JSON；`mcmod` 读取该文件落地。主会话的 `canvas_export` 不会导出子代理画布。
 
 ---
 
@@ -686,6 +718,8 @@ SSE 帧 `{id, topic, ...}`，topic 含：`open`、`turn/start`、`user/message`�
 | 加画布页类型 | `App.tsx` 的 `CanvasPageDto` + `showCanvasPage` / `openLibModel` / `pickCanvas` |
 | 调自动唤醒 | `App.tsx` 的 `wakeCanvas(reason)`；开关是 `prefs.canvasAutoWake` |
 | 加设置开关 | server `settings.ts`（`PrefsConfig` + `DEFAULT_PREFS` + `normalizePrefs`）→ `web/types.ts` 的 `PrefsDto` → `SettingsPage.tsx` 对应分区 |
+| 改环境检测/首次向导 | `apps/server/src/env-check.ts` + `index.ts` 的 `/api/env/*` + `EnvSetupDialog.tsx` + `SettingsPage.tsx` 环境分区 |
+| 改 lead→mcmod 移交 | `profiles.ts` 的 lead 提示词 + `index.ts` 的 `handoff_to_mcmod` / `pendingHandoff` / `afterRootTurn` |
 | 加功能开关 | `apps/server/src/features.ts` 的 `FEATURE_DEFS` + 插件 `requires`；前端读 `/api/features` |
 | 改等待/自动汇总 | `index.ts`：`waiting` / `settlements` + `settleChild()` + `maybeAutoContinue()` + `formatSettlementPrompt()` |
 | 改项目分组/归档 | `apps/server/src/project-store.ts`；门控在 `index.ts` 的 `isArchivedLineage()` |
