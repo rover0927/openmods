@@ -496,7 +496,7 @@ export function TurnCard({ turn, onOpenSubagent }: { turn: TurnEntry; onOpenSuba
       ) : turn.userText || images.length ? (
         <div className="msg user">
           <div className="msg-bubble user-bubble">
-            {turn.userText && <div className="msg-text">{turn.userText}</div>}
+            {turn.userText && <MessageText text={turn.userText} />}
             {/* 参考图：直接铺缩略图（原来只有一行"附带参考图 N 张"），点击开灯箱 */}
             {images.length > 0 ? (
               <div

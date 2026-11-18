@@ -1,4 +1,5 @@
-// 极简 Markdown 渲染（不引依赖）：助手正文里常见的标题/加粗/行内代码/列表/围栏代码块。
+// 极简 Markdown 渲染（不引依赖）：标题 / 加粗 / 行内代码 / 嵌套列表 / 任务列表 /
+// 表格 / 引用 / 分隔线 / 围栏代码块 / 图片。
 // 安全策略：先整体 HTML 转义，再只放行我们自己生成的标签 —— 原文里的任何 HTML 都当纯文本。
 import type { ReactNode } from 'react'
 
@@ -10,18 +11,85 @@ function esc(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
-/** 行内样式：`code` → **bold** → *em* → [text](url) */
+/** 行内样式：code 先占位，避免 code 里的星号被继续解析 */
 function inline(raw: string): string {
+  const codes: string[] = []
   let s = esc(raw)
-  s = s.replace(/`([^`]+)`/g, '<code>$1</code>')
+  s = s.replace(/`([^`]+)`/g, (_, c: string) => `\u0000${codes.push(c) - 1}\u0000`)
+  s = s.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<img class="md-img" src="$2" alt="$1" loading="lazy" />')
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+  s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>')
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   s = s.replace(/(^|[\s（(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-  // 只放行 http(s) 链接，避免 javascript: 之类的伪协议
-  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+  s = s.replace(/\u0000(\d+)\u0000/g, (_, i: string) => `<code>${codes[Number(i)]}</code>`)
   return s
 }
 
-const BLOCK_START = /^(```|#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s)/
+interface ListItem {
+  text: string
+  checked?: boolean
+  ordered: boolean
+  children: ListItem[]
+}
+
+const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/
+const TASK_RE = /^\[([ xX])\]\s+(.*)$/
+const TABLE_SEP = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/
+const HR_RE = /^\s*([-*_])(?:\s*\1){2,}\s*$/
+const BLOCK_START = /^(```|#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|\|.*\||\s*([-*_])(?:\s*\1){2,}\s*$)/
+
+function indentOf(s: string): number {
+  return s.replace(/\t/g, '  ').length
+}
+
+/** 递归解析缩进列表；子列表挂到上一项的 children */
+function parseList(lines: string[], start: number, indent: number): { items: ListItem[]; next: number; ordered: boolean } {
+  const items: ListItem[] = []
+  const first = LIST_RE.exec(lines[start])
+  const ordered = !!first && /\d/.test(first[2])
+  let i = start
+  while (i < lines.length) {
+    const m = LIST_RE.exec(lines[i])
+    if (!m) break
+    const cur = indentOf(m[1])
+    if (cur < indent) break
+    if (cur > indent) {
+      if (!items.length) break
+      const child = parseList(lines, i, cur)
+      items[items.length - 1].children.push(...child.items)
+      i = child.next
+      continue
+    }
+    let body = m[3]
+    let checked: boolean | undefined
+    const task = TASK_RE.exec(body)
+    if (task) {
+      checked = task[1].toLowerCase() === 'x'
+      body = task[2]
+    }
+    items.push({ text: body, checked, ordered: /\d/.test(m[2]), children: [] })
+    i++
+  }
+  return { items, next: i, ordered }
+}
+
+function renderList(items: ListItem[], key: string): ReactNode {
+  const ordered = items[0]?.ordered
+  const lis = items.map((it, idx) => (
+    <li key={idx} className={it.checked !== undefined ? 'md-task' : undefined}>
+      {it.checked !== undefined && <span className={`md-check ${it.checked ? 'on' : ''}`} />}
+      <span dangerouslySetInnerHTML={{ __html: inline(it.text) }} />
+      {it.children.length > 0 && renderList(it.children, `${key}-${idx}`)}
+    </li>
+  ))
+  return ordered
+    ? <ol className="md-list md-ol" key={key}>{lis}</ol>
+    : <ul className="md-list md-ul" key={key}>{lis}</ul>
+}
+
+function tableCells(line: string): string[] {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(s => s.trim())
+}
 
 export function MessageText({ text }: { text: string }) {
   const lines = text.replace(/\r\n/g, '\n').split('\n')
@@ -37,13 +105,20 @@ export function MessageText({ text }: { text: string }) {
       const buf: string[] = []
       i++
       while (i < lines.length && !lines[i].trimStart().startsWith('```')) buf.push(lines[i++])
-      i++ // 跳过收尾围栏
+      i++
       out.push(
         <pre className="md-pre" key={`c${i}`}>
           {lang && <span className="md-lang">{lang}</span>}
           <code>{buf.join('\n')}</code>
         </pre>,
       )
+      continue
+    }
+
+    // 分隔线（要在列表之前判断，避免 --- 被当成列表）
+    if (HR_RE.test(line)) {
+      out.push(<hr className="md-hr" key={`r${i}`} />)
+      i++
       continue
     }
 
@@ -58,25 +133,34 @@ export function MessageText({ text }: { text: string }) {
       continue
     }
 
-    // 无序 / 有序列表（连续行成一组）
-    const bullet = /^[-*+]\s+(.*)$/
-    const ordered = /^(\d+)[.)]\s+(.*)$/
-    if (bullet.test(line) || ordered.test(line)) {
-      const isOrdered = ordered.test(line)
-      const items: ReactNode[] = []
-      while (i < lines.length) {
-        const b = bullet.exec(lines[i])
-        const o = ordered.exec(lines[i])
-        if (!b && !o) break
-        const body = b ? b[1] : o![2]
-        items.push(
-          <li key={`i${i}`} dangerouslySetInnerHTML={{ __html: inline(body) }} />,
-        )
-        i++
+    // 表格：当前行含 |，下一行是分隔行
+    if (line.includes('|') && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1])) {
+      const head = tableCells(line)
+      i += 2
+      const rows: string[][] = []
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim() !== '') {
+        rows.push(tableCells(lines[i++]))
       }
-      out.push(isOrdered
-        ? <ol className="md-list" key={`l${i}`}>{items}</ol>
-        : <ul className="md-list" key={`l${i}`}>{items}</ul>)
+      out.push(
+        <table className="md-table" key={`t${i}`}>
+          <thead>
+            <tr>{head.map((c, ci) => <th key={ci} dangerouslySetInnerHTML={{ __html: inline(c) }} />)}</tr>
+          </thead>
+          <tbody>
+            {rows.map((r, ri) => (
+              <tr key={ri}>{r.map((c, ci) => <td key={ci} dangerouslySetInnerHTML={{ __html: inline(c) }} />)}</tr>
+            ))}
+          </tbody>
+        </table>,
+      )
+      continue
+    }
+
+    // 无序 / 有序列表（递归支持缩进子列表）
+    if (LIST_RE.test(line)) {
+      const parsed = parseList(lines, i, indentOf(LIST_RE.exec(line)![1]))
+      out.push(renderList(parsed.items, `l${i}`))
+      i = parsed.next
       continue
     }
 
