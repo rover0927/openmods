@@ -193,7 +193,7 @@ function gradleCheck(config: EnvironmentConfig): EnvCheck {
       value: '',
       label: '项目内 vendor 离线包（推荐）',
       ok: true,
-      note: '自动播种到 Gradle 缓存，构建不需要联网下载 Gradle',
+      note: '自动播种 Gradle 8.8 与 ForgeGradle 缓存；其余依赖优先复用已有的 ~/.gradle',
     })
   }
 

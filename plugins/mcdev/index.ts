@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto'
 import { copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { copyFile, mkdir, open, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile, cp } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import type { Plugin, ToolResult } from '@openmods/plugin-kit'
 import { WORKSPACE_TOOL_NAMES } from '@openmods/plugin-kit'
@@ -31,6 +32,25 @@ const TEMPLATE = fileURLToPath(new URL('./template/forge-1.20.1/', import.meta.u
  * 否则每个会话都会在自己工作区重建一份空缓存，遇到镜像抖动就直接构建失败。
  */
 const WARM_GRADLE_HOME = existsSync(join(MC_ROOT, '.gradle-home')) ? join(MC_ROOT, '.gradle-home') : null
+
+/** 目录里是否已经有能用的 Gradle 缓存（空目录不算） */
+function hasGradleCache(home: string): boolean {
+  return existsSync(join(home, 'caches', 'modules-2')) || existsSync(join(home, 'caches', 'forge_gradle'))
+}
+
+/**
+ * Gradle 用户目录：设置项 > 共享预热缓存（MC_ROOT/.gradle-home）> 用户 ~/.gradle（已有缓存）> 会话自建。
+ * 以前新会话一律自建空 .gradle-home，runClient 得把整套 MC 运行时库（lwjgl/netty/mojang…）
+ * 重新下载一遍，镜像一抖就卡在配置阶段；复用已有的 ~/.gradle 可以直接命中这些模块。
+ */
+function resolveGradleHome(sessionRoot: string): string {
+  const explicit = process.env.OPENMODS_GRADLE_HOME?.trim() || process.env.GRADLE_USER_HOME?.trim()
+  if (explicit) return explicit
+  if (WARM_GRADLE_HOME) return WARM_GRADLE_HOME
+  const userHome = join(homedir(), '.gradle')
+  if (hasGradleCache(userHome)) return userHome
+  return join(sessionRoot, '.gradle-home')
+}
 
 /** 可复制的现成参考工程（MC_ROOT 下含 build.gradle 的目录），列进 mc_scaffold 说明供 from 使用 */
 const REFERENCE_PROJECTS: string[] = (() => {
@@ -677,7 +697,7 @@ async function runGradle(opts: {
   if ('error' in java) return fail(java.error)
   const gradlew = process.platform === 'win32' ? 'gradlew.bat' : './gradlew'
   const argv = [gradlew, task, '--console=plain', ...(opts.args ?? [])]
-  const gradleHome = process.env.OPENMODS_GRADLE_HOME ?? process.env.GRADLE_USER_HOME ?? WARM_GRADLE_HOME ?? join(opts.root ?? MC_ROOT, '.gradle-home')
+  const gradleHome = resolveGradleHome(opts.root ?? MC_ROOT)
   const env = {
     ...process.env,
     JAVA_HOME: java.home,
@@ -1574,7 +1594,7 @@ async function startRunClient(projectDir: string, root: string): Promise<{ pid: 
   const env = {
     ...process.env,
     JAVA_HOME: java.home,
-    GRADLE_USER_HOME: process.env.OPENMODS_GRADLE_HOME ?? process.env.GRADLE_USER_HOME ?? WARM_GRADLE_HOME ?? join(root, '.gradle-home'),
+    GRADLE_USER_HOME: resolveGradleHome(root),
   }
   await seedMavenCache(env.GRADLE_USER_HOME)
   await seedWrapperDist(env.GRADLE_USER_HOME, projectDir)
