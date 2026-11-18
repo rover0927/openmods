@@ -9,7 +9,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
-import { copyFile, mkdir, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile, cp } from 'node:fs/promises'
+import { copyFile, mkdir, open, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile, cp } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Plugin, ToolResult } from '@openmods/plugin-kit'
@@ -1403,6 +1403,41 @@ const plugin: Plugin = {
       const dir = known?.dir ?? resolve(root, raw.replace(/^[/\\]+/, ''))
       try { if (!statSync(dir).isDirectory()) throw new Error() } catch { return reply.code(400).send({ error: '工程目录不存在' }) }
       return { ok: true, stopped: stopRunClient(dir) }
+    })
+
+    /** runClient 控制台日志（「运行日志」标签）：读取工程 run-console.log 的尾部 */
+    ctx.http.route('GET', '/api/mc/runlog', async (req, reply) => {
+      const root = ctx.sessions.cwdOf(String(req.query.sessionId ?? ''))
+      if (!root) return reply.code(404).send({ error: '会话不存在或目录无效' })
+      const raw = String(req.query.project ?? '').trim()
+      if (!raw) return reply.code(400).send({ error: 'project 不能为空' })
+      const known = (await listMcProjects(root)).find(p => p.name === raw)
+      if (!known) return reply.code(404).send({ error: `未找到 MC 工程：${raw}` })
+      const logPath = join(known.dir, 'run-console.log')
+      const st = await stat(logPath).catch(() => null)
+      let text = ''
+      if (st?.isFile()) {
+        // 客户端日志可能很大：只取尾部 160KB，避免每 2 秒整文件传输
+        const max = 160_000
+        const start = Math.max(0, st.size - max)
+        const fh = await open(logPath, 'r')
+        try {
+          const buf = Buffer.alloc(st.size - start)
+          await fh.read(buf, 0, buf.length, start)
+          text = buf.toString('utf8')
+        } finally {
+          await fh.close()
+        }
+      }
+      return {
+        project: known.name,
+        dir: known.dir,
+        path: logPath,
+        running: known.runClientRunning,
+        startedAt: known.runClientStartedAt,
+        updatedAt: st?.mtimeMs,
+        text,
+      }
     })
 
     /** 下载构建出的 mod jar（必须是 .jar 且真实存在） */

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
-import type { BuildLogMetaDto, LogEntryDto, LogLevel } from '../types.js'
+import type { BuildLogMetaDto, LogEntryDto, LogLevel, McProjectUiDto, McRunLogDto } from '../types.js'
 
-type LogTab = 'system' | 'build'
+type LogTab = 'system' | 'build' | 'run'
 
 const FILTERS: { id: 'all' | LogLevel; label: string }[] = [
   { id: 'all', label: '全部' },
@@ -32,11 +32,15 @@ function fmtDuration(startedAt: number, finishedAt?: number): string {
 
 type BuildLogDetail = BuildLogMetaDto & { text: string }
 
-/** 日志抽屉：系统日志（增量轮询 /api/logs）+ 构建日志（历史列表 + 单条完整文本） */
-export function LogDrawer({ open, onClose, onToast }: {
+/** 日志抽屉：系统日志（增量轮询 /api/logs）+ 构建日志（历史列表 + 单条完整文本）+ 运行日志（runClient 控制台） */
+export function LogDrawer({ open, onClose, onToast, sessionId, mcEnabled = false }: {
   open: boolean
   onClose: () => void
   onToast: (msg: string) => void
+  /** 当前会话：运行日志按会话 cwd 找 MC 工程 */
+  sessionId?: string | null
+  /** mc 插件启用时才显示「运行日志」标签 */
+  mcEnabled?: boolean
 }) {
   const [tab, setTab] = useState<LogTab>('system')
 
@@ -58,6 +62,15 @@ export function LogDrawer({ open, onClose, onToast }: {
   /** 已加载详情的结束时间：未结束（undefined）时每轮轮询都会刷新，结束后只补拉一次 */
   const detailEndRef = useRef<number | null>(null)
   const buildTextRef = useRef<HTMLPreElement>(null)
+
+  // ---- 运行日志（runClient 控制台） ----
+  const [runProjects, setRunProjects] = useState<McProjectUiDto[]>([])
+  const [runProject, setRunProject] = useState<string | null>(null)
+  const [runLog, setRunLog] = useState<McRunLogDto | null>(null)
+  const [runError, setRunError] = useState('')
+  const [runAutoScroll, setRunAutoScroll] = useState(true)
+  const runSelRef = useRef<string | null>(null)
+  const runTextRef = useRef<HTMLPreElement>(null)
 
   const load = useCallback(async (initial = false) => {
     try {
@@ -110,6 +123,23 @@ export function LogDrawer({ open, onClose, onToast }: {
     void loadBuildDetail(id)
   }, [loadBuildDetail])
 
+  /** 运行日志：切换工程后立即拉一次，轮询时保持当前选择 */
+  const selectRun = useCallback((name: string) => {
+    if (runSelRef.current === name) return
+    runSelRef.current = name
+    setRunProject(name)
+    setRunLog(null)
+    if (!sessionId) return
+    api.mcRunLog(sessionId, name)
+      .then(d => { if (runSelRef.current === name) setRunLog(d) })
+      .catch((e: any) => { if (runSelRef.current === name) setRunError(e.message) })
+  }, [sessionId])
+
+  // mc 插件被关闭时，运行日志标签会消失，切回系统日志
+  useEffect(() => {
+    if (!mcEnabled && tab === 'run') setTab('system')
+  }, [mcEnabled, tab])
+
   useEffect(() => {
     if (!open || tab !== 'system') return
     seqRef.current = 0
@@ -142,6 +172,48 @@ export function LogDrawer({ open, onClose, onToast }: {
   }, [open, tab, loadBuildLogs, loadBuildDetail, selectBuild])
 
   useEffect(() => {
+    if (!open || tab !== 'run') return
+    if (!sessionId) {
+      runSelRef.current = null
+      setRunProjects([])
+      setRunProject(null)
+      setRunLog(null)
+      return
+    }
+    let stopped = false
+    const tick = async () => {
+      try {
+        const st = await api.mcState(sessionId)
+        if (stopped) return
+        setRunProjects(st.projects)
+        setRunError('')
+        // 保持原选择；没有就优先运行中的工程，其次第一个
+        const sel = runSelRef.current
+        const next = st.projects.find(p => p.name === sel)
+          ?? st.projects.find(p => p.runClientRunning)
+          ?? st.projects[0]
+        if (!next) {
+          runSelRef.current = null
+          setRunProject(null)
+          setRunLog(null)
+          return
+        }
+        if (next.name !== runSelRef.current) {
+          runSelRef.current = next.name
+          setRunProject(next.name)
+        }
+        const d = await api.mcRunLog(sessionId, next.name)
+        if (!stopped) setRunLog(d)
+      } catch (e: any) {
+        if (!stopped) setRunError(e.message)
+      }
+    }
+    void tick()
+    const timer = setInterval(() => void tick(), 2000)
+    return () => { stopped = true; clearInterval(timer) }
+  }, [open, tab, sessionId])
+
+  useEffect(() => {
     if (autoScroll && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight
   }, [logs, autoScroll])
 
@@ -151,6 +223,13 @@ export function LogDrawer({ open, onClose, onToast }: {
     if (!el) return
     el.scrollTop = el.scrollHeight
   }, [detail?.text, detail?.finishedAt])
+
+  // 运行日志同样贴底
+  useEffect(() => {
+    if (!runAutoScroll) return
+    const el = runTextRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [runLog?.text, runAutoScroll])
 
   if (!open) return null
   const visible = logs.filter(e => level === 'all' || e.level === level)
@@ -183,6 +262,14 @@ export function LogDrawer({ open, onClose, onToast }: {
               aria-selected={tab === 'build'}
               onClick={() => setTab('build')}
             >构建日志</button>
+            {mcEnabled && (
+              <button
+                className={`log-tab ${tab === 'run' ? 'on' : ''}`}
+                role="tab"
+                aria-selected={tab === 'run'}
+                onClick={() => setTab('run')}
+              >运行日志</button>
+            )}
           </div>
           <button className="sb-icon-btn" title="关闭" onClick={onClose}>✕</button>
         </div>
@@ -222,7 +309,7 @@ export function LogDrawer({ open, onClose, onToast }: {
               ))}
             </div>
           </>
-        ) : (
+        ) : tab === 'build' ? (
           <div className="log-build">
             <div className="log-toolbar">
               <span className="log-build-count">最近 {buildLogs.length} 次构建 · 每 2 秒刷新</span>
@@ -299,6 +386,79 @@ export function LogDrawer({ open, onClose, onToast }: {
                       )}
                     </div>
                     <pre className="build-log-text" ref={buildTextRef}>{detail.text || '（日志为空）'}</pre>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="log-build">
+            <div className="log-toolbar">
+              <span className="log-build-count">runClient 控制台 · 每 2 秒刷新</span>
+              <span className="lib-filters-gap" />
+              <label className="log-auto" title="新输出到达时自动滚到底部">
+                <input type="checkbox" checked={runAutoScroll} onChange={e => setRunAutoScroll(e.target.checked)} />
+                自动滚动
+              </label>
+            </div>
+
+            {runError && <div className="log-build-error">读取运行日志失败：{runError}</div>}
+
+            <div className="log-build-body">
+              <div className="build-log-list">
+                {runProjects.length === 0 ? (
+                  <div className="lib-hint">当前会话目录下没有 MC 工程。建一个工程或把工作目录切到模组工程后，这里会列出它的 runClient 日志。</div>
+                ) : runProjects.map(p => (
+                  <div
+                    key={p.dir}
+                    className={`build-log-row ${runProject === p.name ? 'on' : ''}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => selectRun(p.name)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        selectRun(p.name)
+                      }
+                    }}
+                  >
+                    <div className="build-log-row-main">
+                      <span className="build-log-project" title={p.dir}>{p.name}</span>
+                      <span className={`build-log-state ${p.runClientRunning ? 'ok' : 'fail'}`}>
+                        {p.runClientRunning ? '运行中' : '未运行'}
+                      </span>
+                    </div>
+                    <div className="build-log-row-sub">
+                      <span className="build-log-task">{p.jars.length ? `${p.jars.length} 个 jar` : '无构建产物'}</span>
+                      <span className="build-log-time">
+                        {p.runClientStartedAt ? fmtDateTime(p.runClientStartedAt) : ''}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="build-log-detail">
+                {!runLog ? (
+                  <div className="lib-hint">
+                    {runProject ? '正在读取运行日志…' : '选择左侧一个工程，查看 runClient 的控制台输出。'}
+                  </div>
+                ) : (
+                  <>
+                    <div className="build-log-detail-head">
+                      <span className={`build-log-state ${runLog.running ? 'ok' : 'fail'}`}>
+                        {runLog.running ? '运行中' : '已结束'}
+                      </span>
+                      <span className="build-log-detail-title" title={runLog.dir}>{runLog.project}</span>
+                      <span className="build-log-time">
+                        {runLog.updatedAt ? `更新于 ${fmtDateTime(runLog.updatedAt)}` : ''}
+                      </span>
+                    </div>
+                    <div className="build-log-paths">
+                      <span className="build-log-path" title={runLog.path}>{runLog.path}</span>
+                      <button className="lib-chip" onClick={() => void copy(runLog.path, '日志路径')}>复制日志路径</button>
+                    </div>
+                    <pre className="build-log-text" ref={runTextRef}>{runLog.text || '（还没有运行日志：在标题栏点「▶」运行后，控制台输出会出现在这里）'}</pre>
                   </>
                 )}
               </div>

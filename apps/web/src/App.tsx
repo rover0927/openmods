@@ -1832,7 +1832,13 @@ export default function App() {
           void openSession(id)
         }}
       />
-      <LogDrawer open={logsOpen} onClose={() => setLogsOpen(false)} onToast={showToast} />
+      <LogDrawer
+        open={logsOpen}
+        onClose={() => setLogsOpen(false)}
+        onToast={showToast}
+        sessionId={sessionId}
+        mcEnabled={featureOn('mc')}
+      />
       <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} onToast={showToast} />
       {interactions[0] && (
         <AskDialog key={interactions[0].id} ask={interactions[0]} onSubmit={submitInteraction} />

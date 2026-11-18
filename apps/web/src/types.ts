@@ -731,6 +731,17 @@ export interface McProjectUiDto {
   jars: { name: string; path: string; size: number; mtime: number }[]
 }
 
+/** runClient 控制台日志（/api/mc/runlog，只含 run-console.log 尾部） */
+export interface McRunLogDto {
+  project: string
+  dir: string
+  path: string
+  running: boolean
+  startedAt?: number
+  updatedAt?: number
+  text: string
+}
+
 // ---- 设置 → 代理与技能 ----
 export interface AgentToolMetaDto {
   name: string

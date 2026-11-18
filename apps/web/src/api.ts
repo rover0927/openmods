@@ -453,6 +453,11 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId, project }),
     }),
+  /** runClient 控制台日志（run-console.log 尾部，用于日志抽屉的「运行日志」） */
+  mcRunLog: (sessionId: string, project: string) =>
+    jfetch<import('./types.js').McRunLogDto>(
+      `/api/mc/runlog?sessionId=${encodeURIComponent(sessionId)}&project=${encodeURIComponent(project)}`,
+    ),
   /** 把工程最新 jar 复制到设置里的 mod-output 目录 */
   mcExport: (sessionId: string, project: string) =>
     jfetch<{ ok: boolean; name: string; dest: string; size: number }>('/api/mc/export', {
