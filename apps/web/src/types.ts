@@ -457,6 +457,8 @@ export interface EnvStatusDto {
 /** 在线下载离线构建包的实时状态（/api/env/vendor/download） */
 export interface VendorDownloadDto {
   status: 'idle' | 'downloading' | 'extracting' | 'done' | 'cancelled' | 'error'
+  /** 下载落盘位置（服务端返回） */
+  targetPath?: string
   /** 本次下载使用的源 */
   source?: 'mirror' | 'official' | 'release'
   /** 已下载字节数 */

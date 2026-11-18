@@ -13,6 +13,7 @@ import { DirSkillProvider, FilteredSkillProvider } from './skills.js'
 import { SettingsStore } from './settings.js'
 import { applyEnvironment, checkEnvStatus, fixVendorLayout, validateEnvironmentPatch } from './env-check.js'
 import { cancelVendorDownload, isVendorSource, startVendorDownload, vendorDownloadStatus } from './vendor-download.js'
+import { cancelTestClientDownload, isTestClientSource, startTestClientDownload, testClientDownloadStatus } from './test-client-download.js'
 import { FEATURE_DEFS, resolveFeatureStates, type FeatureStates } from './features.js'
 import { createProfileRegistry, registerBuiltinProfiles } from './profiles.js'
 import { SessionStore, isValidSessionId, summarize, type SessionSummary, type SubagentStatus } from './session-store.js'
@@ -1623,6 +1624,21 @@ app.post('/api/env/vendor/download', async (req, reply) => {
 
 app.post('/api/env/vendor/cancel', async (_req, reply) => {
   if (!cancelVendorDownload()) return reply.code(409).send({ error: '当前没有进行中的下载' })
+  return { ok: true }
+})
+
+// ---- 在线下载测试客户端离线包（解压到 data/mc-test-client/.minecraft） ----
+app.get('/api/env/test-client/download', async () => testClientDownloadStatus())
+
+app.post('/api/env/test-client/download', async (req, reply) => {
+  const source = (req.body as { source?: unknown } | null)?.source
+  const r = startTestClientDownload(isTestClientSource(source) ? source : 'mirror')
+  if (!r.ok) return reply.code(409).send({ error: r.error })
+  return { ok: true }
+})
+
+app.post('/api/env/test-client/cancel', async (_req, reply) => {
+  if (!cancelTestClientDownload()) return reply.code(409).send({ error: '当前没有进行中的下载' })
   return { ok: true }
 })
 

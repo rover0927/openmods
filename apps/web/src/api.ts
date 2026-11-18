@@ -338,6 +338,20 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: '{}',
     }),
+  /** 测试客户端离线包：状态 / 启动 / 取消（解压到 data/mc-test-client/.minecraft） */
+  envTestClientStatus: () => jfetch<VendorDownloadDto>('/api/env/test-client/download'),
+  envTestClientStart: (source: 'mirror' | 'official' | 'release') =>
+    jfetch<{ ok: boolean }>('/api/env/test-client/download', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source }),
+    }),
+  envTestClientCancel: () =>
+    jfetch<{ ok: boolean }>('/api/env/test-client/cancel', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }),
   /** 素材内文件地址：图片/文本默认内联，jar 等强制下载加 download=1 */
   libraryFileUrl: (id: string, fileId: string, download = false) =>
     `/api/library/${id}/files/${fileId}${download ? '?download=1' : ''}`,

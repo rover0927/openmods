@@ -105,6 +105,11 @@ export function EnvSetupPanel(props: {
   /** 下载中 received 一直是 0：开始等待的时刻（0 = 未在等待） */
   const vendorWaitAt = useRef(0)
   const [vendorWaiting, setVendorWaiting] = useState(false)
+  /** 测试客户端离线包下载状态 */
+  const [clientDl, setClientDl] = useState<VendorDownloadDto | null>(null)
+  const clientPrev = useRef<VendorDownloadDto['status'] | null>(null)
+  const clientWaitAt = useRef(0)
+  const [clientWaiting, setClientWaiting] = useState(false)
   const toastRef = useRef(props.onToast)
   toastRef.current = props.onToast
 
@@ -177,6 +182,63 @@ export function EnvSetupPanel(props: {
     const timer = window.setTimeout(() => setVendorWaiting(true), left)
     return () => { window.clearTimeout(timer) }
   }, [vendorDl?.status, vendorDl?.received])
+
+  // 测试客户端离线包：轮询状态；完成后重新检测
+  useEffect(() => {
+    let stopped = false
+    let timer: number | undefined
+    const tick = async () => {
+      try {
+        const s = await api.envTestClientStatus()
+        if (stopped) return
+        setClientDl(s)
+        const prev = clientPrev.current
+        clientPrev.current = s.status
+        if (prev === 'downloading' || prev === 'extracting') {
+          if (s.status === 'done') {
+            toastRef.current('测试客户端已解压到 data/mc-test-client/.minecraft')
+            void load()
+          } else if (s.status === 'error') {
+            toastRef.current(`测试客户端下载失败：${s.error ?? '未知错误'}`)
+          }
+        }
+        if (s.status === 'downloading' || s.status === 'extracting') {
+          timer = window.setTimeout(tick, 800)
+        }
+      } catch { /* 轮询失败不打扰用户 */ }
+    }
+    void tick()
+    return () => { stopped = true; if (timer) window.clearTimeout(timer) }
+  }, [load])
+
+  useEffect(() => {
+    if (clientDl?.status !== 'downloading' || clientDl.received > 0) {
+      clientWaitAt.current = 0
+      setClientWaiting(false)
+      return
+    }
+    if (!clientWaitAt.current) clientWaitAt.current = Date.now()
+    const left = Math.max(0, VENDOR_WAIT_HINT_MS - (Date.now() - clientWaitAt.current))
+    const timer = window.setTimeout(() => setClientWaiting(true), left)
+    return () => { window.clearTimeout(timer) }
+  }, [clientDl?.status, clientDl?.received])
+
+  const startClientDownload = async (source: 'mirror' | 'official' | 'release') => {
+    try {
+      await api.envTestClientStart(source)
+      setClientDl(await api.envTestClientStatus())
+    } catch (e: any) {
+      props.onToast(`启动测试客户端下载失败：${e.message}`)
+    }
+  }
+
+  const cancelClientDownload = async () => {
+    try {
+      await api.envTestClientCancel()
+    } catch (e: any) {
+      props.onToast(`取消失败：${e.message}`)
+    }
+  }
 
   const startVendorDownload = async (source: 'mirror' | 'official' | 'release') => {
     try {
@@ -393,6 +455,65 @@ export function EnvSetupPanel(props: {
                     disabled={busy}
                     onClick={() => void fixVendor()}
                   >{fixing ? '整理中…' : '整理到 vendor/'}</button>
+                </div>
+              )}
+
+              {check.id === 'test-client' && (
+                <div className="env-vendor">
+                  {clientDl && (clientDl.status === 'downloading' || clientDl.status === 'extracting') ? (
+                    <>
+                      <div className="env-vendor-head">
+                        <span>
+                          {clientDl.status === 'extracting'
+                            ? '正在解压到 data/mc-test-client/.minecraft…'
+                            : `正在下载测试客户端${clientDl.total ? ` ${Math.min(100, Math.round((clientDl.received / clientDl.total) * 100))}%` : ''}（${SOURCE_LABEL[clientDl.source ?? 'mirror']}）`}
+                        </span>
+                        {clientDl.status === 'downloading' && (
+                          <span className="env-vendor-stat">
+                            {fmtBytes(clientDl.received)}
+                            {clientDl.total ? ` / ${fmtBytes(clientDl.total)}` : ''}
+                            {clientDl.speed > 0 ? ` · ${fmtBytes(clientDl.speed)}/s` : ''}
+                            {clientDl.total && clientDl.speed > 0
+                              ? ` · 剩余 ${fmtEta((clientDl.total - clientDl.received) / clientDl.speed)}`
+                              : ''}
+                          </span>
+                        )}
+                        <button type="button" className="btn ghost" onClick={() => void cancelClientDownload()}>取消</button>
+                      </div>
+                      <div className="env-vendor-bar">
+                        <span style={{
+                          width: clientDl.status === 'extracting'
+                            ? '100%'
+                            : `${clientDl.total ? Math.min(100, (clientDl.received / clientDl.total) * 100) : 0}%`,
+                        }} />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="env-vendor-head">
+                        <span>
+                          {clientDl?.status === 'done'
+                            ? '测试客户端已就绪'
+                            : '在线下载测试客户端离线包，选择下载源：'}
+                        </span>
+                      </div>
+                      <div className="env-vendor-sources">
+                        <button type="button" className="btn" onClick={() => void startClientDownload('mirror')}>国内镜像</button>
+                        <button type="button" className="btn ghost" onClick={() => void startClientDownload('official')}>GitHub 官方</button>
+                        <button type="button" className="btn ghost" onClick={() => void startClientDownload('release')}>Release API</button>
+                      </div>
+                      <div className="env-vendor-note">
+                        解压到 data/mc-test-client/.minecraft；Releases 需提供 openmods-test-client.zip。
+                      </div>
+                      {clientWaiting && <div className="env-vendor-note">等待响应…（长时间无进度请取消并换源）</div>}
+                      {clientDl?.status === 'error' && (
+                        <div className="env-vendor-error">下载失败：{clientDl.error ?? '未知错误'}</div>
+                      )}
+                      {clientDl?.status === 'cancelled' && (
+                        <div className="env-vendor-note">已取消，可重新下载。</div>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
 
