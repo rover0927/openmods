@@ -1,0 +1,23 @@
+# Checklist
+
+- [x] `GET /api/env/status` 返回 Java / Gradle 缓存 / Git 三项结构化检测结果与候选路径
+- [x] Java 检测能识别 `JAVA_HOME`、`PATH`、`.jdks`、`.gradle/jdks`，并解析主版本
+- [x] Java 17 与 Java 22 并存时默认选 17，非 17 标注不适用
+- [x] Gradle 检测能识别 `plugins/mcdev/vendor/` 完整缓存
+- [x] Gradle 检测能识别错位解压的 `plugins/mcdev/gradle-8.8` / `fg-maven` 并给出警告
+- [x] 「整理 vendor」能把错位目录移动到 `plugins/mcdev/vendor/`，重新检测变为 ok
+- [x] Gradle 检测能识别 `MC_ROOT/.gradle-home`、`GRADLE_USER_HOME`、`~/.gradle`
+- [x] Git 版本与路径正确显示；Git 缺失时更新页返回可读错误
+- [x] 安装后第一次打开工作台自动弹出环境向导；保存后写入 `data/settings.json`
+- [x] 点击「稍后配置」不阻塞使用，设置 → 环境仍显示未解决项
+- [x] 设置 → 环境 可重新检测、修改并保存，无需重启
+- [x] 配置保存后 `mc_gradle build` 使用选定 Java 与 Gradle 缓存，结果中显示来源
+- [x] vendor 完整时 `mc_gradle` 不再联网下载 Gradle 8.8
+- [x] 缺少 Java 17 时 `mc_gradle` 返回「设置 → 环境」的可操作中文错误，不启动 Gradle
+- [x] 测试客户端使用环境配置的 Java
+- [x] MC 工程目录里新建会话默认角色为 `mcmod`，普通目录默认 `lead`
+- [x] `lead` 收到 MC 开发需求时先询问用户；确认后通过 `handoff_to_mcmod` 切换角色并自动续跑，无需重发需求
+- [x] 用户拒绝移交时 `lead` 不用 bash 手搓 MC 工程
+- [x] `mcmod` 收到造型需求时先派 `spawn_modeling_subagent`
+- [x] 空画布调用 `canvas_export` 返回「请先 spawn_modeling_subagent 建模并验收」
+- [x] `npm run build` 通过
