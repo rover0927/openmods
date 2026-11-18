@@ -199,12 +199,12 @@ function preflight(opts: TestClientOptions) {
     const dir = resolve(custom)
     let info: any
     try { info = statSync(dir) } catch { /* 不存在 */ }
-    if (!info?.isDirectory()) throw new Error(`测试客户端目录不存在或不是目录：${dir}`)
+    if (!info?.isDirectory()) throw new Error(`测试客户端目录不存在或不是目录：${dir}（到 设置 → 环境 → 测试客户端 重新选择）`)
     modsParent = dir
   }
   const mods = join(modsParent, 'mods')
   try { mkdirSync(mods, { recursive: true }) } catch {
-    throw new Error(`mods 目录不可创建：${mods}`)
+    throw new Error(`mods 目录不可创建：${mods}（检查测试客户端目录权限，或到 设置 → 环境 → 测试客户端 换一个目录）`)
   }
   const probe = join(mods, `.openmods-write-test-${process.pid}`)
   try {

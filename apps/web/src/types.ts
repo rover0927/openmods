@@ -437,7 +437,7 @@ export interface EnvCandidateDto {
 }
 
 export interface EnvCheckDto {
-  id: 'java' | 'gradle' | 'git'
+  id: 'java' | 'gradle' | 'git' | 'test-client'
   status: 'ok' | 'warn' | 'fail'
   summary: string
   details: string[]
@@ -448,6 +448,8 @@ export interface EnvCheckDto {
 export interface EnvStatusDto {
   configured: boolean
   config: EnvironmentConfigDto
+  /** 测试客户端 / MDK 路径（存在 prefs，不在 environment） */
+  prefs?: { testClientDir?: string; testMdkDir?: string }
   checks: EnvCheckDto[]
   updatedAt?: number
 }

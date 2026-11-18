@@ -1545,8 +1545,14 @@ app.put('/api/settings', async (req, reply) => {
 })
 
 // ---- 环境检测（设置 → 环境 / 首次运行向导） ----
-/** 当前三项检测结果（Java / Gradle 缓存 / Git），不写任何文件 */
-app.get('/api/env/status', async () => checkEnvStatus(settingsStore.getEnvironment()))
+/** 当前四项检测结果（Java / Gradle 缓存 / Git / 测试客户端），不写任何文件 */
+app.get('/api/env/status', async () => {
+  const prefs = settingsStore.getPrefs()
+  return checkEnvStatus(settingsStore.getEnvironment(), {
+    testClientDir: prefs.testClientDir,
+    testMdkDir: prefs.testMdkDir,
+  })
+})
 
 /**
  * 保存环境配置并立即生效：
@@ -1558,6 +1564,7 @@ app.post('/api/env/apply', async (req, reply) => {
   const body = (req.body ?? {}) as {
     javaHome?: unknown; gradleHome?: unknown; gitPath?: unknown; setupDone?: unknown
     fixVendorLayout?: unknown; expectedRevision?: unknown
+    testClientDir?: unknown; testMdkDir?: unknown
   }
   try {
     if (body.fixVendorLayout === true) {
@@ -1570,15 +1577,33 @@ app.post('/api/env/apply', async (req, reply) => {
     if (body.gitPath !== undefined) patch.gitPath = String(body.gitPath ?? '').trim()
     if (typeof body.setupDone === 'boolean') patch.setupDone = body.setupDone
     validateEnvironmentPatch(patch)
-    settingsStore.saveEnvironment(
-      patch,
-      typeof body.expectedRevision === 'number' ? body.expectedRevision : undefined,
-    )
+    // 测试客户端 / MDK 路径属于 prefs；非空路径必须真实存在，避免把死路径存进去
+    const prefsPatch: { testClientDir?: string; testMdkDir?: string } = {}
+    if (body.testClientDir !== undefined) {
+      const dir = String(body.testClientDir ?? '').trim()
+      if (dir && !existsSync(dir)) return reply.code(400).send({ error: `测试客户端目录不存在：${dir}` })
+      prefsPatch.testClientDir = dir
+    }
+    if (body.testMdkDir !== undefined) {
+      const dir = String(body.testMdkDir ?? '').trim()
+      if (dir && !existsSync(dir)) return reply.code(400).send({ error: `MDK 目录不存在：${dir}` })
+      prefsPatch.testMdkDir = dir
+    }
+    const expected = typeof body.expectedRevision === 'number' ? body.expectedRevision : undefined
+    if (Object.keys(prefsPatch).length > 0) {
+      settingsStore.save({ environment: patch, prefs: prefsPatch }, expected)
+    } else {
+      settingsStore.saveEnvironment(patch, expected)
+    }
     applyEnvironment(settingsStore.getEnvironment())
     for (const s of sessions.values()) {
       s.sse.send('settings/updated', { revision: settingsStore.revision, prefs: settingsStore.getPrefs() })
     }
-    return checkEnvStatus(settingsStore.getEnvironment())
+    const prefs = settingsStore.getPrefs()
+    return checkEnvStatus(settingsStore.getEnvironment(), {
+      testClientDir: prefs.testClientDir,
+      testMdkDir: prefs.testMdkDir,
+    })
   } catch (e: any) {
     if (e.name === 'SettingsConflictError') return reply.code(409).send({ error: e.message })
     return reply.code(400).send({ error: e?.message ?? String(e) })

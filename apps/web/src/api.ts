@@ -316,6 +316,8 @@ export const api = {
     gitPath?: string
     setupDone?: boolean
     fixVendorLayout?: boolean
+    testClientDir?: string
+    testMdkDir?: string
   }) =>
     jfetch<EnvStatusDto>('/api/env/apply', {
       method: 'POST',

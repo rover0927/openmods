@@ -35,7 +35,7 @@ export interface EnvCandidate {
 }
 
 export interface EnvCheck {
-  id: 'java' | 'gradle' | 'git'
+  id: 'java' | 'gradle' | 'git' | 'test-client'
   status: 'ok' | 'warn' | 'fail'
   summary: string
   details: string[]
@@ -43,10 +43,16 @@ export interface EnvCheck {
   actions?: { id: 'fix-vendor'; label: string }[]
 }
 
+export interface EnvPrefs {
+  testClientDir?: string
+  testMdkDir?: string
+}
+
 export interface EnvStatus {
   /** 用户是否处理过向导（environment.setupDone） */
   configured: boolean
   config: EnvironmentConfig
+  prefs: EnvPrefs
   checks: EnvCheck[]
   updatedAt?: number
 }
@@ -301,12 +307,94 @@ function gitCheck(config: EnvironmentConfig): EnvCheck {
   }
 }
 
-/** 完整检测：三项结果 + 当前保存的配置（updatedAt 供前端显示检测时间） */
-export function checkEnvStatus(config: EnvironmentConfig): EnvStatus {
+/** 判断一个 .minecraft 目录是否具备启动条件（versions + libraries） */
+function clientDirState(dir: string): { exists: boolean; ready: boolean; note: string } {
+  if (!existsSync(dir)) return { exists: false, ready: false, note: '目录不存在' }
+  const versions = existsSync(join(dir, 'versions'))
+  const libraries = existsSync(join(dir, 'libraries'))
+  const forge = versions && childDirs(join(dir, 'versions')).some(d => /forge[-.]?1\.20\.1/i.test(d))
+  return {
+    exists: true,
+    ready: versions && libraries,
+    note: versions && libraries
+      ? (forge ? '包含 Forge 1.20.1 版本' : '目录结构完整，启动时会补装 Forge 1.20.1')
+      : `缺少 ${[!versions ? 'versions' : '', !libraries ? 'libraries' : ''].filter(Boolean).join('、')}`,
+  }
+}
+
+/** 测试客户端 / MDK 目录检测：发现死路径并给出候选，不写任何文件 */
+function testClientCheck(prefs: EnvPrefs): EnvCheck {
+  const defaultDir = join(ROOT, 'data', 'mc-test-client', '.minecraft')
+  const custom = String(prefs.testClientDir ?? '').trim()
+  const mdk = String(prefs.testMdkDir ?? '').trim()
+  const candidates: EnvCandidate[] = []
+  const seen = new Set<string>()
+  const add = (value: string, label: string, strict = false) => {
+    const dir = resolve(value || defaultDir)
+    const key = IS_WIN ? dir.toLowerCase() : dir
+    if (seen.has(key)) return
+    seen.add(key)
+    const state = clientDirState(dir)
+    candidates.push({
+      value,
+      label,
+      ok: state.exists && state.ready,
+      note: state.exists ? state.note : strict ? '目录不存在（死路径）' : '未安装',
+    })
+  }
+  // value='' 表示自动使用默认目录
+  add('', '自动（默认 data/mc-test-client）')
+  if (custom) add(custom, `已配置：${custom}`, true)
+  if (process.env.APPDATA) add(join(process.env.APPDATA, '.minecraft'), '系统 .minecraft（%APPDATA%）')
+  add(join(homedir(), '.minecraft'), '用户目录 .minecraft')
+
+  const customState = custom ? clientDirState(resolve(custom)) : undefined
+  const defaultState = clientDirState(defaultDir)
+  const details: string[] = []
+  details.push(custom
+    ? `已配置目录：${custom}（${customState?.exists ? customState.note : '不存在（死路径）'}）`
+    : `默认目录：${defaultDir}（${defaultState.exists ? defaultState.note : '尚未安装'}）`)
+  details.push('生产测试客户端首次启动会自动安装/补全；离线安装需要本机 MDK 的 ForgeGradle 缓存。')
+  if (mdk) {
+    const ok = existsSync(join(mdk, 'gradlew.bat')) || existsSync(join(mdk, 'gradlew')) || existsSync(join(mdk, 'build.gradle'))
+    details.push(ok ? `MDK 目录：${mdk}（可用）` : `MDK 目录不存在或缺少 gradlew/build.gradle：${mdk}`)
+  } else {
+    const template = join(MCDEV_DIR, 'template', 'forge-1.20.1')
+    details.push(existsSync(join(template, 'build.gradle'))
+      ? `未指定 MDK 目录：离线组装将使用模板 ${template}`
+      : '未指定 MDK 目录：首次启动会优先使用模板/联网安装')
+  }
+
+  let status: EnvCheck['status'] = 'warn'
+  let summary = ''
+  if (custom) {
+    if (!customState?.exists) {
+      status = 'fail'
+      summary = `测试客户端路径不存在（死路径）：${custom}`
+    } else if (!customState.ready) {
+      status = 'warn'
+      summary = `测试客户端目录不完整：${custom}`
+    } else {
+      status = 'ok'
+      summary = `测试客户端可用：${custom}`
+    }
+  } else if (defaultState.exists && defaultState.ready) {
+    status = 'ok'
+    summary = '测试客户端已安装（默认目录）'
+  } else {
+    status = 'warn'
+    summary = '尚未安装测试客户端：首次启动会自动安装，也可选择已有的 .minecraft'
+  }
+  return { id: 'test-client', status, summary, details, candidates }
+}
+
+/** 完整检测：四项结果 + 当前保存的配置（updatedAt 供前端显示检测时间） */
+export function checkEnvStatus(config: EnvironmentConfig, prefs: EnvPrefs = {}): EnvStatus {
   return {
     configured: !!config.setupDone,
     config,
-    checks: [javaCheck(config), gradleCheck(config), gitCheck(config)],
+    prefs: { testClientDir: prefs.testClientDir, testMdkDir: prefs.testMdkDir },
+    checks: [javaCheck(config), gradleCheck(config), gitCheck(config), testClientCheck(prefs)],
     updatedAt: Date.now(),
   }
 }

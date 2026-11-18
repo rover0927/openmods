@@ -6,6 +6,7 @@ const CHECK_TITLES: Record<EnvCheckDto['id'], string> = {
   java: 'Java',
   gradle: 'Gradle 缓存',
   git: 'Git',
+  'test-client': '测试客户端',
 }
 
 const STATUS_TEXT: Record<EnvCheckDto['status'], string> = {
@@ -18,6 +19,7 @@ interface Draft {
   java: string
   gradle: string
   git: string
+  'test-client': string
 }
 
 /** 候选下标（-1 = 自定义输入，不与任何候选对应） */
@@ -25,6 +27,7 @@ interface Picked {
   java: number
   gradle: number
   git: number
+  'test-client': number
 }
 
 /**
@@ -112,8 +115,9 @@ export function EnvSetupPanel(props: {
     const java = initialSelection(find('java'), s.config.javaHome ?? '')
     const gradle = initialSelection(find('gradle'), s.config.gradleHome ?? '')
     const git = initialSelection(find('git'), s.config.gitPath ?? '')
-    setDraft({ java: java.value, gradle: gradle.value, git: git.value })
-    setPicked({ java: java.index, gradle: gradle.index, git: git.index })
+    const client = initialSelection(find('test-client'), s.prefs?.testClientDir ?? '')
+    setDraft({ java: java.value, gradle: gradle.value, git: git.value, 'test-client': client.value })
+    setPicked({ java: java.index, gradle: gradle.index, git: git.index, 'test-client': client.index })
   }, [])
 
   const load = useCallback(async () => {
@@ -203,10 +207,13 @@ export function EnvSetupPanel(props: {
     setPicked(prev => (prev ? { ...prev, [id]: index } : prev))
   }
 
-  /** Java / Gradle 用系统目录选择器；Git 是文件路径，直接文本输入 */
-  const pickDir = async (id: 'java' | 'gradle') => {
+  /** Java / Gradle / 测试客户端用系统目录选择器；Git 是文件路径，直接文本输入 */
+  const pickDir = async (id: 'java' | 'gradle' | 'test-client') => {
     try {
-      const r = await api.pickDir(draft?.[id] || undefined, id === 'java' ? '选择 JDK 17 目录' : '选择 Gradle 缓存目录')
+      const title = id === 'java' ? '选择 JDK 17 目录'
+        : id === 'gradle' ? '选择 Gradle 缓存目录'
+          : '选择测试客户端 .minecraft 目录'
+      const r = await api.pickDir(draft?.[id] || undefined, title)
       if (r.path) setField(id, r.path)
     } catch (e: any) {
       props.onToast(`选择目录失败：${e.message}`)
@@ -234,6 +241,7 @@ export function EnvSetupPanel(props: {
         javaHome: draft.java.trim(),
         gradleHome: draft.gradle.trim(),
         gitPath: draft.git.trim(),
+        testClientDir: draft['test-client'].trim(),
         setupDone: true,
       })
       applyStatus(s)
@@ -281,7 +289,7 @@ export function EnvSetupPanel(props: {
   return (
     <div className={`env-panel ${props.mode === 'page' ? 'env-panel-page' : ''}`}>
       <div className="env-panel-hint">
-        检测 Java / Gradle 离线缓存 / Git。绿=就绪，黄=能用但需注意，红=缺失；
+        检测 Java / Gradle 离线缓存 / Git / 测试客户端。绿=就绪，黄=能用但需注意，红=缺失；
         选择后保存会立即应用到构建、测试客户端与自更新。
       </div>
       {error && <div className="env-load-error">重新检测失败：{error}</div>}
@@ -341,7 +349,11 @@ export function EnvSetupPanel(props: {
                   className="env-path-input"
                   value={value}
                   spellCheck={false}
-                  placeholder={check.id === 'git' ? '留空 = 使用 PATH 中的 git' : '留空 = 自动检测'}
+                  placeholder={check.id === 'git'
+                    ? '留空 = 使用 PATH 中的 git'
+                    : check.id === 'test-client'
+                      ? '留空 = 使用默认 data/mc-test-client/.minecraft'
+                      : '留空 = 自动检测'}
                   onChange={e => setField(check.id, e.target.value)}
                 />
                 {check.id === 'java' && (
@@ -360,6 +372,15 @@ export function EnvSetupPanel(props: {
                     disabled={busy}
                     title="打开系统目录选择器"
                     onClick={() => void pickDir('gradle')}
+                  >选择目录</button>
+                )}
+                {check.id === 'test-client' && (
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    disabled={busy}
+                    title="选择已安装的 .minecraft 目录"
+                    onClick={() => void pickDir('test-client')}
                   >选择目录</button>
                 )}
               </div>
