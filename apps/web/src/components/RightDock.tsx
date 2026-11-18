@@ -6,13 +6,14 @@ import { CanvasPane } from './CanvasPane.js'
 import { StatsTab } from './StatsTab.js'
 import { FilesPane, ImagesPane, WebPane } from './DockPreview.js'
 import { TerminalPane } from './TerminalPane.js'
+import { RunLogPane } from './RunLogPane.js'
 import { PlanPane } from './PlanPane.js'
 import { McIcon, type McIconName } from './McIcon.js'
 
-export type DockTabId = 'canvas' | 'subagents' | 'stats' | 'images' | 'files' | 'web' | 'terminal' | 'plan'
+export type DockTabId = 'canvas' | 'subagents' | 'stats' | 'images' | 'files' | 'web' | 'terminal' | 'run' | 'plan'
 
 /** 可开的所有标签（顺序即 ＋ 菜单顺序） */
-export const DOCK_TABS: DockTabId[] = ['canvas', 'images', 'files', 'web', 'terminal', 'plan', 'subagents', 'stats']
+export const DOCK_TABS: DockTabId[] = ['canvas', 'images', 'files', 'web', 'terminal', 'run', 'plan', 'subagents', 'stats']
 
 const TAB_META: Record<DockTabId, { label: string; icon: McIconName }> = {
   canvas: { label: '建模', icon: 'canvas' },
@@ -20,6 +21,7 @@ const TAB_META: Record<DockTabId, { label: string; icon: McIconName }> = {
   files: { label: '文件', icon: 'files' },
   web: { label: '网页', icon: 'web' },
   terminal: { label: '终端', icon: 'terminal' },
+  run: { label: '运行', icon: 'mcRun' },
   plan: { label: '计划', icon: 'plan' },
   subagents: { label: '子代理', icon: 'subagents' },
   stats: { label: '上下文', icon: 'stats' },
@@ -415,6 +417,8 @@ export function RightDock(props: {
             onInput={props.onTerminalInput}
           />
         )}
+
+        {active === 'run' && <RunLogPane sessionId={props.sessionId} />}
 
         {active === 'plan' && (
           <PlanPane

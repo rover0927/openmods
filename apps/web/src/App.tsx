@@ -1172,6 +1172,8 @@ export default function App() {
     if (!sessionId) return
     celebrate(`正在启动「${project}」…`, `「${project}」已装进 Minecraft 1.20.1`)
     api.mcRun(sessionId, project).then(() => {
+      // 运行后自动打开右侧「运行」标签，实时盯 runClient 输出
+      openDockTab('run')
       // 启动成功后刷新工程状态，按钮从「▶」切成「■」
       window.setTimeout(() => {
         api.mcState(sessionId).then(x => setMcProjects(x.projects ?? [])).catch(() => {})
@@ -1180,7 +1182,7 @@ export default function App() {
       cancelCelebrate()
       showToast(`启动失败：${e.message}`)
     })
-  }, [sessionId, celebrate, cancelCelebrate, showToast])
+  }, [sessionId, celebrate, cancelCelebrate, showToast, openDockTab])
 
   const mcStop = useCallback((project: string) => {
     if (!sessionId) return
@@ -1654,9 +1656,9 @@ export default function App() {
   const mcTestLogText = mcTestPhase === 'error'
     ? (mcTestStatus?.error || mcTestLogLine || '未知错误')
     : (mcTestLogLine || (mcTestPhase === 'installing' ? '检查本地 MDK 缓存…' : '等待客户端输出…'))
-  /** 当前功能开关下可用的右侧标签（关闭画布后 canvas 不出现） */
+  /** 当前功能开关下可用的右侧标签（关闭画布 / MC 插件时对应标签不出现） */
   const dockAvailable = useMemo(
-    () => (featureOn('canvas') ? DOCK_TABS : DOCK_TABS.filter(t => t !== 'canvas')),
+    () => DOCK_TABS.filter(t => (t === 'canvas' ? featureOn('canvas') : t === 'run' ? featureOn('mc') : true)),
     [features, featureOn],
   )
   const dockVisibleTabs = useMemo(

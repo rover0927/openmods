@@ -1540,13 +1540,30 @@ function trackRunClient(projectDir: string, child: ChildProcess) {
   cur.runClient = { pid: child.pid, startedAt: Date.now() }
   map[projectDir] = cur
   writeMcState(map)
-  child.on('exit', () => {
+  const startedAt = cur.runClient.startedAt
+  child.on('exit', code => {
     const fresh = readMcState()
     const entry = fresh[projectDir]
     if (!entry?.runClient || entry.runClient.pid !== child.pid) return
     delete entry.runClient
     writeMcState(fresh)
+    if (code) recordFailedRunClient(projectDir, startedAt, code)
   })
+}
+
+/**
+ * runClient 启动前也会先编译：BUILD FAILED 时也落一份构建日志，
+ * 让「构建日志」能看到这次失败（成功跑完/被手动停止的不记）。
+ */
+function recordFailedRunClient(projectDir: string, startedAt: number, exitCode: number) {
+  try {
+    const raw = readFileSync(join(projectDir, 'run-console.log'), 'utf8')
+    if (!/BUILD FAILED/.test(raw)) return
+    const writer = createBuildLog({ project: basename(projectDir) || 'project', task: 'runClient', startedAt })
+    writer.write(raw.length > 400_000 ? raw.slice(-400_000) : raw)
+    writer.write(`\n[openmods] runClient 提前退出（退出码 ${exitCode}），未进入游戏。\n`)
+    finishBuildLog(writer, { ok: false, exitCode })
+  } catch { /* 日志记录失败不影响运行状态 */ }
 }
 
 /** UI「测试 Mod」按钮：与 mc_gradle background 共用 launchClient（镜像 seed / GRADLE_USER_HOME / 状态登记） */
