@@ -160,11 +160,19 @@ export async function getUpdateStatus(): Promise<UpdateStatus> {
       base.state = 'identical'
     } else {
       const cmp = await api(`/repos/${REPO}/compare/${base.local.sha}...${base.remote.sha}`)
-      base.state = cmp.status === 'ahead' || cmp.status === 'behind' || cmp.status === 'diverged'
-        ? cmp.status
-        : 'unknown'
-      base.aheadBy = Number(cmp.ahead_by ?? 0)
-      base.behindBy = Number(cmp.behind_by ?? 0)
+      // compare 的 base=本地、head=远端：ahead_by 是远端独有提交（本地落后），
+      // behind_by 是本地独有提交（本地领先）。不能直接把 cmp.status 当成本地状态。
+      const remoteOnly = Number(cmp.ahead_by ?? 0)
+      const localOnly = Number(cmp.behind_by ?? 0)
+      base.aheadBy = localOnly
+      base.behindBy = remoteOnly
+      base.state = remoteOnly > 0 && localOnly > 0
+        ? 'diverged'
+        : remoteOnly > 0
+          ? 'behind'
+          : localOnly > 0
+            ? 'ahead'
+            : 'identical'
       base.commits = Array.isArray(cmp.commits) ? cmp.commits.slice(-10).map(mapCommit) : []
     }
   } catch (e: any) {
