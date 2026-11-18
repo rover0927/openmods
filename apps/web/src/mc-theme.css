@@ -86,15 +86,38 @@ body {
   border-bottom: 3px solid var(--mc-line);
   box-shadow: inset 0 -1px 0 var(--mc-line-dark);
 }
-.sb-brand-main { gap: 12px; }
-.sb-name {
-  color: var(--accent);
-  text-shadow: 2px 2px 0 var(--mc-accent-ink);
+.sb-brand-main { gap: 12px; height: auto; }
+.sb-name-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; line-height: 1; }
+.sb-sub {
+  color: #8bdc5a;
+  font-family: "Minecraft", "Minecraftia", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-shadow: 1px 1px 0 #14330f;
 }
+/* 品牌名：白色像素块字 + 深灰描边 + 黑色厚底影，对齐 README 的品牌字 */
+.sb-name {
+  color: #f4f4f4;
+  font-family: "Minecraft", "Minecraftia", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 19px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow:
+    2px 0 0 #2b2b2b,
+    -2px 0 0 #2b2b2b,
+    0 2px 0 #2b2b2b,
+    0 -2px 0 #2b2b2b,
+    2px 2px 0 #2b2b2b,
+    -2px 2px 0 #2b2b2b,
+    2px -2px 0 #2b2b2b,
+    -2px -2px 0 #2b2b2b,
+    0 4px 0 #000;
+}
+.sb-brand-main:hover .sb-name { color: #ffffff; }
 .chat-head { border-bottom: 3px solid var(--mc-line); }
 
 /* 标题类文字：MC 的硬阴影，不做平滑发光 */
-.sb-name,
 .chat-title,
 .settings-title,
 .dock-empty,

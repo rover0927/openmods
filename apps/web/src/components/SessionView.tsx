@@ -57,16 +57,6 @@ function baseName(p: string): string {
   return i >= 0 ? s.slice(i + 1) : s
 }
 
-/** 思考强度档位的显示名（端点可能返回任意档位，未命中时显示原值） */
-const THINK_LABEL: Record<string, string> = {
-  minimal: '最低',
-  low: '低',
-  medium: '中',
-  high: '高',
-  xhigh: '极高',
-  max: '最高',
-}
-
 export function SessionView(props: {
   sessionId: string
   turns: TurnEntry[]
@@ -425,27 +415,22 @@ export function SessionView(props: {
               <McIcon name="model" size={14} />
               {currentModel?.displayName ?? '未配置供应商'} <span className="dim">▾</span>
             </button>
-            {currentModel?.reasoningEfforts?.length ? (
-              <select
-                className="model-chip think-chip"
-                value={reasoningEffort}
-                onChange={e => onPickReasoningEffort(e.target.value)}
-                title="思考强度：仅对支持 reasoning 的模型生效，下一轮生效"
-              >
-                <option value="">
-                  默认思考{currentModel.reasoningDefault ? `（${THINK_LABEL[currentModel.reasoningDefault] ?? currentModel.reasoningDefault}）` : ''}
-                </option>
-                {currentModel.reasoningEfforts.map(e => (
-                  <option key={e} value={e}>{THINK_LABEL[e] ?? e}</option>
-                ))}
-              </select>
-            ) : null}
             {waitingLocked
               ? <button className="btn stop" onClick={onStop} title="取消等待：中止这些子代理并解锁输入"><McIcon name="stop" size={14} /> 取消等待</button>
               : busy
                 ? <button className="btn stop" onClick={onStop}><McIcon name="stop" size={14} /> 停止</button>
                 : <button className="send-btn" onClick={submit} disabled={!text.trim() && pendingAtts.length === 0} title={enterToSend ? '发送（Enter）' : '发送（⌘/Ctrl+Enter）'}><McIcon name="send" size={16} /></button>}
           </div>
+          {pickerOpen && (
+            <ModelPicker
+              models={models}
+              currentModelId={currentModelId}
+              reasoningEffort={reasoningEffort}
+              onPick={(id) => { onPickModel(id); setPickerOpen(false) }}
+              onPickReasoningEffort={onPickReasoningEffort}
+              onClose={() => setPickerOpen(false)}
+            />
+          )}
         </div>
       </div>
 
@@ -459,9 +444,6 @@ export function SessionView(props: {
         waiting={waiting.length}
         mock={props.mock}
       />
-      {pickerOpen && (
-        <ModelPicker models={models} currentModelId={currentModelId} onPick={(id) => { onPickModel(id); setPickerOpen(false) }} onClose={() => setPickerOpen(false)} />
-      )}
     </div>
   )
 }

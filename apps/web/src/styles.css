@@ -1213,6 +1213,102 @@ select.think-chip option { background: var(--bg-layer-2); color: var(--label-pri
 .need-member { color: var(--label-caption); font-size: 12px; }
 .check { color: var(--accent); }
 
+/* 模型切换浮层：锚在输入框右上角，无暗色遮罩（弹窗本体仍是 MC 像素边框） */
+.picker-backdrop { position: fixed; inset: 0; z-index: 39; background: transparent; }
+.picker-pop {
+  position: absolute; right: 6px; bottom: calc(100% + 8px);
+  width: 336px; z-index: 40;
+}
+.picker-pop .modal.picker { width: 100%; max-height: min(72vh, 520px); }
+
+/* 模型选择器 v2：供应商头 / 模型列表 / 思考强度滑杆（结构参考现代 picker，外观走 MC 像素） */
+.modal.picker { width: 336px; padding: 0; overflow: hidden; border-radius: 0; }
+.picker-provider {
+  display: flex; align-items: center; gap: 8px; padding: 10px;
+  background: var(--mc-title, #3a3a3a);
+  border-bottom: 2px solid var(--mc-groove, #1d1d1d);
+}
+.picker-provider-icon {
+  width: 22px; height: 22px; flex: none;
+  background: url(/mc/block/grass_block_side.png) center / 100% 100%;
+  image-rendering: pixelated;
+  border: 2px solid;
+  border-color: #7a7a7a var(--mc-groove, #1d1d1d) var(--mc-groove, #1d1d1d) #7a7a7a;
+}
+.picker-provider-name { font-size: 14px; font-weight: 600; color: var(--label-primary); }
+.picker-api-badge {
+  font-size: 10px; line-height: 15px; padding: 0 4px;
+  color: var(--label-tertiary); background: #3a3a3a; border: 1px solid #555;
+}
+.picker-close {
+  margin-left: auto; width: 22px; height: 22px; display: grid; place-items: center;
+  color: var(--label-tertiary); font-size: 16px; line-height: 1;
+}
+.picker-close:hover { color: var(--label-primary); background: #3a3a3a; }
+.picker-section-title { padding: 10px 12px 4px; font-size: 11px; color: var(--label-tertiary); }
+.picker-models { max-height: 220px; overflow-y: auto; padding: 0 6px; }
+.picker-model {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 8px; text-align: left; color: var(--label-primary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.picker-model:hover { background: #383838; }
+.picker-model.selected { background: var(--mc-accent-dim, #2e4a2e); box-shadow: inset 2px 0 0 var(--accent); }
+.picker-model.disabled { opacity: 0.45; cursor: not-allowed; }
+.picker-model-name {
+  flex: 1; min-width: 0; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.picker-model-provider { font-size: 10px; color: var(--label-caption); }
+.picker-model-vision {
+  font-size: 10px; line-height: 15px; padding: 0 4px;
+  color: #9adf9a; border: 1px solid #4f6b4f; background: rgba(78, 209, 126, 0.08);
+}
+.picker-model-need { font-size: 11px; color: var(--label-caption); }
+.picker-check { color: var(--accent); font-size: 14px; }
+.picker-empty { padding: 12px 8px; font-size: 12px; color: var(--label-caption); }
+.think-card {
+  margin: 8px; padding: 8px 9px 6px;
+  background: var(--mc-slot, #2b2b2b);
+  border: 2px solid;
+  border-color: var(--mc-groove, #1d1d1d) #4a4a4a #4a4a4a var(--mc-groove, #1d1d1d);
+}
+.think-head { display: flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--label-secondary); }
+.think-value { font-size: 15px; font-weight: 600; color: var(--label-primary); }
+.think-default {
+  margin-left: auto; font-size: 10px; padding: 1px 5px;
+  color: var(--label-tertiary); background: #333; border: 1px solid #555;
+}
+.think-default:hover { color: var(--label-primary); background: #3d3d3d; }
+.think-slider { position: relative; height: 22px; margin: 9px 2px 2px; cursor: pointer; touch-action: none; }
+.think-track {
+  position: absolute; left: 0; right: 0; top: 7px; height: 8px;
+  background: linear-gradient(90deg, #2ecc71, #14c8c8, #1e8fff, #2f5bff);
+  border: 2px solid #1d1d1d;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.think-tick {
+  position: absolute; top: 9px; width: 4px; height: 4px; margin-left: -2px;
+  background: #1d1d1d; opacity: 0.55;
+}
+.think-tick.on { background: #fff; opacity: 0.9; }
+.think-thumb {
+  position: absolute; top: 1px; width: 18px; height: 18px; margin-left: -9px;
+  background: #fff; border-radius: 50%;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.55), inset 0 0 0 2px #d8d8d8;
+}
+.think-levels {
+  display: flex; justify-content: space-between;
+  padding: 0 1px; font-size: 10px; color: var(--label-caption);
+}
+.picker-done {
+  display: block; width: calc(100% - 16px); height: 30px; margin: 8px;
+  font-size: 12px; color: var(--label-primary); background: var(--mc-slot, #2b2b2b);
+  border: 2px solid;
+  border-color: #5a5a5a var(--mc-groove, #1d1d1d) var(--mc-groove, #1d1d1d) #5a5a5a;
+}
+.picker-done:hover { background: #3d3d3d; }
+
 /* ======================= 杂项 ======================= */
 /* toast：dsh 底部居中，bluish-750 底 + 白字 */
 .toast {

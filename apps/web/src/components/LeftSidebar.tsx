@@ -362,7 +362,12 @@ export function LeftSidebar(props: {
           title={rail ? 'openmods' : 'openmods · 点击草方块横向移动'}
         >
           <GrassCube size={rail ? 20 : 24} />
-          {!rail && <span className="sb-name">openmods</span>}
+          {!rail && (
+            <span className="sb-name-wrap">
+              <span className="sb-name">openmods</span>
+              <span className="sb-sub">MINECRAFT AI WORKBENCH</span>
+            </span>
+          )}
         </button>
         <button className="sb-toggle" onClick={() => setRail(r => !r)} title={rail ? '展开侧栏' : '收起侧栏'}>
           {rail ? '»' : '«'}

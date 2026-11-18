@@ -400,6 +400,7 @@ export class SettingsStore {
           desc: m.desc ?? fallback?.desc ?? (route === 'deepseek' ? 'DeepSeek 官方' : p.displayName),
           llmModel: m.id,
           providerRoute: route,
+          providerName: p.displayName,
           disabled: m.memberOnly ? true : (!hasKey && !mock),
           disabledReason: m.memberOnly ? '需会员' : ((!hasKey && !mock) ? '未配置 API key' : undefined),
           contextWindow: m.contextWindow ?? fallback?.contextWindow ?? p.defaultContextWindow ?? DEFAULT_CONTEXT_WINDOW,

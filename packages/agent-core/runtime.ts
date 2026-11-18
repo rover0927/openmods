@@ -27,6 +27,8 @@ export interface ModelInfo {
   llmModel: string
   /** 供应商路由（设置系统合成模型时填写，llm 适配器据此现解析 baseURL/key） */
   providerRoute?: string
+  /** 供应商显示名（模型选择器顶部用） */
+  providerName?: string
   disabled?: boolean
   disabledReason?: string
   contextWindow?: number

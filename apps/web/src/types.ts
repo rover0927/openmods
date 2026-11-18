@@ -5,6 +5,7 @@ export interface ModelInfoDto {
   badgeType?: 'price' | 'peak'
   desc: string
   providerRoute?: string
+  providerName?: string
   disabled?: boolean
   disabledReason?: string
   contextWindow?: number
