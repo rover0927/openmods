@@ -443,6 +443,22 @@ export interface EnvStatusDto {
   updatedAt?: number
 }
 
+/** 在线下载离线构建包的实时状态（/api/env/vendor/download） */
+export interface VendorDownloadDto {
+  status: 'idle' | 'downloading' | 'extracting' | 'done' | 'cancelled' | 'error'
+  /** 本次下载使用的源 */
+  source?: 'mirror' | 'official' | 'release'
+  /** 已下载字节数 */
+  received: number
+  /** 总字节数（服务端未给 content-length 时为 0） */
+  total: number
+  /** 平滑后的瞬时速度，字节/秒 */
+  speed: number
+  startedAt: number
+  finishedAt?: number
+  error?: string
+}
+
 /** 画布唤醒记录（自动化页展示最近几次 AI 自己唤醒右侧拓展） */
 export interface WakeEntry {
   at: number

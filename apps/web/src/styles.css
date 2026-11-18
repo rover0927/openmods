@@ -2120,6 +2120,32 @@ select.agent-chip option { background: var(--bg-layer-2); color: var(--label-pri
 .env-footer-note { flex: 1; min-width: 0; font-size: 11px; color: var(--label-caption); }
 .env-footer .env-actions { margin-left: auto; }
 
+/* 在线下载离线构建包：说明行 + 进度条 + 速度/剩余时间 + 取消 */
+.env-vendor {
+  display: flex; flex-direction: column; gap: 6px;
+  padding-top: 2px;
+}
+.env-vendor-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 12px; line-height: 17px; color: var(--label-secondary);
+}
+.env-vendor-head > .btn { margin-left: auto; }
+.env-vendor-stat { font-size: 11px; line-height: 15px; color: var(--label-tertiary); }
+.env-vendor-bar {
+  height: 10px;
+  background: var(--mc-slot, var(--bg-layer-3));
+  border: 2px solid var(--mc-slot-dark, var(--border-l1));
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.4);
+}
+.env-vendor-bar > span {
+  display: block; height: 100%;
+  background: var(--accent);
+  transition: width 0.2s linear;
+}
+.env-vendor-note { font-size: 11px; line-height: 15px; color: var(--label-caption); }
+.env-vendor-sources { display: flex; gap: 6px; flex-wrap: wrap; }
+.env-vendor-error { font-size: 11.5px; line-height: 16px; color: var(--danger); word-break: break-all; }
+
 /* 首次运行向导弹窗：加宽 + 内容滚动（面板自身不重复遮罩与关闭键） */
 .env-dialog-backdrop { z-index: 1100; }
 .env-dialog {

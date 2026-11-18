@@ -12,6 +12,7 @@ import { createSessionRuntime, createHttpLlm, createMockLlm, registerSurfaceTran
 import { DirSkillProvider, FilteredSkillProvider } from './skills.js'
 import { SettingsStore } from './settings.js'
 import { applyEnvironment, checkEnvStatus, fixVendorLayout, validateEnvironmentPatch } from './env-check.js'
+import { cancelVendorDownload, isVendorSource, startVendorDownload, vendorDownloadStatus } from './vendor-download.js'
 import { FEATURE_DEFS, resolveFeatureStates, type FeatureStates } from './features.js'
 import { createProfileRegistry, registerBuiltinProfiles } from './profiles.js'
 import { SessionStore, isValidSessionId, summarize, type SessionSummary, type SubagentStatus } from './session-store.js'
@@ -1575,6 +1576,22 @@ app.post('/api/env/apply', async (req, reply) => {
     if (e.name === 'SettingsConflictError') return reply.code(409).send({ error: e.message })
     return reply.code(400).send({ error: e?.message ?? String(e) })
   }
+})
+
+// ---- 在线下载离线构建包（进度 / 速度 / 取消） ----
+/** 当前下载状态；前端在 downloading / extracting 期间轮询 */
+app.get('/api/env/vendor/download', async () => vendorDownloadStatus())
+
+app.post('/api/env/vendor/download', async (req, reply) => {
+  const source = (req.body as { source?: unknown } | null)?.source
+  const r = startVendorDownload(isVendorSource(source) ? source : 'mirror')
+  if (!r.ok) return reply.code(409).send({ error: r.error })
+  return { ok: true }
+})
+
+app.post('/api/env/vendor/cancel', async (_req, reply) => {
+  if (!cancelVendorDownload()) return reply.code(409).send({ error: '当前没有进行中的下载' })
+  return { ok: true }
 })
 
 app.put('/api/settings/credentials/:route', async (req, reply) => {

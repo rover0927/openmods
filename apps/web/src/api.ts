@@ -3,7 +3,7 @@ import type {
   ArchivedView, FeaturesDto, ModelInfoDto, PrefsDto, ProjectBaselineDto, ProjectDto,
   SessionInfoDto, SessionSummaryDto, SettingsDto, StatsFrameDto, LibraryAssetDto, CanvasTreeDto,
   LibraryJarItemDto, McTestJarSelectionDto, McTestStatusDto, LogsDto,
-  UpdateStatusDto, UpdateApplyDto, EnvStatusDto,
+  UpdateStatusDto, UpdateApplyDto, EnvStatusDto, VendorDownloadDto,
 } from './types.js'
 
 export interface SseFrame {
@@ -304,6 +304,20 @@ export const api = {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(patch),
+    }),
+  /** 在线下载离线构建包：查询状态 / 启动 / 取消 */
+  envVendorStatus: () => jfetch<VendorDownloadDto>('/api/env/vendor/download'),
+  envVendorStart: (source: 'mirror' | 'official' | 'release') =>
+    jfetch<{ ok: boolean }>('/api/env/vendor/download', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source }),
+    }),
+  envVendorCancel: () =>
+    jfetch<{ ok: boolean }>('/api/env/vendor/cancel', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
     }),
   /** 素材内文件地址：图片/文本默认内联，jar 等强制下载加 download=1 */
   libraryFileUrl: (id: string, fileId: string, download = false) =>
