@@ -121,6 +121,11 @@ export function SessionView(props: {
   } = props
   const empty = turns.length === 0
   const currentModel = models.find(m => m.id === currentModelId)
+  /** 当前角色 + 悬停介绍（description 由服务端角色声明提供） */
+  const currentProfile = profiles.find(p => p.id === agentProfile)
+  const profileHint = currentProfile
+    ? `${currentProfile.name}：${currentProfile.description || '切换当前会话的代理角色'}`
+    : '代理角色：主代理出创意与方案，MC 模组负责 1.20.1 Forge 实施'
   const [pickerOpen, setPickerOpen] = useState(false)
   const [text, setText] = useState('')
   const [slashIdx, setSlashIdx] = useState(0)
@@ -393,10 +398,10 @@ export function SessionView(props: {
               className="model-chip agent-chip"
               value={agentProfile}
               onChange={e => onPickProfile(e.target.value)}
-              title="代理角色：主代理负责建模委派，MC 模组负责 1.20.1 Forge 开发"
+              title={profileHint}
             >
-              {(profiles.length ? profiles : [{ id: 'lead', name: '主代理（lead）' }]).map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+              {(profiles.length ? profiles : [{ id: 'lead', name: '主代理（lead）', description: '出创意与方案；MC 实施自动移交给 mcmod' }]).map(p => (
+                <option key={p.id} value={p.id} title={p.description}>{p.name}</option>
               ))}
             </select>
             <button

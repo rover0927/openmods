@@ -381,6 +381,8 @@ export interface FeatureDecl {
 export interface ProfileDecl {
   id: string
   name: string
+  /** 一句话职责介绍（前端角色下拉悬停时展示） */
+  description?: string
   prompt: string
   toolFilter?: string[]
   toolExclude?: string[]

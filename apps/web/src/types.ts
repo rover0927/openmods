@@ -472,6 +472,8 @@ export function stepLabel(name: string): string {
 export interface AgentProfileDto {
   id: string
   name: string
+  /** 一句话职责介绍（角色下拉悬停时展示） */
+  description?: string
 }
 
 /** 空上下文块：SSE 帧缺字段时的兜底，避免面板渲染崩 */

@@ -42,6 +42,8 @@ export interface ModelInfo {
 export interface AgentProfile {
   id: string
   name: string
+  /** 一句话职责介绍（前端角色下拉悬停时展示） */
+  description?: string
   /** 模型可见的身份/职责声明 */
   prompt: string
   /** 工具白名单（模型只看到这些工具）；缺省 = 全部 */

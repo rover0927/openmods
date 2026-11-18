@@ -559,6 +559,7 @@ const plugin: Plugin = {
     ctx.profiles.register({
       id: 'modeling',
       name: '建模子代理（modeling）',
+      description: '建模子代理：在独立画布上完成造型与动画，收尾导出 JSON 供父会话使用。',
       prompt: MODELING_PROMPT,
       // 子代理是无人值守的画布工作者：不给它终端/授权/提问/计划，避免等待一个不会有人回答的弹窗
       toolExclude: ['spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOL_NAMES],

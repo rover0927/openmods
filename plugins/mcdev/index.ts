@@ -932,6 +932,7 @@ const plugin: Plugin = {
     ctx.profiles.register({
       id: 'mcmod',
       name: 'Minecraft 1.20.1 模组开发（mcmod）',
+      description: 'MC 实施者：建工程、写 Java 与资源、派建模子代理、Gradle 构建、测试客户端与 jar 导出。',
       prompt: MCMOD_PROMPT,
       toolFilter: MCMOD_TOOLS,
       skills: ['minecraft-forge-1.20.1'],

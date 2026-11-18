@@ -39,7 +39,7 @@
 | <img src="apps/web/public/mc/item/book.png" width="16" alt=""> **素材库** | 模型 / Jar 构建 / 图片 / 文件四类分开；上传、拖拽、工作目录导入、从画布截取；Jar 页多选后统一启动独立 Forge 测试客户端 |
 | <img src="apps/web/public/mc/item/totem_of_undying.png" width="16" alt=""> **主代理全能力** | 权限审批、计划模式、询问用户、终端、文件读写、并发子代理——对标 dsh 主 agent |
 | <img src="apps/web/public/mc/item/clock.png" width="16" alt=""> **首次环境检测** | 首次打开检测 JDK 17 / Gradle 离线缓存 / Git；向导选择 JDK 与缓存路径，设置 → 环境可随时重检、整理错位 vendor |
-| <img src="apps/web/public/mc/item/redstone.png" width="16" alt=""> **角色协作** | MC 工程目录默认 mcmod；lead 收到 MC 需求可确认后一键移交并自动续跑；mcmod 的造型需求先派建模子代理 |
+| <img src="apps/web/public/mc/item/redstone.png" width="16" alt=""> **角色协作** | MC 工程目录默认 mcmod；lead 出创意与方案、mcmod 负责实施，移交后自动续跑；mcmod 的造型需求先派建模子代理 |
 | <img src="apps/web/public/mc/item/lava_bucket.png" width="16" alt=""> **MC 开发闭环** | `mc_scaffold` 建工程 → 建模子代理出模型并在独立画布导出 JSON → `mc_gradle build` → 标题栏「▶ 测试 Mod」→「jar ⤓」导出（Forge 1.20.1 / 国内镜像 / 离线构建包） |
 | <img src="apps/web/public/mc/item/enchanted_book.png" width="16" alt=""> **代理与技能** | 三个角色（lead / mcmod / modeling）的工具与技能分配可视化；技能自注入、内置技能只读 |
 | <img src="apps/web/public/mc/item/ender_eye.png" width="16" alt=""> **上下文面板** | 底部状态条与右侧面板跟随当前画布页的 owner 会话；分段占用、工具用量、耗时分布、token 环形图、每轮明细 |
@@ -213,7 +213,7 @@ openmods/
 - **会话持久化**：`data/sessions/` 是唯一事实来源——`<id>.jsonl`（事件）、`<id>.meta.json`（标题/模型/画布/协作状态）、`<canvasId>.bbdoc.json`（画布快照）。`GET /api/sessions` 每次扫描目录重建列表；所有 JSON 落盘走 tmp+rename 原子写；标题按完整行扫描日志，首条消息带 base64 附图也能正确提取。
 - **画布归属**：`<id>.meta.json` 里的 `canvasIds` 是会话拥有的画布集合，`canvasId` 是**活跃画布**（durable）。主会话默认拥有自己的画布；**建模子代理使用自己的 id 作为独立画布**，不再继承父画布。老数据没有字段时沿父链回溯（只兼容，不回填）。
 - **runTurn**：图片链路（§5）→ 逐 step：压缩钩子 → build surface → `llm.chat` 流式 → tool_calls 逐个执行并落日志 → 无 tool_calls 收尾。`MAX_STEPS=12`，`AbortController` 支持停止。每个工具调用前过两道内核闸：① 计划模式下 `def.mutates` 一律拦截；② `guardApproval()` 处理 `def.requiresApproval`。
-- **profile**：`profiles.ts` 定义 `lead`（通用主代理/调度）、`mcmod`（MC 模组开发主代理）、`modeling`（建模子代理，排除工作台与 spawn/list）。MC 工程目录的新会话默认 `mcmod`，其他目录默认 `lead`；`lead` 收到 MC 开发需求先询问用户，确认后用 `handoff_to_mcmod` 切换角色并自动续跑。`toolFilter` 白名单 / `toolExclude` 排除双机制，`WORKSPACE_TOOLS` 统一列出工作台工具。
+- **profile**：`profiles.ts` 定义 `lead`（创意与方案主代理）、`mcmod`（MC 模组开发主代理）、`modeling`（建模子代理，排除工作台与 spawn/list）。MC 工程目录的新会话默认 `mcmod`，其他目录默认 `lead`；`lead` 负责创意与方案（idea、需求拆解、玩法/数值/美术设计、设计文档），实施一律移交：方案确认或用户直接要求实现时调用 `handoff_to_mcmod`（task 附【已确认方案】）切换角色并自动续跑。`toolFilter` 白名单 / `toolExclude` 排除双机制，`WORKSPACE_TOOLS` 统一列出工作台工具。
 
 ### 3.2 主代理工作台
 
@@ -278,15 +278,15 @@ composer dock 的环是常驻的：分子取 `estimateContextTokens()`（`llm/us
 
 ### 3.8 Minecraft 模组开发代理（mcmod + plugins/mcdev）
 
-composer 的模型 chip 左侧有代理角色下拉（`GET /api/profiles`，选择存 localStorage 并随会话 meta 持久化）：
+composer 的模型 chip 左侧有代理角色下拉（`GET /api/profiles`，选择存 localStorage 并随会话 meta 持久化；鼠标悬停显示该角色的职责介绍，来自角色声明的 `description`）：
 
 | 角色 | 定位 |
 |---|---|
-| `lead`（普通目录默认） | 通用主代理：对话 + 建模委派；不直接做 MC 工程，收到 MC 需求先询问是否移交 |
+| `lead`（普通目录默认） | 创意与方案主代理：给 idea、拆需求、做玩法/数值/美术设计、写文档；MC 实施交给 mcmod，非 MC 代码自己实现 |
 | `mcmod`（MC 工程默认） | 只做 Java + MC 1.20.1 + Forge 47.x 的模组开发主代理 |
 | `modeling` | 建模子代理（内部角色，不能派发子代理） |
 
-`lead` 在用户确认后调用 `handoff_to_mcmod`：会话角色持久化为 `mcmod`，当前回合结束后自动用原需求续跑一轮，不需要用户重发。MC 工程目录（`gradle.properties` 含 `minecraft_version`，或 `build.gradle` 含 ForgeGradle）新建会话默认直接用 `mcmod`。
+`lead` 在方案确认（或用户已明确要求实现）后调用 `handoff_to_mcmod`，`task` 带原始需求与【已确认方案】：会话角色持久化为 `mcmod`，当前回合结束后自动用原需求续跑一轮，不需要用户重发。MC 工程目录（`gradle.properties` 含 `minecraft_version`，或 `build.gradle` 含 ForgeGradle）新建会话默认直接用 `mcmod`。
 
 `mcmod` 的工具面来自 `plugins/mcdev`：
 

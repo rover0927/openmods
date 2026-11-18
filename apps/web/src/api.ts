@@ -183,7 +183,7 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ modelId }),
     }),
-  profiles: () => jfetch<{ profiles: { id: string; name: string }[] }>('/api/profiles'),
+  profiles: () => jfetch<{ profiles: { id: string; name: string; description?: string }[] }>('/api/profiles'),
   stats: (id: string) => jfetch<StatsFrameDto>(`/api/sessions/${id}/stats`),
 
   // ---- 计划模式 / 授权策略 / 人机交互 ----

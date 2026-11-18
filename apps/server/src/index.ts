@@ -393,17 +393,17 @@ if (hiddenSkills.size) {
 
 // ---- lead → mcmod 任务移交 ----
 // 只在 mcmod 角色真正存在（mc 开关开启、插件已 apply）时注册；lead 的 toolFilter 也按同一开关加白名单。
-// 调用前 lead 必须先用 ask_user_question 征得用户同意（提示词里写明），这里只做执行侧校验。
+// lead 只负责 idea 与方案，判定实施阶段后直接调用（提示词里写明，不再征询用户），这里只做执行侧校验。
 if (bootFeatures.mc !== false && profileRegistry.has('mcmod')) {
   tools.push({
     name: 'handoff_to_mcmod',
-    description: '把当前会话移交给 mcmod（Minecraft 1.20.1 Forge 开发主代理）。只能在用户明确同意后调用；'
-      + 'task 必须原样传入本回合用户的原始需求（不要改写、摘要或只传最后一句）。'
+    description: '把当前会话移交给 mcmod（Minecraft 1.20.1 Forge 开发主代理）。lead 只负责 idea 与方案，实施（脚手架/构建/写 Java 与资源/加物品方块等）一律调用本工具，无需征询用户；'
+      + 'task 传本回合用户的原始需求全文，并在其后追加【已确认方案】段落（没有方案时只传原始需求）。'
       + '移交后会话角色持久化为 mcmod，本轮结束后系统会自动用该需求续跑一轮，用户不需要重发。',
     parameters: {
       type: 'object',
       properties: {
-        task: { type: 'string', description: '本回合用户的原始需求全文（原样粘贴）' },
+        task: { type: 'string', description: '本回合用户的原始需求全文（原样粘贴）；已与用户确认方案时，在末尾追加【已确认方案】要点' },
       },
       required: ['task'],
     },
@@ -1350,7 +1350,7 @@ app.addHook('onRequest', async (req, reply) => {
 
 // 可选代理角色：只列当前功能开关下可用的（内部子代理角色 + requires 不满足的角色都不出现）
 app.get('/api/profiles', async () => ({
-  profiles: profileRegistry.visible(bootFeatures).map(p => ({ id: p.id, name: p.name })),
+  profiles: profileRegistry.visible(bootFeatures).map(p => ({ id: p.id, name: p.name, description: p.description ?? '' })),
 }))
 
 /**
@@ -1370,7 +1370,7 @@ app.get('/api/features', async () => {
       default: f.default !== false,
       pendingRestart: (desired[f.id] !== false) !== (bootFeatures[f.id] !== false),
     })),
-    profiles: profileRegistry.visible(bootFeatures).map(p => ({ id: p.id, name: p.name })),
+    profiles: profileRegistry.visible(bootFeatures).map(p => ({ id: p.id, name: p.name, description: p.description ?? '' })),
     plugins: {
       loaded: loadedPlugins.map(p => p.name),
       skipped: skippedPlugins.map(s => ({ name: s.name, reason: s.reason })),
