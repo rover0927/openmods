@@ -328,9 +328,17 @@ export default function App() {
   }, [])
 
   // ---- 统一测试启动器：底部悬浮实时进度条（安装/启动/运行/失败） ----
-  const refreshMcTestStatus = useCallback(() => {
-    api.mcTestStatus(120).then(setMcTestStatus).catch(() => { /* 服务未起 */ })
+  /** 本页是否真的启动过测试：用来区分「本次失败」和上次进程留在 state.json 里的旧错误 */
+  const mcTestRunSeen = useRef(false)
+  const applyMcTestStatus = useCallback((s: McTestStatusDto) => {
+    if (['installing', 'starting', 'running'].includes(s.phase)) mcTestRunSeen.current = true
+    // 刷新/重开页面时恢复状态：本页还没启动过测试，上次残留的失败不弹窗（环境可能已经修好）
+    if (s.phase === 'error' && !mcTestRunSeen.current) return
+    setMcTestStatus(s)
   }, [])
+  const refreshMcTestStatus = useCallback(() => {
+    api.mcTestStatus(120).then(applyMcTestStatus).catch(() => { /* 服务未起 */ })
+  }, [applyMcTestStatus])
   useEffect(() => { refreshMcTestStatus() }, [refreshMcTestStatus])
   useEffect(() => {
     if (libraryOpen) refreshMcTestStatus()
