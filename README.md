@@ -94,30 +94,36 @@ npm start                # 生产：自动构建前端 → 单进程 http://127.
 
 ## <img src="apps/web/public/mc/item/clock.png" width="16" alt=""> 环境检测（首次启动）
 
-首次打开工作台自动检测三项，结果与用户选择保存到 `data/settings.json` 的 `environment`：
+首次打开工作台自动检测四项，结果与用户选择保存到 `data/settings.json` 的 `environment`：
 
 | 项 | 检测内容 | 说明 |
 |---|---|---|
 | Java | `JAVA_HOME`、`PATH`、`.jdks`、`.gradle/jdks`、常见安装目录 | 1.20.1 需要 JDK 17；非 17 会标注「不适用于 1.20.1」 |
 | Gradle 缓存 | `plugins/mcdev/vendor/`、错位目录、`MC_ROOT/.gradle-home`、`GRADLE_USER_HOME`、`~/.gradle` | 命中 vendor 时构建不再联网下载 Gradle 8.8 |
 | Git | `git --version` | 设置 → 更新 使用这个 Git；缺失时给出可读提示 |
+| 测试客户端 | `data/mc-test-client/.minecraft`、`testClientDir`、`%APPDATA%/.minecraft`、`~/.minecraft` | 检查 `versions/`、`libraries/` 是否完整；缺包时下载离线包或选择已有目录 |
 
 - 保存后立即作用于 `mc_gradle`、测试客户端与自更新，不需要重启。
 - Gradle 卡片底部可以直接「在线下载构建包」：拉取 Releases 的 `openmods-vendor.zip` 并解压到 `plugins/mcdev/vendor/`，下载中显示进度、实时速度、剩余时间，可随时取消；先解压到临时目录再替换，取消或失败不会破坏已有 vendor。
-- 下载源三选一：**国内镜像**（gh-proxy 加速）、**GitHub 官方**（直连 github.com）、**Release API**（经 api.github.com 取 asset 直链）。
+- 测试客户端卡片底部同样可以「在线下载测试客户端」：拉取 `openmods-test-client.zip` 并解压到 `data/mc-test-client/.minecraft`。
+- 下载源二选一：**GitHub 官方**（直连 github.com）、**Release API**（经 api.github.com 取 asset 直链）。按钮下方还有「到 Releases 手动下载」链接与「打开默认目录」按钮（目录不存在时先创建，再用资源管理器打开）。
 - 如果 `gradle-8.8/`、`fg-maven/` 被解压到 `plugins/mcdev/` 而不是 `plugins/mcdev/vendor/`，向导会显示警告并提供「整理到 vendor/」。
 - 随时可到 设置 → 环境 重新检测、选择 JDK/缓存或填写 Git 路径。
 
 ## <img src="apps/web/public/mc/item/emerald.png" width="16" alt=""> 离线构建包（vendor，重要）
 
-`plugins/mcdev/vendor/` 约 245M，不进 git。可以在 设置 → 环境（或首次向导）的 Gradle 卡片选下载源（国内镜像 / GitHub 官方 / Release API）一键下载，也可以到 [Releases](https://github.com/rover0927/openmods/releases) 手动下载：
+`plugins/mcdev/vendor/` 约 245M，不进 git。可以在 设置 → 环境（或首次向导）的 Gradle / 测试客户端卡片选下载源（GitHub 官方 / Release API）一键下载，也可以到 [Releases](https://github.com/rover0927/openmods/releases) 手动下载：
 
 | 包 | 大小 | 解压到 | 作用 |
 |---|---|---|---|
 | `openmods-vendor.zip` | 224M | `plugins/mcdev/vendor/` | Gradle 8.8 + ForgeGradle 缓存 + 测试客户端安装器依赖；构建零下载，测试客户端可离线安装 |
+| `openmods-test-client.zip` | 141M | `data/mc-test-client/` | Forge 1.20.1 测试客户端（`versions/` 含 1.20.1、1.20.1-forge-47.4.10，另有 `libraries/`、`natives/`）；免联网安装 |
 | `openmods-mdk-template.zip` | 112K | 任意目录 | 独立的 Forge 1.20.1 MDK 工程模板（等同于仓库里的 `plugins/mcdev/template/forge-1.20.1/`） |
 
-`openmods-vendor.zip` 解压后是 `gradle-8.8/`、`fg-maven/` 两个目录，直接放进 `plugins/mcdev/vendor/`。
+解压约定（**别再套一层目录**）：
+
+- `openmods-vendor.zip` 解压后是 `gradle-8.8/`、`fg-maven/` 两个目录，直接放进 `plugins/mcdev/vendor/`。
+- `openmods-test-client.zip` 解压后顶层就是 `.minecraft/`，直接放进 `data/mc-test-client/`（即 `data/mc-test-client/.minecraft/versions/…`）；用资源管理器解压时注意别变成 `data/mc-test-client/openmods-test-client/.minecraft/`。
 
 > 如果这两个目录出现在 `plugins/mcdev/` 而不是 `plugins/mcdev/vendor/`，不用重新下载：设置 → 环境 → 「整理到 vendor/」会自动移动。
 
@@ -593,10 +599,13 @@ PUT    /api/settings                     body {providers?, bridge?, prefs?, envi
 GET    /api/settings/file                下载原始 settings.json
 PUT    /api/settings/credentials/:route  写 API key
 POST   /api/settings/discover-models     探测 {baseURL}/models（返回上下文窗口、视觉能力与思考档位，缺失时按模型名推断）
-GET    /api/env/status                   环境检测（Java 17 / Gradle 缓存 / Git）
-POST   /api/env/vendor/download          在线下载离线构建包 {source: mirror|official|release}（后台下载，轮询状态）
+GET    /api/env/status                   环境检测（Java 17 / Gradle 缓存 / Git / 测试客户端）
+POST   /api/env/vendor/download          在线下载离线构建包 {source: official|release}（后台下载，轮询状态）
 GET    /api/env/vendor/download          下载状态 {status, received, total, speed}
 POST   /api/env/vendor/cancel            取消下载或解压
+POST   /api/env/test-client/download     在线下载测试客户端 {source: official|release}
+GET    /api/env/test-client/download     测试客户端下载状态
+POST   /api/env/test-client/cancel       取消测试客户端下载
 POST   /api/env/apply                    保存环境配置 {javaHome?, gradleHome?, gitPath?, setupDone?, fixVendorLayout?}
 GET    /api/update/status                检查 GitHub main 与本地差异
 POST   /api/update/apply                 手动更新（git fetch + ff-only merge + 必要时 install/build）
@@ -606,6 +615,7 @@ GET    /api/fs/text?path=                文本预览（>512KB 截断）
 GET    /api/fs/raw?path=                 图片原始字节
 GET    /api/fs/browse?path=              目录浏览（只列子目录，选择工作目录用）
 POST   /api/fs/pick-dir                  系统目录选择框
+POST   /api/fs/open-dir                  打开默认下载目录 {kind: vendor|test-client}（不存在时先创建）
 POST   /api/explorer                     在系统资源管理器中打开
 GET    /api/web/probe?url=               目标页嵌入性探测
 GET    /api/web/proxy?url=               同源代理渲染（注入 <base>、去 CSP meta、<8MB）

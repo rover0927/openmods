@@ -15,17 +15,16 @@ const TMP_DIR = join(ROOT, 'data', 'test-client-download')
 const ZIP_PATH = join(TMP_DIR, 'openmods-test-client.zip')
 const UNPACK_DIR = join(TMP_DIR, 'unpacked')
 const DOWNLOAD_URL = 'https://github.com/rover0927/openmods/releases/latest/download/openmods-test-client.zip'
-const MIRROR_PREFIX = 'https://gh-proxy.com/'
 const LATEST_RELEASE_API = 'https://api.github.com/repos/rover0927/openmods/releases/latest'
 const ASSET_NAME = 'openmods-test-client.zip'
 const CONNECT_TIMEOUT_MS = 30_000
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000
 const MIN_ZIP_BYTES = 1024 * 1024
 
-export type TestClientSource = 'mirror' | 'official' | 'release'
+export type TestClientSource = 'official' | 'release'
 
 export function isTestClientSource(v: unknown): v is TestClientSource {
-  return v === 'mirror' || v === 'official' || v === 'release'
+  return v === 'official' || v === 'release'
 }
 
 export type TestClientDownloadStatus = 'idle' | 'downloading' | 'extracting' | 'done' | 'cancelled' | 'error'
@@ -59,7 +58,7 @@ export function cancelTestClientDownload(): boolean {
   return true
 }
 
-export function startTestClientDownload(source: TestClientSource = 'mirror'): { ok: boolean; error?: string } {
+export function startTestClientDownload(source: TestClientSource = 'official'): { ok: boolean; error?: string } {
   if (abort) return { ok: false, error: '已有下载任务在进行' }
   abort = new AbortController()
   state = {
@@ -70,7 +69,6 @@ export function startTestClientDownload(source: TestClientSource = 'mirror'): { 
 }
 
 async function openDownload(source: TestClientSource, signal: AbortSignal): Promise<Response> {
-  if (source === 'mirror') return fetch(MIRROR_PREFIX + DOWNLOAD_URL, { redirect: 'follow', signal })
   if (source === 'official') return fetch(DOWNLOAD_URL, { redirect: 'follow', signal })
   const rel = await fetch(LATEST_RELEASE_API, {
     headers: { accept: 'application/vnd.github+json', 'user-agent': 'openmods' },

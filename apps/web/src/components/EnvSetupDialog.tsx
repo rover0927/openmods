@@ -70,11 +70,13 @@ function fmtEta(seconds: number): string {
 }
 
 /** 下载源展示名 */
-const SOURCE_LABEL: Record<'mirror' | 'official' | 'release', string> = {
-  mirror: '国内镜像',
+const SOURCE_LABEL: Record<'official' | 'release', string> = {
   official: 'GitHub 官方',
   release: 'Release API',
 }
+
+/** 手动下载入口：Releases 页里的两个离线包 zip */
+const RELEASES_URL = 'https://github.com/rover0927/openmods/releases/latest'
 
 /** 下载落盘位置（相对仓库根目录，对应服务端 data/vendor-download/openmods-vendor.zip） */
 const VENDOR_ZIP_LABEL = 'data/vendor-download/openmods-vendor.zip'
@@ -223,7 +225,7 @@ export function EnvSetupPanel(props: {
     return () => { window.clearTimeout(timer) }
   }, [clientDl?.status, clientDl?.received])
 
-  const startClientDownload = async (source: 'mirror' | 'official' | 'release') => {
+  const startClientDownload = async (source: 'official' | 'release') => {
     try {
       await api.envTestClientStart(source)
       setClientDl(await api.envTestClientStatus())
@@ -240,7 +242,7 @@ export function EnvSetupPanel(props: {
     }
   }
 
-  const startVendorDownload = async (source: 'mirror' | 'official' | 'release') => {
+  const startVendorDownload = async (source: 'official' | 'release') => {
     try {
       await api.envVendorStart(source)
       setVendorDl(await api.envVendorStatus())
@@ -254,6 +256,15 @@ export function EnvSetupPanel(props: {
       await api.envVendorCancel()
     } catch (e: any) {
       props.onToast(`取消失败：${e.message}`)
+    }
+  }
+
+  /** 打开下载区默认目录（服务端不存在时先创建，再拉起资源管理器） */
+  const openDefaultDir = async (kind: 'vendor' | 'test-client') => {
+    try {
+      await api.openDir(kind)
+    } catch (e: any) {
+      props.onToast(`打开目录失败：${e.message}`)
     }
   }
 
@@ -466,7 +477,7 @@ export function EnvSetupPanel(props: {
                         <span>
                           {clientDl.status === 'extracting'
                             ? '正在解压到 data/mc-test-client/.minecraft…'
-                            : `正在下载测试客户端${clientDl.total ? ` ${Math.min(100, Math.round((clientDl.received / clientDl.total) * 100))}%` : ''}（${SOURCE_LABEL[clientDl.source ?? 'mirror']}）`}
+                            : `正在下载测试客户端${clientDl.total ? ` ${Math.min(100, Math.round((clientDl.received / clientDl.total) * 100))}%` : ''}（${SOURCE_LABEL[clientDl.source ?? 'official']}）`}
                         </span>
                         {clientDl.status === 'downloading' && (
                           <span className="env-vendor-stat">
@@ -494,16 +505,18 @@ export function EnvSetupPanel(props: {
                         <span>
                           {clientDl?.status === 'done'
                             ? '测试客户端已就绪'
-                            : '在线下载测试客户端离线包，选择下载源：'}
+                            : '在线下载测试客户端离线包：'}
                         </span>
                       </div>
                       <div className="env-vendor-sources">
-                        <button type="button" className="btn" onClick={() => void startClientDownload('mirror')}>国内镜像</button>
-                        <button type="button" className="btn ghost" onClick={() => void startClientDownload('official')}>GitHub 官方</button>
+                        <button type="button" className="btn" onClick={() => void startClientDownload('official')}>GitHub 官方</button>
                         <button type="button" className="btn ghost" onClick={() => void startClientDownload('release')}>Release API</button>
+                        <button type="button" className="btn ghost" onClick={() => void openDefaultDir('test-client')}>打开默认目录</button>
                       </div>
                       <div className="env-vendor-note">
-                        解压到 data/mc-test-client/.minecraft；Releases 需提供 openmods-test-client.zip。
+                        也可以 <a className="env-vendor-link" href={RELEASES_URL} target="_blank" rel="noreferrer">到 Releases 手动下载</a>
+                        {' '}openmods-test-client.zip，解压到上方打开的 data/mc-test-client/，
+                        应直接得到 .minecraft/，别再套一层 openmods-test-client/。
                       </div>
                       {clientWaiting && <div className="env-vendor-note">等待响应…（长时间无进度请取消并换源）</div>}
                       {clientDl?.status === 'error' && (
@@ -526,8 +539,8 @@ export function EnvSetupPanel(props: {
                           {vendorDl.status === 'extracting'
                             ? '正在解压到 plugins/mcdev/vendor/…'
                             : vendorWaiting && vendorDl.received === 0
-                              ? `正在下载构建包（${SOURCE_LABEL[vendorDl.source ?? 'mirror']}）· 等待响应…（如长时间无进度请取消并换源）`
-                              : `正在下载构建包${vendorDl.total ? ` ${Math.min(100, Math.round((vendorDl.received / vendorDl.total) * 100))}%` : ''}（${SOURCE_LABEL[vendorDl.source ?? 'mirror']}）`}
+                              ? `正在下载构建包（${SOURCE_LABEL[vendorDl.source ?? 'official']}）· 等待响应…（如长时间无进度请取消并换源）`
+                              : `正在下载构建包${vendorDl.total ? ` ${Math.min(100, Math.round((vendorDl.received / vendorDl.total) * 100))}%` : ''}（${SOURCE_LABEL[vendorDl.source ?? 'official']}）`}
                         </span>
                         {vendorDl.status === 'downloading' && (
                           <span className="env-vendor-stat">
@@ -560,22 +573,24 @@ export function EnvSetupPanel(props: {
                         <span>
                           {vendorDl?.status === 'done'
                             ? '构建包已就绪'
-                            : '在线下载构建包（约 224 MB），选择下载源：'}
+                            : '在线下载构建包（约 224 MB）：'}
                         </span>
                       </div>
                       <div className="env-vendor-sources">
-                        <button type="button" className="btn" onClick={() => void startVendorDownload('mirror')}>
-                          国内镜像
-                        </button>
-                        <button type="button" className="btn ghost" onClick={() => void startVendorDownload('official')}>
+                        <button type="button" className="btn" onClick={() => void startVendorDownload('official')}>
                           GitHub 官方
                         </button>
                         <button type="button" className="btn ghost" onClick={() => void startVendorDownload('release')}>
                           Release API
                         </button>
+                        <button type="button" className="btn ghost" onClick={() => void openDefaultDir('vendor')}>
+                          打开默认目录
+                        </button>
                       </div>
                       <div className="env-vendor-note">
-                        镜像走 gh-proxy 加速；官方直连 github.com；Release API 经 api.github.com 获取直链。
+                        也可以 <a className="env-vendor-link" href={RELEASES_URL} target="_blank" rel="noreferrer">到 Releases 手动下载</a>
+                        {' '}openmods-vendor.zip，解压到上方打开的 plugins/mcdev/vendor/，
+                        应直接得到 gradle-8.8/ 与 fg-maven/，别再套一层 openmods-vendor/。
                       </div>
                       {vendorDl?.status === 'error' && (
                         <div className="env-vendor-error">下载失败：{vendorDl.error ?? '未知错误'}</div>

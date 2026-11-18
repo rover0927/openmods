@@ -460,7 +460,7 @@ export interface VendorDownloadDto {
   /** 下载落盘位置（服务端返回） */
   targetPath?: string
   /** 本次下载使用的源 */
-  source?: 'mirror' | 'official' | 'release'
+  source?: 'official' | 'release'
   /** 已下载字节数 */
   received: number
   /** 总字节数（服务端未给 content-length 时为 0） */

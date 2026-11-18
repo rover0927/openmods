@@ -99,6 +99,13 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ path, title }),
     }),
+  /** 打开下载区的默认落点目录（不存在时服务端先创建） */
+  openDir: (kind: 'vendor' | 'test-client') =>
+    jfetch<{ ok: boolean; path: string }>('/api/fs/open-dir', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind }),
+    }),
   /** archived=hide（默认）/ all / only —— 对应 dsh 的 viewOptions 三种筛选 */
   listSessions: (archived: ArchivedView = 'hide') =>
     jfetch<{ sessions: SessionSummaryDto[]; archivedView: ArchivedView }>(`/api/sessions?archived=${archived}`),
@@ -326,7 +333,7 @@ export const api = {
     }),
   /** 在线下载离线构建包：查询状态 / 启动 / 取消 */
   envVendorStatus: () => jfetch<VendorDownloadDto>('/api/env/vendor/download'),
-  envVendorStart: (source: 'mirror' | 'official' | 'release') =>
+  envVendorStart: (source: 'official' | 'release') =>
     jfetch<{ ok: boolean }>('/api/env/vendor/download', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -340,7 +347,7 @@ export const api = {
     }),
   /** 测试客户端离线包：状态 / 启动 / 取消（解压到 data/mc-test-client/.minecraft） */
   envTestClientStatus: () => jfetch<VendorDownloadDto>('/api/env/test-client/download'),
-  envTestClientStart: (source: 'mirror' | 'official' | 'release') =>
+  envTestClientStart: (source: 'official' | 'release') =>
     jfetch<{ ok: boolean }>('/api/env/test-client/download', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

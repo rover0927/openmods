@@ -1617,7 +1617,7 @@ app.get('/api/env/vendor/download', async () => vendorDownloadStatus())
 
 app.post('/api/env/vendor/download', async (req, reply) => {
   const source = (req.body as { source?: unknown } | null)?.source
-  const r = startVendorDownload(isVendorSource(source) ? source : 'mirror')
+  const r = startVendorDownload(isVendorSource(source) ? source : 'official')
   if (!r.ok) return reply.code(409).send({ error: r.error })
   return { ok: true }
 })
@@ -1632,7 +1632,7 @@ app.get('/api/env/test-client/download', async () => testClientDownloadStatus())
 
 app.post('/api/env/test-client/download', async (req, reply) => {
   const source = (req.body as { source?: unknown } | null)?.source
-  const r = startTestClientDownload(isTestClientSource(source) ? source : 'mirror')
+  const r = startTestClientDownload(isTestClientSource(source) ? source : 'official')
   if (!r.ok) return reply.code(409).send({ error: r.error })
   return { ok: true }
 })
@@ -1954,6 +1954,27 @@ app.post('/api/explorer', async (req, reply) => {
   const { spawn } = await import('node:child_process')
   spawn('explorer.exe', [abs], { detached: true, stdio: 'ignore' }).unref()
   return { ok: true }
+})
+
+/**
+ * 打开下载区的默认落点目录（资源管理器）。目录可能还没建过，先递归创建再打开：
+ * - vendor → plugins/mcdev/vendor（解压后应直接是 gradle-8.8/、fg-maven/）
+ * - test-client → data/mc-test-client（解压后应直接是 .minecraft/）
+ */
+app.post('/api/fs/open-dir', async (req, reply) => {
+  const body = (req.body ?? {}) as { kind?: string }
+  const kind = String(body.kind ?? '').trim()
+  const target = kind === 'vendor'
+    ? join(ROOT, 'plugins', 'mcdev', 'vendor')
+    : kind === 'test-client'
+      ? join(ROOT, 'data', 'mc-test-client')
+      : ''
+  if (!target) return reply.code(400).send({ error: 'kind 需为 vendor 或 test-client' })
+  if (process.platform !== 'win32') return reply.code(400).send({ error: '仅支持 Windows 资源管理器' })
+  mkdirSync(target, { recursive: true })
+  const { spawn } = await import('node:child_process')
+  spawn('explorer.exe', [target], { detached: true, stdio: 'ignore' }).unref()
+  return { ok: true, path: target }
 })
 
 /**
