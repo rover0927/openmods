@@ -121,11 +121,46 @@ export const DEFAULT_PREFS: PrefsConfig = {
   features: {},
 }
 
+/**
+ * 本地工具链配置（设置 → 环境）：首次运行向导与「设置 → 环境」共用一份。
+ * 空字符串 = 未配置（走 PATH / 自动探测），保存后由 env-check.applyEnvironment 写进进程环境。
+ */
+export interface EnvironmentConfig {
+  /** 首次运行向导是否已处理过（保存或「稍后配置」都算，避免每次启动都弹） */
+  setupDone: boolean
+  /** JDK 17 的 home（如 C:/Program Files/Java/jdk-17） */
+  javaHome: string
+  /** Gradle 用户目录（GRADLE_USER_HOME，离线缓存所在） */
+  gradleHome: string
+  /** git 可执行文件路径（空 = 用 PATH 里的 git） */
+  gitPath: string
+}
+
+export const DEFAULT_ENVIRONMENT: EnvironmentConfig = {
+  setupDone: false,
+  javaHome: '',
+  gradleHome: '',
+  gitPath: '',
+}
+
+/** 容错：手改/半截 environment 不应让设置页炸掉；路径 trim + 长度限制，boolean 归一 */
+export function normalizeEnvironment(raw: any): EnvironmentConfig {
+  const p = raw && typeof raw === 'object' ? raw : {}
+  const path = (v: any) => (typeof v === 'string' ? v.trim().slice(0, 500) : '')
+  return {
+    setupDone: p.setupDone === true,
+    javaHome: path(p.javaHome),
+    gradleHome: path(p.gradleHome),
+    gitPath: path(p.gitPath),
+  }
+}
+
 export interface SettingsDoc {
   revision: number
   providers: Record<string, ProviderProfile>
   bridge: BridgeConfig
   prefs: PrefsConfig
+  environment: EnvironmentConfig
 }
 
 /** 容错：手改/半截 prefs 不应让设置页炸掉；越界值夹到合法区间 */
@@ -183,6 +218,8 @@ export class SettingsStore {
     if (!this.doc.bridge) this.doc.bridge = { enabled: false }
     // 老版本 settings.json 没有 prefs：补齐默认值，不报错
     this.doc.prefs = normalizePrefs(this.doc.prefs)
+    // 老版本没有 environment：补齐默认值（向导据此判断是否首次运行）
+    this.doc.environment = normalizeEnvironment(this.doc.environment)
     const creds = this.loadJson<Record<string, string>>(join(dataDir, 'credentials.json'), {})
     this.credentials = creds && typeof creds === 'object' ? creds : {}
   }
@@ -194,6 +231,7 @@ export class SettingsStore {
       revision: 1,
       bridge: { enabled: false },
       prefs: { ...DEFAULT_PREFS, maxActiveSubagents: envLimit },
+      environment: { ...DEFAULT_ENVIRONMENT },
       providers: {
         deepseek: {
           displayName: 'DeepSeek 官方',
@@ -239,6 +277,7 @@ export class SettingsStore {
       revision: this.doc.revision,
       bridge: this.doc.bridge,
       prefs: this.doc.prefs,
+      environment: this.doc.environment ?? DEFAULT_ENVIRONMENT,
       providers: Object.fromEntries(
         Object.entries(this.doc.providers).map(([route, p]) => [route, {
           displayName: p.displayName,
@@ -259,12 +298,27 @@ export class SettingsStore {
     return this.doc.prefs ?? DEFAULT_PREFS
   }
 
+  /** 本地工具链配置（设置 → 环境）：启动时读一次并应用到进程环境 */
+  getEnvironment(): EnvironmentConfig {
+    return this.doc.environment ?? DEFAULT_ENVIRONMENT
+  }
+
+  /** 保存环境配置（局部 patch，未提供的字段保持原值）；与 providers/prefs 共用 revision 乐观锁 */
+  saveEnvironment(patch: Partial<EnvironmentConfig>, expectedRevision?: number): number {
+    return this.save({ environment: patch }, expectedRevision)
+  }
+
   /**
-   * 保存设置：providers / bridge / prefs 任选其一（缺省字段保持原值）。
-   * 一个 revision 覆盖三者，避免"模型存了、开关没存"的半截状态。
+   * 保存设置：providers / bridge / prefs / environment 任选其一（缺省字段保持原值）。
+   * 一个 revision 覆盖全部，避免"模型存了、开关没存"的半截状态。
    */
   save(
-    patch: { providers?: Record<string, ProviderProfile>; bridge?: BridgeConfig; prefs?: Partial<PrefsConfig> },
+    patch: {
+      providers?: Record<string, ProviderProfile>
+      bridge?: BridgeConfig
+      prefs?: Partial<PrefsConfig>
+      environment?: Partial<EnvironmentConfig>
+    },
     expectedRevision?: number,
   ): number {
     if (expectedRevision !== undefined && expectedRevision !== this.doc.revision) {
@@ -290,7 +344,10 @@ export class SettingsStore {
       throw new Error('桥接模型已开启但未选择模型')
     }
     const prefs = patch.prefs ? normalizePrefs({ ...this.doc.prefs, ...patch.prefs }) : this.doc.prefs
-    this.doc = { revision: this.doc.revision + 1, providers, bridge: bridgeCfg, prefs }
+    const environment = patch.environment
+      ? normalizeEnvironment({ ...this.getEnvironment(), ...patch.environment })
+      : this.getEnvironment()
+    this.doc = { revision: this.doc.revision + 1, providers, bridge: bridgeCfg, prefs, environment }
     this.saveJson(join(this.dataDir, 'settings.json'), this.doc)
     return this.doc.revision
   }

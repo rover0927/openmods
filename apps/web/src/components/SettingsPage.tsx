@@ -3,8 +3,9 @@ import { api } from '../api.js'
 import type { FeaturesDto, PrefsDto, WakeEntry, UpdateStatusDto } from '../types.js'
 import { AgentsSkillsPane } from './AgentSkillsPane.js'
 import { AboutContent } from './AboutDialog.js'
+import { EnvSetupPanel } from './EnvSetupDialog.js'
 
-export type SettingsSectionId = 'general' | 'features' | 'models' | 'agents' | 'subagent' | 'automation' | 'about' | 'update'
+export type SettingsSectionId = 'general' | 'features' | 'environment' | 'models' | 'agents' | 'subagent' | 'automation' | 'about' | 'update'
 
 interface DraftModel {
   id: string
@@ -551,6 +552,19 @@ export function SettingsPage(props: {
             <span className="setting-row-hint">{(featInfo?.profiles ?? []).map(p => p.name).join('、') || '—'}</span>
           </Row>
         </div>
+      </div>
+    )
+  }
+
+  // ---- 环境 ----
+  if (props.section === 'environment') {
+    return (
+      <div className="settings-section">
+        <div className="settings-section-head">
+          <h2>环境</h2>
+          <p>Java / Gradle 离线缓存 / Git 检测与配置；保存后立即应用到构建、测试客户端与自更新。</p>
+        </div>
+        <EnvSetupPanel mode="page" onToast={props.onToast} />
       </div>
     )
   }

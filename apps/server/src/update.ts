@@ -45,8 +45,29 @@ export interface UpdateApplyResult {
 
 let applying = false
 
+const GIT_MISSING = '未检测到 Git，请到 设置 → 环境 配置 Git 路径（安装：https://git-scm.com）'
+
+/** Git 可执行文件：设置 → 环境 保存的路径优先，否则用 PATH 里的 git */
+function gitBinary(): string {
+  return process.env.OPENMODS_GIT?.trim() || 'git'
+}
+
+/** 探测 Git 是否可执行：返回中文错误消息，可用时返回 undefined */
+function gitMissing(): string | undefined {
+  const r = spawnSync(gitBinary(), ['--version'], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10_000,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+  })
+  const err = r.error as NodeJS.ErrnoException | undefined
+  if (err?.code === 'ENOENT') return GIT_MISSING
+  if (r.status !== 0) return `Git 无法执行（${gitBinary()}），请到 设置 → 环境 检查 Git 路径`
+  return undefined
+}
+
 function git(args: string[], timeout = 60_000) {
-  return spawnSync('git', args, {
+  return spawnSync(gitBinary(), args, {
     cwd: ROOT,
     encoding: 'utf8',
     windowsHide: true,
@@ -61,6 +82,8 @@ function gitOut(args: string[], timeout = 60_000): string {
 }
 
 function gitError(r: ReturnType<typeof spawnSync>): string {
+  // spawnSync 找不到可执行文件时不抛异常，只在 error 上带 ENOENT
+  if ((r.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return GIT_MISSING
   return String(r.stderr ?? '').trim() || String(r.stdout ?? '').trim() || `git 退出码 ${r.status ?? -1}`
 }
 
@@ -119,6 +142,9 @@ export async function getUpdateStatus(): Promise<UpdateStatus> {
     dirtyFiles: [],
   }
   if (gitOut(['rev-parse', '--is-inside-work-tree']) !== 'true') {
+    // Git 缺失与"不是仓库"都会让 rev-parse 失败：先给可操作的安装提示，再退回目录提示
+    const missing = gitMissing()
+    if (missing) return { ...base, error: missing }
     return { ...base, error: '当前目录不是 git 仓库，无法自更新（可用 Releases 覆盖安装）' }
   }
   base.branch = gitOut(['rev-parse', '--abbrev-ref', 'HEAD']) || BRANCH
@@ -162,6 +188,8 @@ export async function applyUpdate(): Promise<UpdateApplyResult> {
   if (applying) return { ok: false, error: '已有更新正在进行，请稍候' }
   applying = true
   try {
+    const missing = gitMissing()
+    if (missing) return { ok: false, error: missing }
     if (gitOut(['rev-parse', '--is-inside-work-tree']) !== 'true') {
       return { ok: false, error: '当前目录不是 git 仓库，无法自更新' }
     }

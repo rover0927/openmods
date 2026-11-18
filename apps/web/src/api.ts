@@ -3,7 +3,7 @@ import type {
   ArchivedView, FeaturesDto, ModelInfoDto, PrefsDto, ProjectBaselineDto, ProjectDto,
   SessionInfoDto, SessionSummaryDto, SettingsDto, StatsFrameDto, LibraryAssetDto, CanvasTreeDto,
   LibraryJarItemDto, McTestJarSelectionDto, McTestStatusDto, LogsDto,
-  UpdateStatusDto, UpdateApplyDto,
+  UpdateStatusDto, UpdateApplyDto, EnvStatusDto,
 } from './types.js'
 
 export interface SseFrame {
@@ -287,6 +287,23 @@ export const api = {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: '{}',
+    }),
+
+  // ---- 环境检测（首次运行向导 / 设置 → 环境） ----
+  /** 当前 Java / Gradle 缓存 / Git 三项检测结果（只读） */
+  envStatus: () => jfetch<EnvStatusDto>('/api/env/status'),
+  /** 保存环境配置并立即生效；fixVendorLayout=true 时先整理错位的离线包 */
+  envApply: (patch: {
+    javaHome?: string
+    gradleHome?: string
+    gitPath?: string
+    setupDone?: boolean
+    fixVendorLayout?: boolean
+  }) =>
+    jfetch<EnvStatusDto>('/api/env/apply', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
     }),
   /** 素材内文件地址：图片/文本默认内联，jar 等强制下载加 download=1 */
   libraryFileUrl: (id: string, fileId: string, download = false) =>

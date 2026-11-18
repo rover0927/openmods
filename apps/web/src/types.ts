@@ -404,6 +404,45 @@ export interface SettingsDto {
   prefs: PrefsDto
 }
 
+// ---- 环境检测（首次运行向导 / 设置 → 环境） ----
+
+/** data/settings.json 的 environment 字段 */
+export interface EnvironmentConfigDto {
+  /** 首次运行向导是否已处理过（保存或「稍后配置」都算） */
+  setupDone: boolean
+  /** JDK 17 的 home */
+  javaHome: string
+  /** Gradle 用户目录（GRADLE_USER_HOME，离线缓存所在） */
+  gradleHome: string
+  /** git 可执行文件路径（空 = 用 PATH 里的 git） */
+  gitPath: string
+}
+
+/** 一个候选路径（vendor 离线包用空字符串 value：不覆盖 GRADLE_USER_HOME） */
+export interface EnvCandidateDto {
+  value: string
+  label: string
+  version?: string
+  ok: boolean
+  note?: string
+}
+
+export interface EnvCheckDto {
+  id: 'java' | 'gradle' | 'git'
+  status: 'ok' | 'warn' | 'fail'
+  summary: string
+  details: string[]
+  candidates: EnvCandidateDto[]
+  actions?: { id: 'fix-vendor'; label: string }[]
+}
+
+export interface EnvStatusDto {
+  configured: boolean
+  config: EnvironmentConfigDto
+  checks: EnvCheckDto[]
+  updatedAt?: number
+}
+
 /** 画布唤醒记录（自动化页展示最近几次 AI 自己唤醒右侧拓展） */
 export interface WakeEntry {
   at: number

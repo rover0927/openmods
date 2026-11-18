@@ -11,6 +11,7 @@ import { applyPlugins, discoverPlugins, WORKSPACE_TOOL_NAMES } from '@openmods/p
 import { createSessionRuntime, createHttpLlm, createMockLlm, registerSurfaceTransform, SessionLog, type SessionRuntime, type LlmAdapter, LlmError } from '@openmods/agent-core'
 import { DirSkillProvider, FilteredSkillProvider } from './skills.js'
 import { SettingsStore } from './settings.js'
+import { applyEnvironment, checkEnvStatus, fixVendorLayout, validateEnvironmentPatch } from './env-check.js'
 import { FEATURE_DEFS, resolveFeatureStates, type FeatureStates } from './features.js'
 import { createProfileRegistry, registerBuiltinProfiles } from './profiles.js'
 import { SessionStore, isValidSessionId, summarize, type SessionSummary, type SubagentStatus } from './session-store.js'
@@ -117,6 +118,9 @@ const terminals = createTerminalManager({
 
 // ---- 设置存储（providers + credentials 持久化，模型目录动态化） ----
 const settingsStore = new SettingsStore(join(ROOT, 'data'), env)
+// 环境配置（设置 → 环境）写进 OPENMODS_JAVA_HOME / OPENMODS_GRADLE_HOME / OPENMODS_GIT，
+// 供 mc_gradle、测试客户端与自更新读取；保存后立即生效，无需重启。
+applyEnvironment(settingsStore.getEnvironment())
 // 启动态功能开关在插件发现之后解析（要合并插件自带的声明），见下方「插件发现」。
 
 // ---- LLM 适配器：MOCK 或 per-request 解析供应商（下一轮生效） ----
@@ -387,6 +391,49 @@ if (hiddenSkills.size) {
   }
 }
 
+// ---- lead → mcmod 任务移交 ----
+// 只在 mcmod 角色真正存在（mc 开关开启、插件已 apply）时注册；lead 的 toolFilter 也按同一开关加白名单。
+// 调用前 lead 必须先用 ask_user_question 征得用户同意（提示词里写明），这里只做执行侧校验。
+if (bootFeatures.mc !== false && profileRegistry.has('mcmod')) {
+  tools.push({
+    name: 'handoff_to_mcmod',
+    description: '把当前会话移交给 mcmod（Minecraft 1.20.1 Forge 开发主代理）。只能在用户明确同意后调用；'
+      + 'task 必须原样传入本回合用户的原始需求（不要改写、摘要或只传最后一句）。'
+      + '移交后会话角色持久化为 mcmod，本轮结束后系统会自动用该需求续跑一轮，用户不需要重发。',
+    parameters: {
+      type: 'object',
+      properties: {
+        task: { type: 'string', description: '本回合用户的原始需求全文（原样粘贴）' },
+      },
+      required: ['task'],
+    },
+    async execute(args, exec) {
+      const s = sessions.get(exec.sessionId)
+      if (!s) return { forModel: '会话不存在或已结束，无法移交。', isError: true }
+      if (s.mode === 'subagent') return { forModel: '子代理不能移交角色。', isError: true }
+      if (s.profile !== 'lead') {
+        return { forModel: `当前角色是 ${s.profile}，只有 lead 才能移交给 mcmod。`, isError: true }
+      }
+      // 等待子代理时面板会锁输入，移交后的续跑也没有意义——直接拒绝
+      if (s.waiting.size > 0) {
+        return { forModel: '正在等待子代理完成，等结算后再移交。', isError: true }
+      }
+      const text = String(args.task ?? '').trim()
+      if (!text) return { forModel: 'task 不能为空：请传本回合用户的原始需求。', isError: true }
+
+      s.profile = 'mcmod'
+      persistMeta(s)
+      // 本轮结束后由 afterRootTurn 取出，用同一份需求自动续跑一轮 mcmod
+      s.pendingHandoff = { text, at: Date.now() }
+      s.sse.send('session/profile', { sessionId: s.id, profile: 'mcmod' })
+      return {
+        forModel: '已将会话移交给 mcmod。本轮结束后系统会自动用你传入的任务续跑一轮（用户不需要重发），'
+          + '请在本轮收尾时用一句话告诉用户「已切换到 mcmod，正在继续」。',
+      }
+    },
+  })
+}
+
 // ---- 会话管理 ----
 /** 会话级协作状态：计划模式 / 待办 / 授权策略（durable：写 meta，计划与待办同时进日志） */
 interface CoopState {
@@ -432,6 +479,11 @@ interface SessionEntry {
   settlements: SettledChild[]
   /** 自动汇总回合进行中（防重入：结算触发 + 回合收尾触发可能同时到达） */
   autoTurn: boolean
+  /**
+   * 待执行的 lead → mcmod 移交：本轮结束后用这份用户需求自动续跑一轮 mcmod。
+   * 只存在内存里（回合收尾即消费），不需要落盘。
+   */
+  pendingHandoff?: { text: string; at: number }
   /** 计划模式 / 待办 / 授权（dsh plan-mode + todo + approval 的会话级状态） */
   coop: CoopState
 }
@@ -559,6 +611,17 @@ function setTodosOf(entry: SessionEntry, list: CoopState['todos']) {
   persistMeta(entry)
 }
 
+/** 目录是否是 MC 工程根：gradle.properties 有 minecraft_version，或 build.gradle 引用 ForgeGradle */
+function looksLikeMcProject(cwd: string): boolean {
+  try {
+    const props = join(cwd, 'gradle.properties')
+    if (existsSync(props) && /^\s*minecraft_version\s*=/m.test(readFileSync(props, 'utf8'))) return true
+    const build = join(cwd, 'build.gradle')
+    if (existsSync(build) && /(forgegradle|net\.minecraftforge)/i.test(readFileSync(build, 'utf8'))) return true
+  } catch { /* 读不到就当普通目录 */ }
+  return false
+}
+
 interface CreateSessionOptions {  parentId?: string
   agentName?: string
   description?: string
@@ -682,8 +745,13 @@ function createSession(id = randomUUID().slice(0, 8), opts: CreateSessionOptions
     agentName,
     description,
     profile: (() => {
+      // 新 root 会话按绑定目录判断：MC 工程默认 mcmod，普通目录默认 lead；
+      // 子代理仍默认 modeling。显式 meta.profile 永远优先。
+      const fallback = mode === 'root'
+        ? (bootFeatures.mc !== false && profileRegistry.has('mcmod') && looksLikeMcProject(cwd) ? 'mcmod' : 'lead')
+        : 'modeling'
+      const wanted = meta.profile ?? fallback
       // 角色可能已被功能开关禁用（如 mcmod/modeling）：会话恢复时回落 lead
-      const wanted = meta.profile ?? (mode === 'root' ? 'lead' : 'modeling')
       return profileRegistry.has(wanted) ? wanted : 'lead'
     })(),
     status: meta.lastStatus ?? 'idle',
@@ -1164,6 +1232,16 @@ async function runSessionTurn(
  * 没有 steer 通道，所以忙时结算先留在收件箱，由这里再启动。
  */
 function afterRootTurn(s: SessionEntry) {
+  // lead → mcmod 移交：优先用本回合的用户需求自动续跑一轮（不需要用户重发）。
+  // 先清空标记，避免续跑回合收尾时再次触发。
+  const handoff = s.pendingHandoff
+  if (handoff) {
+    s.pendingHandoff = undefined
+    if (isArchivedLineage(s.id)) return
+    void runSessionTurn(s, { text: handoff.text, profile: 'mcmod' })
+      .catch(e => console.warn('[handoff] mcmod 续跑失败:', e?.message ?? e))
+    return
+  }
   // 先跑一遍 waitingRows 触发自愈（剔除已不存在的子代理），再判断去留
   const waiting = waitingRows(s)
   if (waiting.length > 0) {
@@ -1428,13 +1506,24 @@ app.get('/api/settings/file', async (req, reply) => {
 })
 
 app.put('/api/settings', async (req, reply) => {
-  // providers / bridge / prefs 都是可选的：设置页按分区保存，不会互相覆盖
-  const body = (req.body ?? {}) as { providers?: any; bridge?: any; prefs?: any; expectedRevision?: number }
+  // providers / bridge / prefs / environment 都是可选的：设置页按分区保存，不会互相覆盖
+  const body = (req.body ?? {}) as { providers?: any; bridge?: any; prefs?: any; environment?: any; expectedRevision?: number }
   try {
+    // 环境配置与专门的 /api/env/apply 走同一套校验，避免非法路径被写进 settings.json
+    if (body.environment !== undefined) {
+      const e = body.environment ?? {}
+      validateEnvironmentPatch({
+        javaHome: e.javaHome !== undefined ? String(e.javaHome ?? '') : undefined,
+        gradleHome: e.gradleHome !== undefined ? String(e.gradleHome ?? '') : undefined,
+        gitPath: e.gitPath !== undefined ? String(e.gitPath ?? '') : undefined,
+      })
+    }
     const newRevision = settingsStore.save(
-      { providers: body.providers, bridge: body.bridge, prefs: body.prefs },
+      { providers: body.providers, bridge: body.bridge, prefs: body.prefs, environment: body.environment },
       body.expectedRevision,
     )
+    // 环境配置随设置一起保存时，立刻应用到进程环境（下一轮构建/测试/更新生效）
+    if (body.environment !== undefined) applyEnvironment(settingsStore.getEnvironment())
     // 广播（所有会话的 composer 模型选择器即时刷新）
     for (const s of sessions.values()) {
       s.sse.send('settings/updated', { revision: newRevision, prefs: settingsStore.getPrefs() })
@@ -1444,6 +1533,47 @@ app.put('/api/settings', async (req, reply) => {
   } catch (e: any) {
     if (e.name === 'SettingsConflictError') return reply.code(409).send({ error: e.message })
     return reply.code(400).send({ error: e.message })
+  }
+})
+
+// ---- 环境检测（设置 → 环境 / 首次运行向导） ----
+/** 当前三项检测结果（Java / Gradle 缓存 / Git），不写任何文件 */
+app.get('/api/env/status', async () => checkEnvStatus(settingsStore.getEnvironment()))
+
+/**
+ * 保存环境配置并立即生效：
+ * - fixVendorLayout=true 时先把 plugins/mcdev 下错位的 gradle-8.8 / fg-maven 移到 vendor/
+ * - 只校验/保存请求里出现的字段；校验失败返回 400 中文消息
+ * 返回最新 EnvStatus，前端可直接刷新卡片与候选列表。
+ */
+app.post('/api/env/apply', async (req, reply) => {
+  const body = (req.body ?? {}) as {
+    javaHome?: unknown; gradleHome?: unknown; gitPath?: unknown; setupDone?: unknown
+    fixVendorLayout?: unknown; expectedRevision?: unknown
+  }
+  try {
+    if (body.fixVendorLayout === true) {
+      const fixed = fixVendorLayout()
+      if (!fixed.ok) return reply.code(400).send({ error: fixed.error ?? '整理 vendor 失败' })
+    }
+    const patch: { javaHome?: string; gradleHome?: string; gitPath?: string; setupDone?: boolean } = {}
+    if (body.javaHome !== undefined) patch.javaHome = String(body.javaHome ?? '').trim()
+    if (body.gradleHome !== undefined) patch.gradleHome = String(body.gradleHome ?? '').trim()
+    if (body.gitPath !== undefined) patch.gitPath = String(body.gitPath ?? '').trim()
+    if (typeof body.setupDone === 'boolean') patch.setupDone = body.setupDone
+    validateEnvironmentPatch(patch)
+    settingsStore.saveEnvironment(
+      patch,
+      typeof body.expectedRevision === 'number' ? body.expectedRevision : undefined,
+    )
+    applyEnvironment(settingsStore.getEnvironment())
+    for (const s of sessions.values()) {
+      s.sse.send('settings/updated', { revision: settingsStore.revision, prefs: settingsStore.getPrefs() })
+    }
+    return checkEnvStatus(settingsStore.getEnvironment())
+  } catch (e: any) {
+    if (e.name === 'SettingsConflictError') return reply.code(409).send({ error: e.message })
+    return reply.code(400).send({ error: e?.message ?? String(e) })
   }
 })
 
@@ -2321,6 +2451,8 @@ app.post('/api/sessions/:id/stop', async (req, reply) => {
     return { ok: true, cancelled }
   }
   // 先结算挂在提问/授权上的工具，再 abort 回合——否则工具永远等不到答案
+  // 用户主动停止时丢弃待执行的移交，避免停止后又被自动拉起一轮 mcmod
+  s.pendingHandoff = undefined
   interactionHub.cancelSession(s.id, 'stopped')
   s.abortController?.abort()
   return { ok: true, cancelled: 0 }

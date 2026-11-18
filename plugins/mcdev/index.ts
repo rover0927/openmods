@@ -49,6 +49,56 @@ const REFERENCE_PROJECTS: string[] = (() => {
  * seedWrapperDist / seedMavenCache 优先从这里复制，镜像只做兜底。
  */
 const VENDOR = fileURLToPath(new URL('./vendor/', import.meta.url))
+const MCDEV_DIR = fileURLToPath(new URL('./', import.meta.url))
+
+/**
+ * 播种源目录：正常是 plugins/mcdev/vendor/<name>；历史克隆把 gradle-8.8 / fg-maven
+ * 直接解压到了 plugins/mcdev/ 下（会话 2121e7e7 的故障现场），这里只回退读取用于播种，
+ * 不自动搬动目录——整理由「设置 → 环境 → 整理到 vendor/」完成。
+ */
+function vendorSource(name: string): string {
+  const primary = join(VENDOR, name)
+  if (existsSync(primary)) return primary
+  const stray = join(MCDEV_DIR, name)
+  return existsSync(stray) ? stray : primary
+}
+
+/**
+ * Java 17 解析：设置 → 环境（OPENMODS_JAVA_HOME）优先，其次 JAVA_HOME，
+ * 最后旧默认路径。Minecraft 1.20.1 只能跑 JDK 17，版本不对就不启动 Gradle。
+ */
+const JAVA_HINT = '未找到 Java 17：请到 设置 → 环境 选择 JDK（Minecraft 1.20.1 需要 JDK 17）'
+
+function javaExeOf(home: string): string {
+  return join(home, 'bin', process.platform === 'win32' ? 'java.exe' : 'java')
+}
+
+/** 跑 <home>/bin/java -version，解析主版本；跑不起来返回 null */
+function javaVersionOf(home: string): { major: number; version: string } | null {
+  const exe = javaExeOf(home)
+  if (!existsSync(exe)) return null
+  const r = spawnSync(exe, ['-version'], { encoding: 'utf8', windowsHide: true, timeout: 15_000 })
+  const text = `${r.stdout ?? ''}${r.stderr ?? ''}`
+  const m = /version "([^"]+)"/.exec(text)
+  if (!m) return null
+  const parts = m[1].split(/[._]/)
+  const first = Number(parts[0])
+  const major = first === 1 ? Number(parts[1] ?? 0) : first
+  if (!Number.isFinite(major) || major <= 0) return null
+  return { major, version: m[1] }
+}
+
+function resolveJava17(): { home: string; version: string } | { error: string } {
+  const tried: string[] = []
+  for (const raw of [process.env.OPENMODS_JAVA_HOME, process.env.JAVA_HOME, 'F:/sdk_java/jdk-17']) {
+    const home = String(raw ?? '').trim()
+    if (!home || tried.includes(home)) continue
+    tried.push(home)
+    const info = javaVersionOf(home)
+    if (info?.major === 17) return { home, version: info.version }
+  }
+  return { error: `${JAVA_HINT}${tried.length ? `（已检查：${tried.join('、')}）` : ''}` }
+}
 
 /** Forge 47.4.10 = 1.20.1 当前 MDK 版本；只允许这一个平台。 */
 const PINNED = { mc: '1.20.1', forge: '47.4.10', fg: '6.0.54', gradle: '8.8', java: 17 }
@@ -89,7 +139,7 @@ const FG_SEED: string[] = [
  * 有 .ok 的目录 wrapper 直接视为已安装，不再联网下载。
  */
 async function seedWrapperDist(gradleHome: string, projectDir: string): Promise<'seeded' | 'cached' | 'skipped'> {
-  const vendorDist = join(VENDOR, 'gradle-8.8')
+  const vendorDist = vendorSource('gradle-8.8')
   if (!existsSync(join(vendorDist, 'bin'))) return 'skipped'
   const propsFile = join(projectDir, 'gradle', 'wrapper', 'gradle-wrapper.properties')
   if (!existsSync(propsFile)) return 'skipped'
@@ -111,7 +161,7 @@ async function seedWrapperDist(gradleHome: string, projectDir: string): Promise<
  * brigadier、fastutil…），一并离线。
  */
 async function seedVendorMaven(gradleHome: string): Promise<boolean> {
-  const vendorMaven = join(VENDOR, 'fg-maven')
+  const vendorMaven = vendorSource('fg-maven')
   if (!existsSync(vendorMaven)) return false
   const dest = join(gradleHome, 'caches', 'forge_gradle', 'maven_downloader')
   await mkdir(dest, { recursive: true })
@@ -135,7 +185,7 @@ async function seedMavenCache(gradleHome: string): Promise<{ added: number; skip
       await mkdir(dirname(out), { recursive: true })
       if (vendorUsed) {
         // vendor 没盖住这个文件（快照不完整时）才走镜像
-        const vendorFile = join(VENDOR, 'fg-maven', ...rel.split('/'))
+        const vendorFile = join(vendorSource('fg-maven'), ...rel.split('/'))
         if (existsSync(vendorFile) && (await stat(vendorFile)).size > 0) {
           await cp(vendorFile, out)
           const vendorMd5 = `${vendorFile}.md5`
@@ -571,23 +621,29 @@ async function runGradle(opts: {
 }): Promise<ToolResult> {
   const { projectDir, task } = opts
   if (!/^[a-zA-Z][\w:.-]*$/.test(task)) return fail(`任务名不合法：${task}`)
+  // 启动前先校验 Java 17：缺失或版本不对直接返回可操作中文错误，不再把原始报错丢给模型
+  const java = resolveJava17()
+  if ('error' in java) return fail(java.error)
   const gradlew = process.platform === 'win32' ? 'gradlew.bat' : './gradlew'
   const argv = [gradlew, task, '--console=plain', ...(opts.args ?? [])]
+  const gradleHome = process.env.OPENMODS_GRADLE_HOME ?? process.env.GRADLE_USER_HOME ?? WARM_GRADLE_HOME ?? join(opts.root ?? MC_ROOT, '.gradle-home')
   const env = {
     ...process.env,
-    JAVA_HOME: process.env.JAVA_HOME ?? 'F:/sdk_java/jdk-17',
-    GRADLE_USER_HOME: process.env.OPENMODS_GRADLE_HOME ?? process.env.GRADLE_USER_HOME ?? WARM_GRADLE_HOME ?? join(opts.root ?? MC_ROOT, '.gradle-home'),
+    JAVA_HOME: java.home,
+    GRADLE_USER_HOME: gradleHome,
   }
   // 首次跑之前先把两块最容易挂的缓存摆好：FG 绕开 Gradle 仓库直连官方源的
   // 构件（无读超时，缺了就无限期卡住）+ wrapper 发行版（gradlew 首跑免下载）。
   const seed = await seedMavenCache(env.GRADLE_USER_HOME)
   const wrapper = await seedWrapperDist(env.GRADLE_USER_HOME, projectDir)
-  const seedNote = (seed.added || seed.failed.length)
+  const cacheNote = (seed.added || seed.failed.length)
     ? `缓存补齐（${wrapper === 'seeded' ? 'Gradle 发行版已从项目内 vendor 播种' : wrapper === 'cached' ? 'Gradle 发行版已有缓存' : 'Gradle 发行版无 vendor 包'}）：新增 ${seed.added}、已存在 ${seed.skipped}`
       + (seed.failed.length ? `、失败 ${seed.failed.join('、')}` : '') + '\n'
     : wrapper === 'seeded'
       ? 'Gradle 发行版已从项目内 vendor 播种，wrapper 免联网下载。\n'
       : ''
+  // 结果里明确写出本次使用的 Java 与 Gradle 缓存，便于确认是否命中离线包
+  const seedNote = `Java：${java.home}（版本 ${java.version}）\nGradle 缓存：${env.GRADLE_USER_HOME}\n${cacheNote}`
 
   if (opts.background) {
     if (task === 'runClient') {
@@ -668,7 +724,7 @@ async function runGradle(opts: {
       child.kill('SIGTERM')
       child.stdout?.destroy()
       child.stderr?.destroy()
-      resolvePromise(fail(`gradlew ${task} 超时（${timeoutMs / 1000}s）。尾部输出：\n${text().slice(-4000)}`))
+      resolvePromise(fail(`${seedNote}gradlew ${task} 超时（${timeoutMs / 1000}s）。尾部输出：\n${text().slice(-4000)}`))
     }, timeoutMs)
     child.on('close', code => finish(code ?? -1))
     // close 依赖管道关闭；daemon 不放手时用 exit 兜底（再给 400ms 收尾输出）
@@ -678,7 +734,7 @@ async function runGradle(opts: {
       settled = true
       clearTimeout(timer)
       clearTimeout(markerTimer)
-      resolvePromise(fail(`无法启动 gradlew：${e.message}`))
+      resolvePromise(fail(`${seedNote}无法启动 gradlew：${e.message}`))
     })
   })
 }
@@ -837,8 +893,15 @@ const MCMOD_PROMPT = '你是 Minecraft 1.20.1 Forge 模组开发主代理（mcmo
   + '4) 构建失败先分流：出现 Connection refused / SSL / Could not resolve / Read timed out 是镜像或网络问题——'
   + '告知用户或换网络/源，不要改代码，也不要动 build.gradle、settings.gradle、gradle wrapper 或平台版本；'
   + '只有编译错误才按报错改代码。本机已有预热 Gradle 缓存，不要建议用户重新下载依赖。\n'
-  + '5) 造型（物品/方块/生物外观）派给 spawn_modeling_subagent；派发完结束这一轮，等系统汇总回合。汇总回合先请用户验收画布模型（ask_user_question：通过 / 要改哪里 / 重做），用户通过后用 canvas_export 把完整画布工程导出成 JSON（分组骨骼/pivot/UV/贴图/动画全在内），再用脚本解析生成 Java 模型类与贴图——这是唯一不失真的落地路径。mc_export_model 只产原版 item 模型（无骨骼无动画），仅限导出简单物品外观。不要自己手搓几何，更不要派子代理抄画布。\n'
-  + '   若 canvas_export 产物解析后发现与画布不符（不太可能），先核对解析代码再考虑其它路径；仍不行就 ask_user_question 问用户怎么落地（比如让用户从 Blockbench 手动保存 .bbmodel），不要反复盲试、更不要据此重做模型。\n'
+  + '5) 造型需求（物品/方块/生物外观、枪械、动画等）的造型部分必须派给 spawn_modeling_subagent，这是造型工作的第一步；工程 scaffold 可以同时做，但在子代理结算前不得导出或构建。不得自己手搓几何、不得用 bash 生成模型/贴图。'
+  + '调用时传 description（3-5 字）与 prompt（完整外形/配色/细节/动画要求）；prompt 里必须明确要求子代理：完成建模后、汇报前调用 canvas_export file_path=canvas-export/<name>.json 导出完整画布工程，并在汇报里给出导出路径。'
+  + '多个模型可同一轮派多个子代理，每个 prompt 指定不同的导出文件名，避免互相覆盖。'
+  + '子代理有**独立画布**：你所在会话的活跃画布看不到它的成果，所以不要在自己会话里用 canvas_export 导出子代理的模型，也不要指望模型自动出现在你的画布上。只有当前活跃画布本来就有模型（例如用户预载）时，才用你自己的 canvas_export。'
+  + '派发完立即结束这一轮，不要轮询 list_subagents；系统会在全部子代理结算后自动开汇总回合。'
+  + '汇总回合先检查子代理汇报里的导出文件是否存在、画布结构是否完整，再用 ask_user_question 请用户验收（通过 / 要改哪里 / 重做）；**用户明确验收通过之前不要导出、不要构建**。'
+  + '验收通过后，解析子代理导出的 JSON（canvas-export/<name>.json）生成 Java 模型类与贴图——这是唯一不失真的落地路径。mc_export_model 只产原版 item 模型（无骨骼无动画），仅限导出简单物品外观。'
+  + '如果子代理没有导出，先 ask_user_question 请用户从该子代理的画布页签导出（或确认是否重做）；不要自己手搓几何，也不要派子代理抄画布。\n'
+  + '   若子代理导出的 JSON 解析后发现与画布不符（不太可能），先核对解析代码再考虑其它路径；仍不行就 ask_user_question 问用户怎么落地（比如让用户从 Blockbench 手动保存 .bbmodel），不要反复盲试、更不要据此重做模型。\n'
   + '   画布组织：一个画布可以放多个模型；用户要求拆开时，用 create_canvas 新建空白画布，再用 split_canvas_group 把顶层分组迁到新画布（默认不切换活跃画布，可连续拆）。不要复制坐标、也不要手工重建模型。\n'
   + '6) 构建用 mc_gradle task=build；要验证能否进游戏就用 mc_gradle task=runClient background=true，'
   + '   然后 mc_log project=. waitSec=120 等启动标记（Sound engine started / Forge mod loading），失败先看崩溃报告再改。'
@@ -1334,9 +1397,12 @@ function trackRunClient(projectDir: string, child: ChildProcess) {
 
 /** UI「测试 Mod」按钮：与 mc_gradle background 共用 launchClient（镜像 seed / GRADLE_USER_HOME / 状态登记） */
 async function startRunClient(projectDir: string, root: string): Promise<{ pid: number; logPath: string }> {
+  // 与 mc_gradle 同一套 Java 解析与前置校验
+  const java = resolveJava17()
+  if ('error' in java) throw new Error(java.error)
   const env = {
     ...process.env,
-    JAVA_HOME: process.env.JAVA_HOME ?? 'F:/sdk_java/jdk-17',
+    JAVA_HOME: java.home,
     GRADLE_USER_HOME: process.env.OPENMODS_GRADLE_HOME ?? process.env.GRADLE_USER_HOME ?? WARM_GRADLE_HOME ?? join(root, '.gradle-home'),
   }
   await seedMavenCache(env.GRADLE_USER_HOME)

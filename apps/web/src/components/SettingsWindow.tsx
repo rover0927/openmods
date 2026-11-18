@@ -8,6 +8,7 @@ import { McIcon, type McIconName } from './McIcon.js'
 const SECTIONS: { id: SettingsSectionId; label: string; icon: McIconName }[] = [
   { id: 'general', label: '通用', icon: 'settings' },
   { id: 'features', label: '功能', icon: 'features' },
+  { id: 'environment', label: '环境', icon: 'settings' },
   { id: 'models', label: '模型', icon: 'model' },
   { id: 'agents', label: '代理与技能', icon: 'agents' },
   { id: 'subagent', label: '子代理', icon: 'subagents' },

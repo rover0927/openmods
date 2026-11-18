@@ -29,6 +29,15 @@ const LEAD_CANVAS = '建模/动画任务一律派发给建模子代理（spawn_m
 const LEAD_TAIL = '不确定、没把握的事：先做一次小成本验证（读一次文件/试一次工具）；同一件事连续失败两次就停下来 ask_user_question 问用户，把你试过什么、看到什么报错讲清楚，让用户拍板——'
   + '不要连续盲试烧掉大半个回合，更不要在没把握的方向上重做已完成的成果（重头再来的代价比问一句大得多）。'
 
+/**
+ * MC 工程任务的角色边界：lead 没有 mc_* 工具，用 bash 手搓只会产出不能构建的工程。
+ * 必须先征得用户同意再 handoff_to_mcmod；拒绝时说明只有 mcmod 能做，不要硬着头皮上。
+ */
+const LEAD_MC = 'MC 模组开发任务（scaffold / 构建 / runClient / 写 Java 代码 / 资源文件）不要用 bash 手搓——你没有 mc_* 工具，手搓出来的工程无法构建。\n'
+  + '遇到这类需求：先 ask_user_question 问用户是否切换到 mcmod（选项至少含「切换到 mcmod」/「继续用 lead」）；'
+  + '用户同意后调用 handoff_to_mcmod，task 原样传本回合用户的原始需求，系统会自动以 mcmod 续跑一轮，不要让用户重发。'
+  + '用户拒绝时明确说明：MC 工程只能由 mcmod 完成，继续用 lead 只能做通用代码/文件工作。\n'
+
 const CODING_PROMPT = '你是 openmods 的通用编码代理（coding）。工作目录就是当前工程根，相对路径都以它为根。'
   + '你有：read/write/edit/list_dir/glob/grep 读写代码、bash 执行命令与构建测试、terminal_open/terminal_kill 管理长任务、'
   + 'ask_user_question 问用户、todo_write 维护清单、exit_plan_mode 提交计划。\n'
@@ -40,14 +49,16 @@ const CODING_PROMPT = '你是 openmods 的通用编码代理（coding）。工�
   + '5) 收尾说明：改了哪些文件、如何验证、还有什么没验证。'
   + '不确定是否要更大范围改动时，用 exit_plan_mode 先把方案交给用户批准。'
 
-/** lead 的提示词随功能开关变化：关掉画布后不再提建模委派与 canvas_export */
+/** lead 的提示词随功能开关变化：关掉画布后不再提建模委派与 canvas_export；关掉 MC 后不再提角色移交 */
 export function leadPrompt(features: FeatureStates): string {
   const canvasOn = features.canvas !== false
-  return `${LEAD_BASE}${canvasOn ? LEAD_CANVAS : ''}${LEAD_TAIL}`
+  const mcOn = features.mc !== false
+  return `${LEAD_BASE}${canvasOn ? LEAD_CANVAS : ''}${mcOn ? LEAD_MC : ''}${LEAD_TAIL}`
 }
 
 function leadProfile(features: FeatureStates): ProfileDecl {
   const canvasOn = features.canvas !== false
+  const mcOn = features.mc !== false
   return {
     id: 'lead',
     name: '主代理（lead）',
@@ -55,6 +66,8 @@ function leadProfile(features: FeatureStates): ProfileDecl {
     toolFilter: [
       'load_skill',
       ...(canvasOn ? ['spawn_modeling_subagent', 'list_subagents', 'canvas_export', 'create_canvas', 'split_canvas_group'] : []),
+      // MC 功能开启且 mcmod 角色存在时才注册；工具本身在 index.ts 里按同一条件注册
+      ...(mcOn ? ['handoff_to_mcmod'] : []),
       ...WORKSPACE_TOOL_NAMES,
     ],
     skills: [

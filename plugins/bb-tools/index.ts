@@ -333,7 +333,7 @@ const tools: ToolDef[] = [
     async execute(args, exec) {
       const doc = getDoc(exec)
       if (!doc.elements.length && !(doc.animations ?? []).length) {
-        return { forModel: '画布是空的，没有可导出的内容。', isError: true }
+        return { forModel: '当前画布为空，请先 spawn_modeling_subagent 建模并验收', isError: true }
       }
       const cwd = exec.session.cwd ?? process.cwd()
       const defName = `canvas-export/${String(doc.name ?? 'model').replace(/[^\w-]+/g, '_')}.json`

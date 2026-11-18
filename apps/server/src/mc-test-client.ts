@@ -117,8 +117,24 @@ interface TestClientState {
 
 let busy = false
 
+/**
+ * Java 解析：设置 → 环境（OPENMODS_JAVA_HOME）优先，其次 JAVA_HOME，最后旧默认路径。
+ * 三者都不可用时直接抛中文可操作提示（测试客户端必须有 JDK 17）。
+ */
+const JAVA_HINT = '未找到 Java：请到 设置 → 环境 选择 JDK（测试客户端需要 Java 17）'
+
+function javaHome(): string | undefined {
+  for (const raw of [process.env.OPENMODS_JAVA_HOME, process.env.JAVA_HOME, 'F:/sdk_java/jdk-17']) {
+    const home = String(raw ?? '').trim()
+    if (!home) continue
+    if (existsSync(join(home, 'bin', process.platform === 'win32' ? 'java.exe' : 'java'))) return home
+  }
+  return undefined
+}
+
 function javaExe(tool = 'java'): string {
-  const home = process.env.JAVA_HOME ?? 'F:/sdk_java/jdk-17'
+  const home = javaHome()
+  if (!home) throw new Error(JAVA_HINT)
   const p = join(home, 'bin', process.platform === 'win32' ? `${tool}.exe` : tool)
   return existsSync(p) ? p : tool
 }

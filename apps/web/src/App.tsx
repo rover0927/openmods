@@ -13,6 +13,7 @@ import { AboutDialog } from './components/AboutDialog.js'
 import { MainPanel } from './components/MainPanel.js'
 import { DOCK_TABS, RightDock, useDockDrag, type DockTabId } from './components/RightDock.js'
 import { SettingsWindow } from './components/SettingsWindow.js'
+import { EnvSetupDialog } from './components/EnvSetupDialog.js'
 import { AskDialog, type InteractionReplyBody } from './components/AskDialog.js'
 import { McIcon } from './components/McIcon.js'
 import { playLevelUpSound, playToastSound, setUiSoundEnabled } from './ui-sound.js'
@@ -128,6 +129,8 @@ function replayEvents(events: any[]): TurnEntry[] {
 export default function App() {
   // 布局
   const [settingsOpen, setSettingsOpen] = useState(false)
+  /** 首次运行环境向导（environment.setupDone 为 false 时自动弹出） */
+  const [envOpen, setEnvOpen] = useState(false)
   /** 文档素材库抽屉 */
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [logsOpen, setLogsOpen] = useState(false)
@@ -474,6 +477,13 @@ export default function App() {
     }).catch(() => { /* 服务未起时用默认值 */ })
   }, [applyPrefs])
 
+  // 首次运行环境向导：environment.setupDone 未处理过就弹出；服务不可用时静默忽略
+  useEffect(() => {
+    api.envStatus().then(s => {
+      if (!s.configured) setEnvOpen(true)
+    }).catch(() => { /* 服务未起：不打扰用户 */ })
+  }, [])
+
   // 参数语义：子代理列表按「根会话（画布 owner）」聚合，不是当前会话
   const refreshSubagents = useCallback((rootSessionId: string) => {
     if (!rootSessionId) return
@@ -678,6 +688,13 @@ export default function App() {
       case 'session/permissions':
         if (f.policy === 'ask' || f.policy === 'auto') setPermission(f.policy)
         if (Array.isArray(f.allowedTools)) setAllowedTools(f.allowedTools)
+        break
+      // 角色移交（lead → mcmod）：服务端已持久化角色，界面下拉立即跟随
+      case 'session/profile':
+        if (typeof f.profile === 'string') {
+          setAgentProfile(f.profile)
+          localStorage.setItem('openmods.profile', f.profile)
+        }
         break
       // 终端：与右侧「终端」标签同源（open 建条目、data 追加输出、exit 结算）
       case 'terminal/open': {
@@ -1799,6 +1816,11 @@ export default function App() {
           </span>
         </div>
       )}
+      <EnvSetupDialog
+        open={envOpen}
+        onClose={() => setEnvOpen(false)}
+        onToast={showToast}
+      />
       <SettingsWindow
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
