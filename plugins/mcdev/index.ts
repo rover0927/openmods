@@ -33,23 +33,17 @@ const TEMPLATE = fileURLToPath(new URL('./template/forge-1.20.1/', import.meta.u
  */
 const WARM_GRADLE_HOME = existsSync(join(MC_ROOT, '.gradle-home')) ? join(MC_ROOT, '.gradle-home') : null
 
-/** 目录里是否已经有能用的 Gradle 缓存（空目录不算） */
-function hasGradleCache(home: string): boolean {
-  return existsSync(join(home, 'caches', 'modules-2')) || existsSync(join(home, 'caches', 'forge_gradle'))
-}
-
 /**
- * Gradle 用户目录：设置项 > 共享预热缓存（MC_ROOT/.gradle-home）> 用户 ~/.gradle（已有缓存）> 会话自建。
- * 以前新会话一律自建空 .gradle-home，runClient 得把整套 MC 运行时库（lwjgl/netty/mojang…）
- * 重新下载一遍，镜像一抖就卡在配置阶段；复用已有的 ~/.gradle 可以直接命中这些模块。
+ * Gradle 用户目录：设置项 > 共享预热缓存（MC_ROOT/.gradle-home）> 用户 ~/.gradle。
+ * 以前新会话会自建空 .gradle-home，每个会话都要把整套 MC 运行时库（lwjgl/netty/mojang…）
+ * 重新下载一遍；现在统一跟随 Gradle 默认行为，全机共用 ~/.gradle：
+ * 首次构建下载一次，之后所有会话/工程都命中缓存，不再重复下载。
  */
-function resolveGradleHome(sessionRoot: string): string {
+function resolveGradleHome(): string {
   const explicit = process.env.OPENMODS_GRADLE_HOME?.trim() || process.env.GRADLE_USER_HOME?.trim()
   if (explicit) return explicit
   if (WARM_GRADLE_HOME) return WARM_GRADLE_HOME
-  const userHome = join(homedir(), '.gradle')
-  if (hasGradleCache(userHome)) return userHome
-  return join(sessionRoot, '.gradle-home')
+  return join(homedir(), '.gradle')
 }
 
 /** 可复制的现成参考工程（MC_ROOT 下含 build.gradle 的目录），列进 mc_scaffold 说明供 from 使用 */
@@ -683,7 +677,7 @@ async function runGradle(opts: {
   args?: string[]
   background?: boolean
   timeoutSec?: number
-  /** 会话工作目录：GRADLE_USER_HOME 缺省时用它下面的 .gradle-home（预热缓存就放那儿） */
+  /** 会话工作目录（保留字段；GRADLE_USER_HOME 现在统一用 ~/.gradle，不再按会话隔离） */
   root?: string
   /** mod-output 目录（prefs.modOutput；空则用 <repo>/data/mod-output） */
   modOutput?: string
@@ -697,7 +691,7 @@ async function runGradle(opts: {
   if ('error' in java) return fail(java.error)
   const gradlew = process.platform === 'win32' ? 'gradlew.bat' : './gradlew'
   const argv = [gradlew, task, '--console=plain', ...(opts.args ?? [])]
-  const gradleHome = resolveGradleHome(opts.root ?? MC_ROOT)
+  const gradleHome = resolveGradleHome()
   const env = {
     ...process.env,
     JAVA_HOME: java.home,
@@ -1407,7 +1401,7 @@ const plugin: Plugin = {
         return reply.code(400).send({ error: `不是有效的 MC 工程：${raw}` })
       }
       try {
-        const r = await startRunClient(dir, root)
+        const r = await startRunClient(dir)
         return { ok: true, ...r }
       } catch (e: any) {
         return reply.code(500).send({ error: e.message })
@@ -1587,14 +1581,14 @@ function recordFailedRunClient(projectDir: string, startedAt: number, exitCode: 
 }
 
 /** UI「测试 Mod」按钮：与 mc_gradle background 共用 launchClient（镜像 seed / GRADLE_USER_HOME / 状态登记） */
-async function startRunClient(projectDir: string, root: string): Promise<{ pid: number; logPath: string }> {
+async function startRunClient(projectDir: string): Promise<{ pid: number; logPath: string }> {
   // 与 mc_gradle 同一套 Java 解析与前置校验
   const java = resolveJava17()
   if ('error' in java) throw new Error(java.error)
   const env = {
     ...process.env,
     JAVA_HOME: java.home,
-    GRADLE_USER_HOME: resolveGradleHome(root),
+    GRADLE_USER_HOME: resolveGradleHome(),
   }
   await seedMavenCache(env.GRADLE_USER_HOME)
   await seedWrapperDist(env.GRADLE_USER_HOME, projectDir)
