@@ -69,7 +69,7 @@ export const api = {
       body: JSON.stringify({ apiKey }),
     }),
   discoverModels: (baseURL: string, opts?: { route?: string; apiKey?: string }) =>
-    jfetch<{ models: { id: string; name?: string; contextWindow?: number; maxOutputTokens?: number; inputModalities?: string[] }[] }>('/api/settings/discover-models', {
+    jfetch<{ models: { id: string; name?: string; contextWindow?: number; maxOutputTokens?: number; inputModalities?: string[]; reasoningEfforts?: string[]; reasoningDefault?: string }[] }>('/api/settings/discover-models', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ baseURL, route: opts?.route, apiKey: opts?.apiKey }),
@@ -379,7 +379,7 @@ export const api = {
       body: JSON.stringify({ model }),
     }),
   /** 异步启动一轮对话：事件走 streamUrl 的 EventSource */
-  chat: (id: string, body: { text: string; modelId?: string; mode?: 'build' | 'refine'; attachments?: any[]; profile?: string }) =>
+  chat: (id: string, body: { text: string; modelId?: string; mode?: 'build' | 'refine'; attachments?: any[]; profile?: string; reasoningEffort?: string }) =>
     jfetch<{ ok: boolean; sessionId: string }>(`/api/sessions/${id}/chat`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

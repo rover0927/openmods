@@ -11,6 +11,10 @@ export interface ModelInfoDto {
   vision?: boolean
   inputModalities?: string[]
   maxOutputTokens?: number
+  /** 支持的思考强度档位（检测时获取；空 = 不支持） */
+  reasoningEfforts?: string[]
+  /** 端点声明的默认档位 */
+  reasoningDefault?: string
 }
 
 export interface StepItem {
@@ -356,6 +360,10 @@ export interface ProviderModelDto {
   /** 输入模态（dsh `inputModalities`）：能力事实源，vision 由其派生 */
   inputModalities?: string[]
   maxOutputTokens?: number
+  /** 支持的思考强度档位（检测时获取；空 = 不支持） */
+  reasoningEfforts?: string[]
+  /** 端点声明的默认档位 */
+  reasoningDefault?: string
 }
 
 export interface RedactedProviderDto {

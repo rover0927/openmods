@@ -21,6 +21,10 @@ export interface ProviderModel {
   inputModalities?: string[]
   /** 单请求输出上限（dsh `maxTokens`） */
   maxOutputTokens?: number
+  /** 支持的思考强度档位（low / medium / high…）；检测时写入，空 = 不支持 */
+  reasoningEfforts?: string[]
+  /** 端点声明的默认档位 */
+  reasoningDefault?: string
 }
 
 export interface ProviderProfile {
@@ -220,37 +224,36 @@ export class SettingsStore {
     this.doc.prefs = normalizePrefs(this.doc.prefs)
     // 老版本没有 environment：补齐默认值（向导据此判断是否首次运行）
     this.doc.environment = normalizeEnvironment(this.doc.environment)
+    this.stripLegacyDemoProviders()
     const creds = this.loadJson<Record<string, string>>(join(dataDir, 'credentials.json'), {})
     this.credentials = creds && typeof creds === 'object' ? creds : {}
   }
 
   private seed(): SettingsDoc {
-    const dsBase = this.env.LLM_BASE_URL ?? 'https://api.deepseek.com'
     const envLimit = Math.max(1, Number(this.env.MAX_ACTIVE_SUBAGENTS ?? DEFAULT_PREFS.maxActiveSubagents) || DEFAULT_PREFS.maxActiveSubagents)
     return {
       revision: 1,
       bridge: { enabled: false },
       prefs: { ...DEFAULT_PREFS, maxActiveSubagents: envLimit },
       environment: { ...DEFAULT_ENVIRONMENT },
-      providers: {
-        deepseek: {
-          displayName: 'DeepSeek 官方',
-          baseURL: dsBase,
-          models: [
-            { id: 'deepseek-reasoner', name: 'smod4.2', badge: '单价 ×2', badgeType: 'price', desc: '建模顶尖特效拉满', contextWindow: 131072 },
-            { id: 'deepseek-chat', name: 'DeepSeek 4.1', badge: '低峰 ×1.3', badgeType: 'peak', desc: '速度快 / 快速出方案', contextWindow: 131072 },
-          ],
-        },
-        gpt6: {
-          displayName: 'GPT6 系列演示',
-          baseURL: 'https://api.openai.com/v1',
-          models: [
-            { id: 'gpt6', name: 'GPT6', badge: '单价 ×6', badgeType: 'price', desc: '金冠会员及以上可用', memberOnly: true, contextWindow: 262144 },
-            { id: 'gpt6-1', name: 'GPT6.1', badge: '单价 ×3.75', badgeType: 'price', desc: '铁冠会员及以上可用', memberOnly: true, contextWindow: 262144 },
-          ],
-        },
-      },
+      // 首次运行不预置任何供应商/模型：由用户在 设置 → 模型 里自行添加
+      providers: {},
     }
+  }
+
+  /** 旧版本首次运行会写入演示供应商；升级时只清掉「完全未改动」的演示数据 */
+  private stripLegacyDemoProviders() {
+    const providers = (this.doc.providers ?? {}) as Record<string, any>
+    const ds = providers.deepseek
+    const gpt6 = providers.gpt6
+    const legacyDemo = Object.keys(providers).length === 2
+      && ds?.displayName === 'DeepSeek 官方'
+      && Array.isArray(ds?.models) && ds.models.length === 2
+      && ds.models[0]?.id === 'deepseek-reasoner' && ds.models[0]?.name === 'smod4.2'
+      && gpt6?.displayName === 'GPT6 系列演示'
+    if (!legacyDemo) return
+    this.doc.providers = {}
+    this.saveJson(join(this.dataDir, 'settings.json'), this.doc)
   }
 
   private loadJson<T>(file: string, fallback: T): T {
@@ -403,6 +406,9 @@ export class SettingsStore {
           vision,
           inputModalities,
           maxOutputTokens: m.maxOutputTokens ?? fallback?.maxOutputTokens,
+          // 只输出模型自己声明的档位；不支持 / 未检测到就留空，由输入框隐藏
+          reasoningEfforts: m.reasoningEfforts,
+          reasoningDefault: m.reasoningDefault,
         }
       }
     }
@@ -411,9 +417,9 @@ export class SettingsStore {
   }
 
   defaultModelId(): string {
-    // 第一个未禁用的模型
+    // 第一个未禁用的模型；目录为空时返回空串，由前端显示「未配置供应商」
     const dir = this.modelDirectory()
     const first = Object.entries(dir).find(([, m]) => !m.disabled)
-    return first?.[0] ?? Object.keys(dir)[0] ?? 'deepseek/deepseek-reasoner'
+    return first?.[0] ?? Object.keys(dir)[0] ?? ''
   }
 }

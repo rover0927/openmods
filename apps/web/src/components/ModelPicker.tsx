@@ -13,7 +13,9 @@ export function ModelPicker(props: {
           <span>选择模型</span>
           <span className="dim">下一轮生效</span>
         </div>
-        {props.models.length === 0 && <div className="dim" style={{ padding: 10 }}>还没有可用模型（设置 → 模型 中添加供应商）。</div>}
+        {props.models.length === 0 && (
+          <div className="dim" style={{ padding: 10 }}>未配置供应商（设置 → 模型 中添加）</div>
+        )}
         {props.models.map(m => (
           <button
             key={m.id}

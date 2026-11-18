@@ -56,6 +56,9 @@ export function MainPanel(props: {
   onAddFiles: (files: FileList | null) => void
   onRemoveAtt: (idx: number) => void
   onPickModel: (id: string) => void
+  /** 思考强度：仅当前模型支持时由输入框展示 */
+  reasoningEffort: string
+  onPickReasoningEffort: (v: string) => void
   onSend: (text: string, mode: 'build' | 'refine', attachments?: any[]) => void
   onStop: () => void
   contextHint: string | null
@@ -215,6 +218,8 @@ export function MainPanel(props: {
         onAddFiles={props.onAddFiles}
         onRemoveAtt={props.onRemoveAtt}
         onPickModel={props.onPickModel}
+        reasoningEffort={props.reasoningEffort}
+        onPickReasoningEffort={props.onPickReasoningEffort}
         onSend={props.onSend}
         onStop={props.onStop}
         onOpenSubagent={props.onOpenSubagent}

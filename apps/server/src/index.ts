@@ -443,6 +443,8 @@ interface CoopState {
   permission: 'ask' | 'auto'
   /** 用户点过「本会话内总是允许」的工具 */
   allowedTools: Set<string>
+  /** 本会话当前选择的思考强度（low/medium/high…）；空 = 用模型默认 */
+  reasoningEffort?: string
 }
 
 interface SessionEntry {
@@ -697,6 +699,8 @@ function createSession(id = randomUUID().slice(0, 8), opts: CreateSessionOptions
       // 请求投影期才把引用还原成字节（日志不含 base64，与 dsh readImageRequest 同位置）
       resolveImage: ref => attachments.dataUrl(ref),
       defaultModelId: settingsStore.defaultModelId(),
+      // 每步现读：用户在输入框切换思考强度后，下一步立即使用
+      getReasoningEffort: () => coop.reasoningEffort,
       canvas,
       cwd,
       // 会话级协作状态：运行时只读，写入走上面的 apply*（durable + 广播）
@@ -1611,11 +1615,59 @@ app.put('/api/settings/credentials/:route', async (req, reply) => {
 
 // 模型发现：向 OpenAI 兼容端点探测 /models（复刻 dsh llm.discoverModels）
 /**
- * 解析模型列表里的一条能力声明 —— 搬运 dsh `llm-deepseek/src/listing.ts` 与
+ * 能力解析：端点声明优先，模型名兜底。
  * `llm-pi-ai` 的 discovery 解析：接受 data 数组或 models map，字段别名兼容各家网关。
  */
-function normalizeListedModel(entry: any): { id: string; name?: string; contextWindow?: number; maxOutputTokens?: number; inputModalities?: string[] } | undefined {
-  if (typeof entry === 'string') return { id: entry }
+/**
+ * 端点没声明能力时的模型名兜底：上下文窗口 + 是否支持图片输入。
+ * 只做保守的常见族匹配；命中不了就留空，交给用户在模型卡片里手填。
+ */
+function inferModelCapabilities(id: string): { contextWindow?: number; vision?: boolean } {
+  const key = id.toLowerCase()
+  const rules: { test: RegExp; contextWindow?: number; vision?: boolean }[] = [
+    { test: /gpt-4\.1/, contextWindow: 1047576, vision: true },
+    { test: /gpt-4o/, contextWindow: 128000, vision: true },
+    { test: /gpt-4-turbo|gpt-4-vision/, contextWindow: 128000, vision: true },
+    { test: /gpt-4(?!o|-turbo|-vision)/, contextWindow: 8192, vision: false },
+    { test: /gpt-3\.5/, contextWindow: 16385, vision: false },
+    { test: /o[134](-|$)/, contextWindow: 200000, vision: true },
+    { test: /claude/, contextWindow: 200000, vision: true },
+    { test: /gemini-1\.5|gemini-2/, contextWindow: 1048576, vision: true },
+    { test: /gemini/, contextWindow: 32768, vision: true },
+    { test: /deepseek/, contextWindow: 65536, vision: false },
+    { test: /qwen.*(vl|vision)/, contextWindow: 131072, vision: true },
+    { test: /qwen/, contextWindow: 131072, vision: false },
+    { test: /llama.*vision|llava/, contextWindow: 131072, vision: true },
+    { test: /llama/, contextWindow: 128000, vision: false },
+    { test: /pixtral/, contextWindow: 128000, vision: true },
+    { test: /mistral/, contextWindow: 128000, vision: false },
+    { test: /glm-4.*v/, contextWindow: 8192, vision: true },
+    { test: /glm/, contextWindow: 128000, vision: false },
+    { test: /kimi|moonshot/, contextWindow: 131072, vision: false },
+    { test: /grok/, contextWindow: 131072, vision: true },
+    { test: /doubao.*vision/, contextWindow: 32768, vision: true },
+    { test: /doubao/, contextWindow: 32768, vision: false },
+  ]
+  return rules.find(r => r.test.test(key)) ?? {}
+}
+
+/**
+ * 能力解析：端点声明优先，模型名兜底。
+ * `llm-pi-ai` 的 discovery 解析：接受 data 数组或 models map，字段别名兼容各家网关。
+ */
+/** 端点没声明推理档位时的模型名兜底；只覆盖明确支持 reasoning_effort 的族 */
+function inferReasoningEfforts(id: string): string[] | undefined {
+  const key = id.toLowerCase()
+  if (/gpt-5/.test(key)) return ['minimal', 'low', 'medium', 'high']
+  if (/(^|\/)o[134](-|$)/.test(key) || /o[134]-(mini|pro)/.test(key)) return ['low', 'medium', 'high']
+  if (/grok-(3-mini|4)/.test(key)) return ['low', 'high']
+  if (/gemini-2\.5/.test(key)) return ['low', 'high']
+  return undefined
+}
+
+/** 解析 /models 里的一条能力声明（上下文、模态、思考档位） */
+function normalizeListedModel(entry: any): { id: string; name?: string; contextWindow?: number; maxOutputTokens?: number; inputModalities?: string[]; reasoningEfforts?: string[]; reasoningDefault?: string } | undefined {
+  if (typeof entry === 'string') entry = { id: entry }
   if (!entry || typeof entry !== 'object') return undefined
   const id = entry.id ?? entry.name ?? entry.model
   if (typeof id !== 'string' || !id.trim()) return undefined
@@ -1655,11 +1707,56 @@ function normalizeListedModel(entry: any): { id: string; name?: string; contextW
       ?? (Array.isArray(entry.capabilities) ? entry.capabilities.includes('vision') : undefined)
     if (typeof visionFlag === 'boolean') inputModalities = visionFlag ? ['text', 'image'] : ['text']
   }
+  // 思考强度：优先读端点自己的 effort 声明（DeepSeek 用 {supported_levels, default_level}），
+  // 其余网关可能是 reasoning_efforts / capabilities.reasoning_efforts / reasoning.efforts。
+  // 档位不写死白名单：每个模型可以有自己的档位（low/high/max…）。
+  const normalizeLevel = (v: any): string | undefined => {
+    if (typeof v === 'string') {
+      const s = v.trim().toLowerCase()
+      return /^[a-z][a-z0-9_-]{0,15}$/.test(s) ? s : undefined
+    }
+    if (v && typeof v === 'object') return normalizeLevel(v.level ?? v.name ?? v.id)
+    return undefined
+  }
+  const rawEfforts = (typeof entry.effort === 'object' ? entry.effort : undefined)?.supported_levels
+    ?? (typeof entry.effort === 'object' ? entry.effort : undefined)?.levels
+    ?? (typeof entry.effort === 'object' ? entry.effort : undefined)?.supported
+    ?? entry.reasoning_efforts ?? entry.reasoningEfforts
+    ?? entry.supported_reasoning_efforts ?? entry.capabilities?.reasoning_efforts
+    ?? entry.reasoning?.efforts
+  let reasoningEfforts: string[] | undefined
+  if (Array.isArray(rawEfforts)) {
+    reasoningEfforts = [...new Set(rawEfforts.map(normalizeLevel).filter((x: string | undefined): x is string => !!x))]
+  } else {
+    const one = normalizeLevel(rawEfforts)
+    if (one) reasoningEfforts = [one]
+  }
+  if (!reasoningEfforts?.length) {
+    const supported = Array.isArray(entry.supported_parameters)
+      ? entry.supported_parameters.map((p: any) => String(p).toLowerCase())
+      : []
+    const flag = entry.supports_reasoning ?? entry.capabilities?.reasoning
+      ?? (typeof entry.reasoning === 'boolean' ? entry.reasoning : undefined)
+      ?? (supported.includes('reasoning') ? true : undefined)
+    if (flag === true) reasoningEfforts = ['low', 'medium', 'high']
+  }
+  const reasoningDefault = normalizeLevel(
+    entry.effort?.default_level ?? entry.effort?.default ?? entry.reasoning?.default ?? entry.default_reasoning_effort,
+  )
+
+  const inferred = inferModelCapabilities(id)
   return {
     id,
     name: typeof entry.display_name === 'string' ? entry.display_name
       : typeof entry.name === 'string' && entry.name !== id ? entry.name : undefined,
-    contextWindow, maxOutputTokens, inputModalities,
+    // 端点声明优先，缺什么补什么；都缺就留空让用户手填
+    contextWindow: contextWindow ?? inferred.contextWindow,
+    maxOutputTokens,
+    inputModalities: inputModalities?.length
+      ? inputModalities
+      : inferred.vision === true ? ['text', 'image'] : inferred.vision === false ? ['text'] : undefined,
+    reasoningEfforts: reasoningEfforts?.length ? reasoningEfforts : inferReasoningEfforts(id),
+    reasoningDefault,
   }
 }
 
@@ -2423,7 +2520,7 @@ app.post('/api/sessions/:id/chat', async (req, reply) => {
   }
   if (s.busy) return reply.code(409).send({ error: '上一轮还在进行中' })
   const body = (req.body ?? {}) as {
-    text?: string; modelId?: string; mode?: 'build' | 'refine'; attachments?: any[]; profile?: string
+    text?: string; modelId?: string; mode?: 'build' | 'refine'; attachments?: any[]; profile?: string; reasoningEffort?: string
   }
   if (!body.text?.trim()) return reply.code(400).send({ error: 'text 不能为空' })
   // 代理角色：未知 id 直接回落当前角色（不 400——老客户端不会带这个字段）
@@ -2431,6 +2528,11 @@ app.post('/api/sessions/:id/chat', async (req, reply) => {
   if (wantedProfile && wantedProfile !== s.profile) {
     s.profile = wantedProfile
     persistMeta(s)
+  }
+  // 思考强度：只接受短英文档位；空串表示回到模型默认
+  if (typeof body.reasoningEffort === 'string') {
+    const effort = body.reasoningEffort.trim().toLowerCase()
+    s.coop.reasoningEffort = /^[a-z]{3,12}$/.test(effort) ? effort : undefined
   }
 
   // 图片准入（dsh PromptContentPart → AdmittedPromptContentPart）：

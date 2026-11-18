@@ -22,6 +22,7 @@ export function createHttpLlm(config: HttpLlmConfig): LlmAdapter {
           ? { tools: opts.tools, tool_choice: 'auto', stream_options: { include_usage: true } }
           : { stream_options: { include_usage: true } }),
         stream: true,
+        ...(opts.reasoningEffort ? { reasoning_effort: opts.reasoningEffort } : {}),
       })
       const headers = {
         'content-type': 'application/json',

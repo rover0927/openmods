@@ -16,6 +16,10 @@ interface DraftModel {
   desc?: string
   memberOnly?: boolean
   vision?: boolean
+  /** 支持的思考强度档位（检测时自动获取） */
+  reasoningEfforts?: string[]
+  /** 端点声明的默认档位 */
+  reasoningDefault?: string
 }
 
 interface DraftProvider {
@@ -202,9 +206,21 @@ export function SettingsPage(props: {
       const found = res.models
       setDraft(prev => ({
         ...prev,
-        [route]: { ...prev[route], models: found.map(m => ({ ...m, name: m.name ?? m.id })) },
+        [route]: {
+          ...prev[route],
+          models: found.map(m => ({
+            id: m.id,
+            name: m.name ?? m.id,
+            // 发现的上下文窗口直接写入卡片；模态映射成视觉开关
+            contextWindow: m.contextWindow,
+            vision: m.inputModalities ? m.inputModalities.includes('image') : undefined,
+            reasoningEfforts: m.reasoningEfforts,
+            reasoningDefault: m.reasoningDefault,
+          })),
+        },
       }))
-      props.onToast(`✓ 自动获取到 ${found.length} 个模型（保存后生效）`)
+      const thinkCount = found.filter(m => m.reasoningEfforts?.length).length
+      props.onToast(`✓ 自动获取到 ${found.length} 个模型（含上下文/视觉${thinkCount ? `，${thinkCount} 个支持思考强度` : ''}，保存后生效）`)
     } catch (e: any) {
       props.onToast(`自动获取失败：${e.message}`)
     } finally {
@@ -236,6 +252,8 @@ export function SettingsPage(props: {
                 ...m,
                 name: (m.name && m.name !== m.id) ? m.name : (eff?.displayName ?? m.name),
                 vision: m.vision ?? eff?.vision ?? false,
+                reasoningEfforts: m.reasoningEfforts ?? eff?.reasoningEfforts,
+                reasoningDefault: m.reasoningDefault ?? eff?.reasoningDefault,
                 contextWindow: m.contextWindow ?? eff?.contextWindow,
               }
             }),
@@ -791,7 +809,11 @@ export function SettingsPage(props: {
                 </span>
               </div>
               {d.models.map((m, idx) => (
-                <div key={idx} className="model-edit-row">
+                <div
+                  key={idx}
+                  className="model-edit-row"
+                  title={m.reasoningEfforts?.length ? `思考强度：${m.reasoningEfforts.join(' / ')}` : '思考强度：未检测到（可重新自动获取）'}
+                >
                   <input placeholder="模型 id" value={m.id} onChange={e => patchModel(route, idx, { id: e.target.value })} />
                   <input placeholder="显示名" value={m.name} onChange={e => patchModel(route, idx, { name: e.target.value })} />
                   <input

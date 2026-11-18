@@ -423,7 +423,7 @@ pre {
   width: 100%;
   height: 100%;
   transform-style: preserve-3d;
-  transform: rotateX(-20deg) rotateY(-30deg);
+  transform: rotateX(-24deg) rotateY(-33deg);
   transition: transform 0.2s steps(3);
 }
 /* 基础状态：动画暂停在 0°，即静止的等轴测角度 */
@@ -444,19 +444,20 @@ pre {
   image-rendering: pixelated;
   backface-visibility: hidden;
 }
-/* 品牌方块六面贴图随主题换材质；未覆盖时回落到草方块 */
-.mc-cube .face.top { background-image: var(--mc-brand-top, url(/mc/block/grass_block_top.png)); transform: rotateX(90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
-.mc-cube .face.bottom { background-image: var(--mc-brand-bottom, url(/mc/block/dirt.png)); transform: rotateX(-90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
-.mc-cube .face.front { background-image: var(--mc-brand-side, url(/mc/block/grass_block_side.png)); transform: translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
-.mc-cube .face.back { background-image: var(--mc-brand-side, url(/mc/block/grass_block_side.png)); transform: rotateY(180deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
-.mc-cube .face.right { background-image: var(--mc-brand-side, url(/mc/block/grass_block_side.png)); transform: rotateY(90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
-.mc-cube .face.left { background-image: var(--mc-brand-side, url(/mc/block/grass_block_side.png)); transform: rotateY(-90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+/* 品牌方块固定为草方块（与左上角等距草方块一致），不随主题换材质。
+   侧面用背景叠暗模拟光照：顶面最亮，正面次之，右侧/左侧/背面渐暗。 */
+.mc-cube .face.top { background-image: url(/mc/block/grass_block_top.png); transform: rotateX(90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.bottom { background-image: linear-gradient(rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.35)), url(/mc/block/dirt.png); transform: rotateX(-90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.front { background-image: linear-gradient(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.08)), url(/mc/block/grass_block_side.png); transform: translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.right { background-image: linear-gradient(rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.16)), url(/mc/block/grass_block_side.png); transform: rotateY(90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.back { background-image: linear-gradient(rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.22)), url(/mc/block/grass_block_side.png); transform: rotateY(180deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
+.mc-cube .face.left { background-image: linear-gradient(rgba(0, 0, 0, 0.20), rgba(0, 0, 0, 0.20)), url(/mc/block/grass_block_side.png); transform: rotateY(-90deg) translateZ(calc(var(--mc-size) / 2)) scale(1.004); }
 
 /* 悬停 / 键盘聚焦：旋转 + 草绿辉光（不放大，避免贴住/压住品牌名） */
 .sb-brand-main:hover .mc-cube,
 .sb-brand-main:focus-visible .mc-cube { animation-play-state: running; }
 .sb-brand-main:hover .mc-iso-tilt,
-.sb-brand-main:focus-visible .mc-iso-tilt { transform: rotateX(-20deg) rotateY(-30deg) scale(1); }
+.sb-brand-main:focus-visible .mc-iso-tilt { transform: rotateX(-24deg) rotateY(-33deg) scale(1); }
 .sb-brand-main:hover .mc-brand-cube .face,
 .sb-brand-main:focus-visible .mc-brand-cube .face {
   filter: drop-shadow(0 0 5px rgba(var(--mc-accent-rgb), 0.6));

@@ -562,7 +562,8 @@ input, textarea, select { font-family: inherit; }
 }
 .model-chip:hover { background: var(--interactive-hover); color: var(--label-primary); }
 /* 代理角色下拉：和模型 chip 同高同色，去掉 select 的原生外观 */
-select.agent-chip {
+select.agent-chip,
+select.think-chip {
   appearance: none; -webkit-appearance: none;
   padding-right: 18px; cursor: pointer;
   background-image: linear-gradient(45deg, transparent 50%, var(--label-caption) 50%),
@@ -571,7 +572,8 @@ select.agent-chip {
   background-size: 4px 4px, 4px 4px; background-repeat: no-repeat;
   border: 1px solid var(--border-l1);
 }
-select.agent-chip option { background: var(--bg-layer-2); color: var(--label-primary); }
+select.agent-chip option,
+select.think-chip option { background: var(--bg-layer-2); color: var(--label-primary); }
 /* 发送：34px 蓝色圆（dsh InputBar primary） */
 .send-btn {
   margin-left: auto; display: grid; place-items: center;

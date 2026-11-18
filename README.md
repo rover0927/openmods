@@ -25,7 +25,7 @@
 
 **openmods 是跑在本机的 AI 工作台**：三栏主界面 + **并发建模子代理（各自独立画布）** + **无头 Blockbench 画布** + **MC 1.20.1 模组开发闭环**（建模 → 导出 → 构建 → 一键进游戏测试 → jar 导出），外加可插拔工具/插件、多文件素材库、省 token 压缩与用量看板。
 
-界面是完整的 **Minecraft 像素皮肤**：原版方块贴图铺底、物品图标做功能入口；提供草方块 / 樱花 / 深海 / 下界 / 末地 5 套主题，结构墙与左上角品牌方块随主题换材质。
+界面是完整的 **Minecraft 像素皮肤**：原版方块贴图铺底、物品图标做功能入口；提供草方块 / 樱花 / 深海 / 下界 / 末地 5 套主题，结构墙随主题换材质，左上角品牌方块固定为草方块。
 
 > [!NOTE]
 > **路线图**：openmods 现在以独立本地工作台的形式提供。项目足够成熟之后，会考虑把它做成 **deepseek-harness（dsh）的插件**，复用 dsh 的代理运行时与插件机制，不再单独维护一套外壳。
@@ -34,7 +34,7 @@
 
 | 功能 | 说明 |
 |---|---|
-| <img src="apps/web/public/mc/block/grass_block_top.png" width="16" alt=""> **MC 像素界面** | 5 套方块主题（草方块 / 樱花 / 深海 / 下界 / 末地）；结构墙、品牌方块随主题换材质；物品图标、像素斜面、主题色主操作 |
+| <img src="apps/web/public/mc/block/grass_block_top.png" width="16" alt=""> **MC 像素界面** | 5 套方块主题（草方块 / 樱花 / 深海 / 下界 / 末地）；结构墙随主题换材质，品牌方块固定草方块；物品图标、像素斜面、主题色主操作 |
 | <img src="apps/web/public/mc/item/diamond_pickaxe.png" width="16" alt=""> **多画布建模** | 主会话与每个建模子代理各有一块独立画布；右侧多页签查看/切换，活跃画布 durable，支持新建空白画布 |
 | <img src="apps/web/public/mc/item/book.png" width="16" alt=""> **素材库** | 模型 / Jar 构建 / 图片 / 文件四类分开；上传、拖拽、工作目录导入、从画布截取；Jar 页多选后统一启动独立 Forge 测试客户端 |
 | <img src="apps/web/public/mc/item/totem_of_undying.png" width="16" alt=""> **主代理全能力** | 权限审批、计划模式、询问用户、终端、文件读写、并发子代理——对标 dsh 主 agent |
@@ -440,7 +440,7 @@ interface PluginContext {
   - 左栏滚动条 8px 深色半透明。
 - **主操作**：顶部「新建项目」、会话分区头部 `＋`「新建会话」、发送键等主操作使用主题材质 + 主题色遮罩（草方块主题为草皮/草绿）。
 - **图标**：`McIcon.tsx` 用 `public/mc/item/*.png` 的物品图标表达功能——`newGroup: brick`、`library: book`、`settings: clock`、`canvas: diamond_pickaxe`、`images: map`、`files: paper`、`web: ender_pearl`、`terminal: redstone`、`plan: enchanted_book`、`subagents: totem_of_undying`、`stats: ender_eye`。
-- **品牌方块**：左上角 `GrassCube.tsx` 六面立方体，六面贴图由 `--mc-brand-*` 控制，随主题换成草方块 / 樱花木 / 海晶石 / 绯红木 / 石英；悬停旋转、点击播放 `mc-brand-shove` 位移动画；收起侧栏后缩到 20px。
+- **品牌方块**：左上角 `GrassCube.tsx` 六面立方体，固定使用草方块贴图（顶面草方块、侧面草边、底面泥土，侧面用背景叠暗模拟光照），不随主题换材质；悬停旋转、点击播放 `mc-brand-shove` 位移动画；收起侧栏后缩到 20px。
 - **布局轴**（沿用 dsh）：`--rail-w: 240px`、`--content-w: 748px`、`--content-font: 14px`；收起侧栏为 56px 图标栏。
 - **结构**：56px 页头（标题 + 会话 id/desc 副标题）、748px 中轴、用户气泡右对齐 70% 上限、助手正文透明无卡片、输入卡像素描边（无圆角，随内容自动伸缩）、composer dock 状态行、toast 底部居中。
 
@@ -592,7 +592,7 @@ GET    /api/settings                     {settings:{providers(redacted), bridge,
 PUT    /api/settings                     body {providers?, bridge?, prefs?, environment?, expectedRevision?} → {ok, revision, prefs}
 GET    /api/settings/file                下载原始 settings.json
 PUT    /api/settings/credentials/:route  写 API key
-POST   /api/settings/discover-models     探测 {baseURL}/models
+POST   /api/settings/discover-models     探测 {baseURL}/models（返回上下文窗口、视觉能力与思考档位，缺失时按模型名推断）
 GET    /api/env/status                   环境检测（Java 17 / Gradle 缓存 / Git）
 POST   /api/env/vendor/download          在线下载离线构建包 {source: mirror|official|release}（后台下载，轮询状态）
 GET    /api/env/vendor/download          下载状态 {status, received, total, speed}

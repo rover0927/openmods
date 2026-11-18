@@ -57,6 +57,16 @@ function baseName(p: string): string {
   return i >= 0 ? s.slice(i + 1) : s
 }
 
+/** 思考强度档位的显示名（端点可能返回任意档位，未命中时显示原值） */
+const THINK_LABEL: Record<string, string> = {
+  minimal: '最低',
+  low: '低',
+  medium: '中',
+  high: '高',
+  xhigh: '极高',
+  max: '最高',
+}
+
 export function SessionView(props: {
   sessionId: string
   turns: TurnEntry[]
@@ -84,6 +94,9 @@ export function SessionView(props: {
   onAddFiles: (files: FileList | null) => void
   onRemoveAtt: (idx: number) => void
   onPickModel: (id: string) => void
+  /** 思考强度（当前模型支持时显示下拉） */
+  reasoningEffort: string
+  onPickReasoningEffort: (v: string) => void
   onSend: (text: string, mode: 'build' | 'refine', attachments?: any[]) => void
   onStop: () => void
   onOpenSubagent: (id: string) => void
@@ -114,7 +127,7 @@ export function SessionView(props: {
   const {
     turns, busy, waiting, streamChars, elapsedSec, thinkTail, models, currentModelId, refineMode, pendingAtts,
     onAddFiles, onRemoveAtt, stats, ctxTokens, modelWindow, ctxBreakdown, profiles, agentProfile, onPickProfile,
-    iframeReady, onPickModel, onSend, onStop,
+    iframeReady, onPickModel, reasoningEffort, onPickReasoningEffort, onSend, onStop,
     onOpenSubagent, onStopSubagent, isSubagent, subagentName, subagents, inlineSubagents, enterToSend,
     planMode, permission, pendingAsks, onTogglePlan, onTogglePermission, onToggleRefine,
     sessionCwd, onPickCwd,
@@ -407,11 +420,26 @@ export function SessionView(props: {
             <button
               className="model-chip"
               onClick={() => setPickerOpen(true)}
-              title={currentModel ? `${currentModel.displayName}（${currentModel.providerRoute ?? 'builtin'}）` : '选择模型'}
+              title={currentModel ? `${currentModel.displayName}（${currentModel.providerRoute ?? 'builtin'}）` : '未配置供应商'}
             >
               <McIcon name="model" size={14} />
-              {currentModel?.displayName ?? '选择模型'} <span className="dim">▾</span>
+              {currentModel?.displayName ?? '未配置供应商'} <span className="dim">▾</span>
             </button>
+            {currentModel?.reasoningEfforts?.length ? (
+              <select
+                className="model-chip think-chip"
+                value={reasoningEffort}
+                onChange={e => onPickReasoningEffort(e.target.value)}
+                title="思考强度：仅对支持 reasoning 的模型生效，下一轮生效"
+              >
+                <option value="">
+                  默认思考{currentModel.reasoningDefault ? `（${THINK_LABEL[currentModel.reasoningDefault] ?? currentModel.reasoningDefault}）` : ''}
+                </option>
+                {currentModel.reasoningEfforts.map(e => (
+                  <option key={e} value={e}>{THINK_LABEL[e] ?? e}</option>
+                ))}
+              </select>
+            ) : null}
             {waitingLocked
               ? <button className="btn stop" onClick={onStop} title="取消等待：中止这些子代理并解锁输入"><McIcon name="stop" size={14} /> 取消等待</button>
               : busy

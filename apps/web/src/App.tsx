@@ -169,6 +169,8 @@ export default function App() {
   const [canvasDirty, setCanvasDirty] = useState<Record<string, boolean>>({})
   /** 会话树里的全部画布（页签名称/来源/活跃徽标 + 空白页选择列表） */
   const [canvases, setCanvases] = useState<CanvasRefDto[]>([])
+  /** canvasId → ownerSessionId：SSE 画布事件带 originId，切页时不必等列表刷新就能确定统计口径 */
+  const canvasOwnerRef = useRef<Map<string, string>>(new Map())
   const canvasesRef = useRef<CanvasRefDto[]>([])
   /** 当前会话的活跃画布：下载与「重新加载」只对它走直连接口 */
   const [activeSessionCanvasId, setActiveSessionCanvasId] = useState('')
@@ -212,6 +214,8 @@ export default function App() {
   // 模型
   const [models, setModels] = useState<ModelInfoDto[]>([])
   const [currentModelId, setCurrentModelId] = useState<string | null>(null)
+  /** 思考强度：空 = 模型默认；仅当前模型声明了档位时由输入框展示 */
+  const [reasoningEffort, setReasoningEffort] = useState<string>(() => localStorage.getItem('openmods.reasoningEffort') ?? '')
   // 画布
   const [canvas, setCanvas] = useState<CanvasState>(emptyCanvas)
   const [playingAnim, setPlayingAnim] = useState<string | null>(null)
@@ -396,6 +400,7 @@ export default function App() {
     const id = sid ?? sessionId
     if (!id) return
     api.canvases(id).then(r => {
+      for (const c of r.canvases) canvasOwnerRef.current.set(c.canvasId, c.ownerSessionId)
       canvasesRef.current = r.canvases
       setCanvases(r.canvases)
       setActiveSessionCanvasId(r.activeCanvasId)
@@ -563,6 +568,7 @@ export default function App() {
         // sessionId 现在是 canvasId（不再是会话 id）：按画布分流，只有当前页才送进 iframe
         const canvasId = String(f.sessionId ?? '')
         if (!canvasId) break
+        if (f.originId) canvasOwnerRef.current.set(canvasId, String(f.originId))
         const next: CanvasState = {
           hasModel: (f.elements ?? 0) > 0,
           modelName: f.bbmodel?.name ?? '',
@@ -592,6 +598,7 @@ export default function App() {
         // 同样按 canvasId 分流：只更新对应画布的缓存，当前页才应用视角
         const canvasId = String(f.sessionId ?? '')
         if (!canvasId) break
+        if (f.originId) canvasOwnerRef.current.set(canvasId, String(f.originId))
         const st = canvasStatesRef.current.get(canvasId)
         if (st) canvasStatesRef.current.set(canvasId, { ...st, view: f.view })
         if (activeCanvasPageRef.current === canvasId) {
@@ -612,6 +619,7 @@ export default function App() {
           merged = [...byId.values()]
         }
         canvasesRef.current = merged
+        for (const c of merged) canvasOwnerRef.current.set(c.canvasId, c.ownerSessionId)
         setCanvases(merged)
         if (!fromSelf) refreshCanvases()
         // 只认当前会话自己那块活跃画布（活跃徽标按各自 owner 计算，不受视角影响）
@@ -1312,6 +1320,7 @@ export default function App() {
     try {
       await api.chat(sid, {
         text, modelId: currentModelId ?? undefined, mode,
+        reasoningEffort: reasoningEffort || undefined,
         attachments: allAtts.length ? allAtts : undefined,
         profile: agentProfile,
       })
@@ -1319,7 +1328,7 @@ export default function App() {
       updateLastTurn(t => ({ ...t, error: e.message }))
       setBusy(false)
     }
-  }, [sessionId, currentModelId, updateLastTurn, showToast, pendingAtts, waiting.length, agentProfile, planMode, resetCanvasPages, loadCanvas])
+  }, [sessionId, currentModelId, reasoningEffort, updateLastTurn, showToast, pendingAtts, waiting.length, agentProfile, planMode, resetCanvasPages, loadCanvas])
 
   const stop = useCallback(async () => {
     if (!sessionId) return
@@ -1543,6 +1552,14 @@ export default function App() {
   }, [sessionId, showToast])
 
   const currentModel = models.find(m => m.id === currentModelId)
+  // 换到不支持该档位的模型时回到默认，避免把无效 effort 发给端点
+  useEffect(() => {
+    if (!reasoningEffort || !currentModel) return
+    if (!(currentModel.reasoningEfforts ?? []).includes(reasoningEffort)) {
+      setReasoningEffort('')
+      localStorage.setItem('openmods.reasoningEffort', '')
+    }
+  }, [currentModel, reasoningEffort])
   const activeIsChild = !!sessionInfo?.parentId
   /** 当前选中的画布页（页签名/来源/活跃/动画条/下载可用性都从它推导） */
   const activeCanvasPageData = canvasPages.find(p => p.key === activeCanvasPage)
@@ -1554,10 +1571,22 @@ export default function App() {
   /** 当前页画布 owner 的会话 id：底部统计与「上下文」面板按它取数（空白/素材页回落到当前会话） */
   const activeCanvasOwnerSessionId = activeCanvasPageData?.kind === 'canvas'
     ? canvases.find(c => c.canvasId === activeCanvasPageData.key)?.ownerSessionId
+      ?? canvasOwnerRef.current.get(activeCanvasPageData.key)
     : undefined
   const pageSessionId = activeCanvasOwnerSessionId || sessionId
   const pageSessionIsOther = !!pageSessionId && pageSessionId !== sessionId
   const pageSessionRunning = pageSessionIsOther && subagents.some(s => s.id === pageSessionId && s.status === 'running')
+
+  // 切到列表里还没有的画布（子代理刚建 / 画布列表未刷新）时补拉一次，
+  // 否则 owner 解析不出来，底部状态条与「上下文」会静默退回当前会话的统计
+  const canvasOwnerMissRef = useRef('')
+  useEffect(() => {
+    if (activeCanvasPageData?.kind !== 'canvas') return
+    const key = activeCanvasPageData.key
+    if (!key || canvases.some(c => c.canvasId === key) || canvasOwnerMissRef.current === key) return
+    canvasOwnerMissRef.current = key
+    refreshCanvases()
+  }, [activeCanvasPageData, canvases, refreshCanvases])
 
   // 切画布页 = 切统计口径：不再等左侧点会话才刷新
   useEffect(() => {
@@ -1659,6 +1688,11 @@ export default function App() {
         onAddFiles={addPendingFiles}
         onRemoveAtt={(i) => setPendingAtts(prev => prev.filter((_, idx) => idx !== i))}
         onPickModel={pickModel}
+        reasoningEffort={reasoningEffort}
+        onPickReasoningEffort={v => {
+          setReasoningEffort(v)
+          localStorage.setItem('openmods.reasoningEffort', v)
+        }}
         onSend={send}
         onStop={stop}
         contextHint={toast?.text ?? null}

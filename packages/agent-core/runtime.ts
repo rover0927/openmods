@@ -32,6 +32,10 @@ export interface ModelInfo {
   contextWindow?: number
   /** 支持视觉（图片）输入 */
   vision?: boolean
+  /** 支持的思考强度档位（如 low / medium / high）；空 = 不支持或未检测 */
+  reasoningEfforts?: string[]
+  /** 端点声明的默认档位（如 DeepSeek 的 high） */
+  reasoningDefault?: string
   /** 复刻 dsh llm-deepseek: `inputModalities` 是能力事实源，vision 只是它的派生视图 */
   inputModalities?: string[]
   /** 单请求输出上限（dsh `defaultMaxTokens`；压缩用它算预算） */
@@ -100,6 +104,8 @@ export interface RuntimeDeps {
   /** 图片引用 → data URL（server 注入；请求投影期才取字节，日志里只有引用） */
   resolveImage?: (ref: any) => string | undefined
   defaultModelId: string
+  /** 本会话当前选择的思考强度（server 注入；空 = 不发送 reasoning_effort） */
+  getReasoningEffort?: () => string | undefined
   /**
    * 画布服务（复刻 dsh workingDirectory 的注入方式）：
    * 运行时只按 sessionId 读写，画布归属、落盘、广播全在服务里，
@@ -296,6 +302,7 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
               messages,
               tools: toOpenAiTools(turnTools),
               model: rt.getModelLlmId(),
+              reasoningEffort: deps.getReasoningEffort?.(),
               signal,
               onTextDelta: (delta: string) => rt.emit('assistant/delta', { turnId, stepId, delta }),
               // 思考过程单独一条流：前端边收边显示（纯思考的步骤原先在界面上是"已想 0 字"）

@@ -34,6 +34,8 @@ export interface LlmChatOptions {
   messages: ChatMessage[]
   tools?: { type: 'function'; function: { name: string; description: string; parameters: any } }[]
   model: string
+  /** 思考强度（low / medium / high…）；仅在用户显式选择时下发 */
+  reasoningEffort?: string
   signal?: AbortSignal
   onTextDelta?(delta: string): void
   /** 推理模型的思考增量（delta.reasoning_content） */
