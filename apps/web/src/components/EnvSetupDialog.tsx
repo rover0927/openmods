@@ -73,6 +73,12 @@ const SOURCE_LABEL: Record<'mirror' | 'official' | 'release', string> = {
   release: 'Release API',
 }
 
+/** 下载落盘位置（相对仓库根目录，对应服务端 data/vendor-download/openmods-vendor.zip） */
+const VENDOR_ZIP_LABEL = 'data/vendor-download/openmods-vendor.zip'
+
+/** 下载中一直没有字节、超过该时长就提示可能卡在等待响应 */
+const VENDOR_WAIT_HINT_MS = 10_000
+
 /**
  * 环境检测面板：首次运行向导（mode='dialog'）与 设置 → 环境（mode='page'）共用。
  * 三张卡片分别是 Java / Gradle 缓存 / Git：状态徽章、摘要、候选单选与自定义路径。
@@ -93,6 +99,9 @@ export function EnvSetupPanel(props: {
   /** 在线下载离线构建包的实时状态（下载中每 800ms 轮询一次） */
   const [vendorDl, setVendorDl] = useState<VendorDownloadDto | null>(null)
   const vendorPrev = useRef<VendorDownloadDto['status'] | null>(null)
+  /** 下载中 received 一直是 0：开始等待的时刻（0 = 未在等待） */
+  const vendorWaitAt = useRef(0)
+  const [vendorWaiting, setVendorWaiting] = useState(false)
   const toastRef = useRef(props.onToast)
   toastRef.current = props.onToast
 
@@ -151,6 +160,19 @@ export function EnvSetupPanel(props: {
     void tick()
     return () => { stopped = true; if (timer) window.clearTimeout(timer) }
   }, [load])
+
+  // 下载中长时间 received=0 → 提示「等待响应」，避免看起来一直 0KB 无反馈
+  useEffect(() => {
+    if (vendorDl?.status !== 'downloading' || vendorDl.received > 0) {
+      vendorWaitAt.current = 0
+      setVendorWaiting(false)
+      return
+    }
+    if (!vendorWaitAt.current) vendorWaitAt.current = Date.now()
+    const left = Math.max(0, VENDOR_WAIT_HINT_MS - (Date.now() - vendorWaitAt.current))
+    const timer = window.setTimeout(() => setVendorWaiting(true), left)
+    return () => { window.clearTimeout(timer) }
+  }, [vendorDl?.status, vendorDl?.received])
 
   const startVendorDownload = async (source: 'mirror' | 'official' | 'release') => {
     try {
@@ -361,7 +383,9 @@ export function EnvSetupPanel(props: {
                         <span>
                           {vendorDl.status === 'extracting'
                             ? '正在解压到 plugins/mcdev/vendor/…'
-                            : `正在下载构建包${vendorDl.total ? ` ${Math.min(100, Math.round((vendorDl.received / vendorDl.total) * 100))}%` : ''}（${SOURCE_LABEL[vendorDl.source ?? 'mirror']}）`}
+                            : vendorWaiting && vendorDl.received === 0
+                              ? `正在下载构建包（${SOURCE_LABEL[vendorDl.source ?? 'mirror']}）· 等待响应…（如长时间无进度请取消并换源）`
+                              : `正在下载构建包${vendorDl.total ? ` ${Math.min(100, Math.round((vendorDl.received / vendorDl.total) * 100))}%` : ''}（${SOURCE_LABEL[vendorDl.source ?? 'mirror']}）`}
                         </span>
                         {vendorDl.status === 'downloading' && (
                           <span className="env-vendor-stat">
@@ -386,6 +410,7 @@ export function EnvSetupPanel(props: {
                             : `${vendorDl.total ? Math.min(100, (vendorDl.received / vendorDl.total) * 100) : 0}%`,
                         }} />
                       </div>
+                      <div className="env-vendor-note">保存到 {VENDOR_ZIP_LABEL}</div>
                     </>
                   ) : (
                     <>

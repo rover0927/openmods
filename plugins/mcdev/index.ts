@@ -8,12 +8,13 @@
 //   由 mc_log 轮询 run/logs/latest.log 判断是否真的起来了。
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { copyFile, mkdir, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile, cp } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Plugin, ToolResult } from '@openmods/plugin-kit'
 import { WORKSPACE_TOOL_NAMES } from '@openmods/plugin-kit'
+import { createBuildLog, finishBuildLog } from '../../apps/server/src/build-logs.js'
 import { solidPng } from '../bb-tools/png.js'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
@@ -266,6 +267,54 @@ function recordBuild(projectDir: string, task: string, code: number) {
   if (task === 'build') cur.lastBuild = { task, ok: code === 0, code, time: Date.now() }
   map[projectDir] = cur
   writeMcState(map)
+}
+
+/**
+ * mod-output 默认目录：prefs.modOutput 为空时构建产物归档到这里（启动/构建时创建）。
+ * 设置里填了路径就用设置的值。
+ */
+const DEFAULT_MOD_OUTPUT = join(ROOT, 'data', 'mod-output')
+
+function resolveModOutputDir(pref?: string): string {
+  const raw = String(pref ?? '').trim()
+  return raw ? resolve(raw) : DEFAULT_MOD_OUTPUT
+}
+
+function ensureDirSync(dir: string): boolean {
+  try { mkdirSync(dir, { recursive: true }); return true } catch { return false }
+}
+
+/** build/libs 下可分发 jar：排除 -sources/-javadoc，多个时取最新 */
+function pickDistJar(projectDir: string): string | undefined {
+  const libs = join(projectDir, 'build', 'libs')
+  try {
+    const jars = readdirSync(libs)
+      .filter(f => /\.jar$/i.test(f) && !/-(sources|javadoc)\.jar$/i.test(f))
+      .map(f => {
+        const path = join(libs, f)
+        let mtime = 0
+        try { mtime = statSync(path).mtimeMs } catch { /* 刚被删 */ }
+        return { path, mtime }
+      })
+      .sort((a, b) => b.mtime - a.mtime)
+    return jars[0]?.path
+  } catch {
+    return undefined
+  }
+}
+
+/** 构建成功后的 jar 归档：复制到 mod-output；返回归档绝对路径（没有可分发 jar 返回 undefined） */
+function archiveJar(projectDir: string, destDir: string): string | undefined {
+  const src = pickDistJar(projectDir)
+  if (!src) return undefined
+  if (!ensureDirSync(destDir)) return undefined
+  try {
+    const out = join(destDir, basename(src))
+    copyFileSync(src, out)
+    return out
+  } catch {
+    return undefined
+  }
 }
 
 function pidAlive(pid: number): boolean {
@@ -616,8 +665,10 @@ async function runGradle(opts: {
   timeoutSec?: number
   /** 会话工作目录：GRADLE_USER_HOME 缺省时用它下面的 .gradle-home（预热缓存就放那儿） */
   root?: string
+  /** mod-output 目录（prefs.modOutput；空则用 <repo>/data/mod-output） */
+  modOutput?: string
   /** 非后台任务结束回调（构建结果推给 UI / 插件事件用） */
-  onResult?: (r: { task: string; ok: boolean; code: number }) => void
+  onResult?: (r: { task: string; ok: boolean; code: number; jarPath?: string; buildLogId?: string }) => void
 }): Promise<ToolResult> {
   const { projectDir, task } = opts
   if (!/^[a-zA-Z][\w:.-]*$/.test(task)) return fail(`任务名不合法：${task}`)
@@ -644,6 +695,16 @@ async function runGradle(opts: {
       : ''
   // 结果里明确写出本次使用的 Java 与 Gradle 缓存，便于确认是否命中离线包
   const seedNote = `Java：${java.home}（版本 ${java.version}）\nGradle 缓存：${env.GRADLE_USER_HOME}\n${cacheNote}`
+
+  // build 任务：完整 stdout+stderr 落到 data/build-logs（元数据与前端「构建日志」同源）
+  const isBuild = task === 'build' && !opts.background
+  const buildLog = isBuild
+    ? createBuildLog({ project: basename(projectDir) || 'project', task, startedAt: Date.now() })
+    : undefined
+  const modOutputDir = resolveModOutputDir(opts.modOutput)
+  const closeBuildLog = (code: number, jarPath?: string) => (buildLog
+    ? finishBuildLog(buildLog, { ok: code === 0, exitCode: code, ...(jarPath ? { jarPath } : {}) })
+    : undefined)
 
   if (opts.background) {
     if (task === 'runClient') {
@@ -697,15 +758,33 @@ async function runGradle(opts: {
       child.stdout?.destroy()
       child.stderr?.destroy()
       recordBuild(projectDir, task, code)
-      opts.onResult?.({ task, ok: code === 0, code })
+      const ok = code === 0
+      // 构建成功才归档：从 build/libs 挑可分发 jar 复制到 mod-output
+      const jarPath = ok && isBuild ? archiveJar(projectDir, modOutputDir) : undefined
+      if (buildLog) {
+        buildLog.write(jarPath
+          ? `\n[openmods] jar 已归档：${jarPath}\n`
+          : ok ? '\n[openmods] 没有找到可分发 jar（build/libs 下只有 sources/javadoc？）\n' : '')
+      }
+      const logMeta = closeBuildLog(code, jarPath)
+      opts.onResult?.({
+        task, ok, code,
+        ...(jarPath ? { jarPath } : {}),
+        ...(logMeta ? { buildLogId: logMeta.id } : {}),
+      })
       const out = text()
       const tail = out.length > 8000 ? `…（截断，共 ${out.length} 字符）\n${out.slice(-8000)}` : out
+      const notes = [
+        buildLog ? `构建日志：${buildLog.logPath}` : '',
+        jarPath ? `jar 已归档：${jarPath}` : (ok && isBuild ? '没有找到可分发 jar（build/libs 下只有 sources/javadoc？）' : ''),
+      ].filter(Boolean).join('\n')
       resolvePromise({
-        forModel: seedNote + `gradlew ${task} 退出码 ${code}\n${tail || '（无输出）'}${code === 0 ? '' : netHint()}`,
-        isError: code !== 0,
+        forModel: seedNote + `gradlew ${task} 退出码 ${code}\n${tail || '（无输出）'}${notes ? `\n${notes}` : ''}${ok ? '' : netHint()}`,
+        isError: !ok,
       })
     }
     const onData = (d: Buffer) => {
+      buildLog?.write(decodeText(d))
       raw = Buffer.concat([raw, d])
       if (raw.length > 400_000) raw = raw.subarray(-200_000) // 防跑飞
       // 构建结束标记：成功/失败都立刻进入收尾（留 600ms 吃掉剩余输出），不再等 close
@@ -724,6 +803,9 @@ async function runGradle(opts: {
       child.kill('SIGTERM')
       child.stdout?.destroy()
       child.stderr?.destroy()
+      buildLog?.write(`\n[openmods] 构建超时（${timeoutMs / 1000}s）\n`)
+      const logMeta = closeBuildLog(-1)
+      opts.onResult?.({ task, ok: false, code: -1, ...(logMeta ? { buildLogId: logMeta.id } : {}) })
       resolvePromise(fail(`${seedNote}gradlew ${task} 超时（${timeoutMs / 1000}s）。尾部输出：\n${text().slice(-4000)}`))
     }, timeoutMs)
     child.on('close', code => finish(code ?? -1))
@@ -734,6 +816,9 @@ async function runGradle(opts: {
       settled = true
       clearTimeout(timer)
       clearTimeout(markerTimer)
+      buildLog?.write(`\n[openmods] 无法启动 gradlew：${e.message}\n`)
+      const logMeta = closeBuildLog(-1)
+      opts.onResult?.({ task, ok: false, code: -1, ...(logMeta ? { buildLogId: logMeta.id } : {}) })
       resolvePromise(fail(`${seedNote}无法启动 gradlew：${e.message}`))
     })
   })
@@ -911,6 +996,11 @@ const MCMOD_PROMPT = '你是 Minecraft 1.20.1 Forge 模组开发主代理（mcmo
   + '   **runClient 启动后不要改源码**；如果改了，先 build 再重新 runClient（会自动停旧客户端），'
   + '   不要拿旧客户端的日志验收新代码——mc_log 检测到启动后源码有改动会直接提示。'
   + '   连续两次 mc_log waitSec 仍没有启动标记，就把当前进度和日志片段告诉用户，不要继续加长 sleep。\n'
+  + '   **构建失败最多重试 2 次**：同一个错误改两轮仍 build 失败就立即停止，把错误摘要与构建日志尾部（工具结果里的构建日志路径）汇报给用户；'
+  + '   连续第 3 次失败会被工具直接拒绝，不要试图换个参数绕过。\n'
+  + '   **build 成功后 runClient 只启动一次**：等一次启动结果后就把「Mod 是否加载成功 / 客户端是否崩溃」汇报给用户并等待指示，'
+  + '   禁止 build→runClient→再 build→再 runClient 的闷头自测循环；第二次 runClient 会被工具拒绝。'
+  + '   构建成功后 jar 会自动归档到 mod-output，工具结果与 mc/build 事件里都带绝对路径。\n'
   + '7) 收尾汇报：改了哪些文件、build 是否通过、客户端是否真的起来了、还有哪些没验证。\n'
   + '工具名以本清单为准，只能调用实际注册的工具；没有 mc_export、mc_edit、mc_canvas_outline、mc_list_outline、export_model、save_model 这些工具——'
   + '画布工程整体导出叫 canvas_export（含骨骼/贴图/动画），导出原版 item 模型才叫 mc_export_model，改工程文件用 edit/write。拿不准就先看函数目录（工具定义），不要凭名字猜。\n'
@@ -929,6 +1019,8 @@ const plugin: Plugin = {
   requires: ['mc'],
   skills: ['minecraft-forge-1.20.1'],
   apply(ctx) {
+    // 默认 mod-output：构建成功后的 jar 归档目录（设置里填了路径则以设置为准）
+    ensureDirSync(DEFAULT_MOD_OUTPUT)
     ctx.profiles.register({
       id: 'mcmod',
       name: 'Minecraft 1.20.1 模组开发（mcmod）',
@@ -1064,12 +1156,23 @@ const plugin: Plugin = {
       },
     })
 
+    // ---- 会话级构建自测节流 ----
+    // 连续 build 失败 2 次必须停下汇报；build 成功后最多自动 runClient 1 次。
+    // 用户新回合（服务端 session/turn 事件）会重置计数，避免跨回合永久锁死。
+    const throttle = new Map<string, { failures: number; clients: number }>()
+    ctx.events.on('session/turn', (data: any) => {
+      const sid = String(data?.sessionId ?? '')
+      if (sid) throttle.delete(sid)
+    })
+
     ctx.tools.register({
       name: 'mc_gradle',
       mutates: true,
       description: '在工程里跑 gradlew 任务（build / runClient / runData / --stop）。'
         + 'runClient 是长驻进程，必须 background=true；启动前会自动停掉同一工程的上一个客户端。'
-        + '普通任务默认 600s 超时，返回尾部输出。',
+        + '普通任务默认 600s 超时，返回尾部输出。'
+        + 'build 输出会完整落盘到 data/build-logs；成功产物自动归档到 mod-output。'
+        + '连续构建失败 2 次会被拒绝，build 成功后 runClient 只允许一次——必须汇报后等待用户。',
       parameters: {
         type: 'object',
         properties: {
@@ -1082,16 +1185,29 @@ const plugin: Plugin = {
         required: ['project', 'task'],
       },
       async execute(args, exec) {
+        const task = String(args.task)
+        const background = !!args.background
+        const key = exec.sessionId || 'default'
+        const st = throttle.get(key) ?? { failures: 0, clients: 0 }
+        // 连续失败 2 次的 build 直接拒绝：模型必须停下汇报，而不是继续盲试
+        if (task === 'build' && !background && st.failures >= 2) {
+          return fail('已连续构建失败 2 次，必须停止重试并向用户汇报错误摘要与日志尾部。')
+        }
+        // 同一会话内自动 runClient 最多一次：之后必须汇报并等待用户决定
+        if (task === 'runClient' && st.clients >= 1) {
+          return fail('已启动过测试客户端，必须汇报并等待用户。')
+        }
         try {
           const dir = await resolveProject(String(args.project), rootOf(exec))
           const extra = String(args.args ?? '').trim() ? String(args.args).trim().split(/\s+/) : []
-          return await runGradle({
+          const result = await runGradle({
             projectDir: dir,
-            task: String(args.task),
+            task,
             args: extra,
-            background: !!args.background,
+            background,
             timeoutSec: Number(args.timeoutSec ?? 600),
             root: rootOf(exec),
+            modOutput: String(ctx.prefs.get().modOutput ?? ''),
             // 构建结果广播给前端：点了「测试 Mod」/AI 跑完 build 都弹升级成就
             onResult: r => {
               if (r.task !== 'build') return
@@ -1101,10 +1217,23 @@ const plugin: Plugin = {
                 ok: r.ok,
                 code: r.code,
                 time: Date.now(),
+                ...(r.jarPath ? { jarPath: r.jarPath } : {}),
+                ...(r.buildLogId ? { buildLogId: r.buildLogId } : {}),
               })
             },
           })
-        } catch (e: any) { return fail(e.message) }
+          if (task === 'runClient' && !result.isError) st.clients++
+          else if (task === 'build' && !background) {
+            if (result.isError) st.failures++
+            else st.failures = 0
+          }
+          throttle.set(key, st)
+          return result
+        } catch (e: any) {
+          if (task === 'build' && !background) st.failures++
+          throttle.set(key, st)
+          return fail(e.message)
+        }
       },
     })
 
@@ -1217,15 +1346,6 @@ const plugin: Plugin = {
 
     // ---- 插件自带 HTTP 接口 ----
     // 关闭 mc 开关时本插件整个不 apply，这些路由也就不存在（前端按 /api/features 隐藏入口）。
-    /** mod-output 必须是真实存在的目录；不存在返回 null */
-    const existingDir = async (raw: string): Promise<string | null> => {
-      const p = String(raw ?? '').trim()
-      if (!p) return null
-      try {
-        const abs = await realpath(p)
-        return (await stat(abs)).isDirectory() ? abs : null
-      } catch { return null }
-    }
 
     /** 会话 cwd 下的 MC 工程状态：构建结果 / runClient 运行中 / jar 产物 */
     ctx.http.route('GET', '/api/mc/state', async (req, reply) => {
@@ -1234,14 +1354,12 @@ const plugin: Plugin = {
       return { root, projects: await listMcProjects(root) }
     })
 
-    /** jar 导出：把工程的最新构建产物复制到设置里的 mod-output 目录（prefs.modOutput） */
+    /** jar 导出：把工程的最新构建产物复制到 mod-output（prefs.modOutput，空则默认 data/mod-output） */
     ctx.http.route('POST', '/api/mc/export', async (req, reply) => {
       const root = ctx.sessions.cwdOf(String(req.body?.sessionId ?? ''))
       if (!root) return reply.code(404).send({ error: '会话不存在或目录无效' })
-      const dest = String(ctx.prefs.get().modOutput ?? '')
-      if (!dest) return reply.code(400).send({ error: '尚未配置 mod-output：请到 设置 → 通用 → Mod 构建里填写 jar 导出目录' })
-      const resolved = await existingDir(dest)
-      if (!resolved) return reply.code(400).send({ error: `mod-output 目录不存在：${dest}` })
+      const resolved = resolveModOutputDir(ctx.prefs.get().modOutput)
+      if (!ensureDirSync(resolved)) return reply.code(400).send({ error: `mod-output 目录不可创建：${resolved}` })
       const project = String(req.body?.project ?? '')
       const projects = await listMcProjects(root)
       const p = projects.find(x => x.name === project) ?? projects[0]

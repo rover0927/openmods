@@ -718,7 +718,13 @@ export default function App() {
         })
         break
       case 'terminal/exit':
-        // 已退出的终端不再占标签：直接从列表移除，避免越积越多
+        // 已退出的终端保留在列表里（状态改为已退出，输出可回看），由服务端按最近 6 个淘汰
+        setTerminals(prev => prev.map(t => (t.id === f.terminalId
+          ? { ...t, status: 'exited' as const, exitCode: f.exitCode ?? null, signal: f.signal, endedAt: f.endedAt ?? Date.now() }
+          : t)))
+        break
+      case 'terminal/close':
+        // 手动关闭或服务端超出保留数量淘汰：标签与输出一起移除
         setTerminals(prev => prev.filter(t => t.id !== f.terminalId))
         setTerminalOutput(prev => {
           if (!(f.terminalId in prev)) return prev
@@ -799,14 +805,13 @@ export default function App() {
   const loadTerminals = useCallback(async (id: string) => {
     try {
       const r = await api.terminals(id)
-      // 已退出的终端不再占标签（列表刷新时也不堆积）
-      const live = r.terminals.filter(t => t.status !== 'exited')
-      setTerminals(live)
+      // 已退出终端也保留（服务端最多给最近 6 个），方便回看刚结束的构建输出
+      setTerminals(r.terminals)
       setTerminalShell(r.shell)
-      setActiveTerminalId(prev => (live.some(t => t.id === prev)
+      setActiveTerminalId(prev => (r.terminals.some(t => t.id === prev)
         ? prev
-        : (live[live.length - 1]?.id ?? null)))
-      const recent = live.slice(-4)
+        : (r.terminals[r.terminals.length - 1]?.id ?? null)))
+      const recent = r.terminals.slice(-4)
       const outs = await Promise.all(recent.map(async t => {
         const o = await api.terminalOutput(id, t.id, 20_000).catch(() => null)
         return [t.id, o?.output ?? ''] as const
@@ -1417,11 +1422,23 @@ export default function App() {
     }
   }, [sessionId, showToast])
 
-  /** 关闭单个终端：运行中先调 kill API，再从标签里移除 */
+  /** 切换终端标签：输出不在缓存里（切会话后只预取了最近几个）就补拉一次，已退出的也能回看 */
+  const selectTerminal = useCallback((id: string) => {
+    setActiveTerminalId(id)
+    if (!sessionId || id in terminalOutput) return
+    void api.terminalOutput(sessionId, id, 20_000)
+      .then(r => setTerminalOutput(prev => (id in prev ? prev : { ...prev, [id]: r.output })))
+      .catch(() => {})
+  }, [sessionId, terminalOutput])
+
+  /** 关闭单个终端：通知服务端移除条目（运行中的先收进程树），再从标签里移除 */
   const closeTerminal = useCallback(async (id: string) => {
-    const t = terminals.find(x => x.id === id)
-    if (t?.status === 'running') {
-      try { await api.killTerminal(sessionId, id) } catch (e: any) { showToast(e.message); return }
+    if (!sessionId) return
+    try {
+      await api.closeTerminal(sessionId, id)
+    } catch (e: any) {
+      showToast(e.message)
+      return
     }
     setTerminals(prev => prev.filter(x => x.id !== id))
     setTerminalOutput(prev => {
@@ -1431,19 +1448,17 @@ export default function App() {
       return next
     })
     setActiveTerminalId(cur => (cur === id ? null : cur))
-  }, [sessionId, terminals, showToast])
+  }, [sessionId, showToast])
 
-  /** 全部清空：运行中的先 kill，然后清空列表与输出 */
+  /** 全部清空：服务端移除全部条目（运行中的先结束），前端清空列表与输出 */
   const closeAllTerminals = useCallback(async () => {
     if (sessionId) {
-      await Promise.all(terminals
-        .filter(t => t.status === 'running')
-        .map(t => api.killTerminal(sessionId, t.id).catch(() => {})))
+      try { await api.closeAllTerminals(sessionId) } catch (e: any) { showToast(e.message) }
     }
     setTerminals([])
     setTerminalOutput({})
     setActiveTerminalId(null)
-  }, [sessionId, terminals])
+  }, [sessionId, showToast])
 
   /** 欢迎区「绑定工作目录」：系统原生选择器 → setSessionCwd → 同步 sessionInfo 并 toast */
   const pickSessionCwd = useCallback(async () => {
@@ -1779,7 +1794,7 @@ export default function App() {
         terminalOutput={terminalOutput}
         activeTerminalId={activeTerminalId}
         terminalShell={terminalShell}
-        onSelectTerminal={setActiveTerminalId}
+        onSelectTerminal={selectTerminal}
         onKillTerminal={killTerminal}
         onCloseTerminal={closeTerminal}
         onCloseAllTerminals={closeAllTerminals}

@@ -8,8 +8,11 @@ import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 
 const MAX_OUTPUT = 240_000
-/** 前台一次性命令（bash 非 background）退出后，输出缓冲的保留时间：前端标签已移除，仅供 bash 工具回读 */
-const EPHEMERAL_TTL_MS = 120_000
+/**
+ * 每个会话保留的已终止终端数量（含前台 ephemeral 命令）。
+ * 运行中的终端不占名额；超出时按结束时间淘汰最旧的，手动 close 仍然立即移除。
+ */
+const MAX_EXITED_PER_SESSION = 6
 
 export interface TerminalSummary {
   id: string
@@ -24,7 +27,7 @@ export interface TerminalSummary {
   endedAt?: number
   /** 输出被截断过的字节数（环形缓冲丢掉的旧内容） */
   truncatedChars: number
-  /** 前台一次性命令：进程退出后立即从 list() 隐藏（输出缓冲保留到 TTL，供 bash 工具读取） */
+  /** 前台一次性命令（bash 非 background）：退出后同样保留，可回看输出 */
   ephemeral: boolean
 }
 
@@ -32,8 +35,6 @@ interface TerminalEntry extends TerminalSummary {
   proc: ChildProcessWithoutNullStreams
   output: string
   waiters: Set<(ev: { exitCode: number | null; signal?: string }) => void>
-  /** ephemeral 条目退出后的清理定时器 */
-  cleanupTimer?: NodeJS.Timeout
 }
 
 interface ShellSpec {
@@ -94,7 +95,7 @@ function detectShell(): ShellSpec {
 
 export interface TerminalManager {
   shellLabel: string
-  /** ephemeral=true：前台一次性命令，进程退出后自动从 list() 隐藏（输出缓冲保留 TTL） */
+  /** ephemeral=true：前台一次性命令，退出后仍保留在最近 6 个已终止终端里（输出可回看） */
   open(opts: { sessionId: string; command: string; cwd: string; title?: string; ephemeral?: boolean }): TerminalSummary
   /** 拉起一个空交互终端（用户点「新建终端」用；模型也能用） */
   openShell(opts: { sessionId: string; cwd: string; title?: string }): TerminalSummary
@@ -132,7 +133,7 @@ export function createTerminalManager(opts: {
   let counter = 0
 
   function summarize(t: TerminalEntry): TerminalSummary {
-    const { proc: _proc, output: _output, waiters: _waiters, cleanupTimer: _timer, ...rest } = t
+    const { proc: _proc, output: _output, waiters: _waiters, ...rest } = t
     return rest
   }
 
@@ -149,6 +150,21 @@ export function createTerminalManager(opts: {
     })
   }
 
+  /** 每个会话最多保留最近 6 个已终止终端：超出按结束时间淘汰最旧（运行中的不占名额） */
+  function trimExited(sessionId: string) {
+    const exited = [...entries.values()]
+      .filter(t => t.sessionId === sessionId && t.status === 'exited')
+      .sort((a, b) => (a.endedAt ?? a.startedAt) - (b.endedAt ?? b.startedAt))
+    const overflow = exited.length - MAX_EXITED_PER_SESSION
+    if (overflow <= 0) return
+    for (const t of exited.slice(0, overflow)) {
+      if (entries.get(t.id) !== t) continue
+      entries.delete(t.id)
+      // 前端标签跟着移除（reason 仅用于区分：不是用户手动关闭）
+      opts.emit(t.sessionId, 'terminal/close', { terminalId: t.id, reason: 'evicted' })
+    }
+  }
+
   function finish(t: TerminalEntry, exitCode: number | null, signal?: string) {
     if (t.status === 'exited') return
     t.status = 'exited'
@@ -160,13 +176,8 @@ export function createTerminalManager(opts: {
     })
     for (const w of t.waiters) w({ exitCode, signal })
     t.waiters.clear()
-    // 前台一次性命令：标签立即消失（list 过滤掉已退出的 ephemeral），输出留一小段时间给 bash 工具回读
-    if (t.ephemeral) {
-      t.cleanupTimer = setTimeout(() => {
-        if (entries.get(t.id) === t) entries.delete(t.id)
-      }, EPHEMERAL_TTL_MS)
-      t.cleanupTimer.unref?.()
-    }
+    // 输出缓冲保留：已终止终端留在列表里可回看，只有手动 close 或超出保留数量才移除
+    trimExited(t.sessionId)
   }
 
   function start(
@@ -230,8 +241,7 @@ export function createTerminalManager(opts: {
     list(sessionId) {
       return [...entries.values()]
         .filter(t => t.sessionId === sessionId)
-        // 前台一次性命令退出即从列表消失（前端标签随 terminal/exit 移除）；输出缓冲仍在，供 bash 回读
-        .filter(t => !(t.ephemeral && t.status === 'exited'))
+        // 已终止的也保留（含 ephemeral），方便回看刚结束的构建/启动输出；超量由 trimExited 淘汰
         .sort((a, b) => a.startedAt - b.startedAt)
         .map(summarize)
     },
@@ -272,11 +282,10 @@ export function createTerminalManager(opts: {
     close(id) {
       const t = entries.get(id)
       if (!t) return false
-      if (t.cleanupTimer) clearTimeout(t.cleanupTimer)
       // 运行中的先收进程树，再移除条目：前端标签立刻消失，不会再收到"已退出"的残留条目
       if (t.status === 'running') this.kill(id)
       entries.delete(id)
-      opts.emit(t.sessionId, 'terminal/close', { terminalId: id })
+      opts.emit(t.sessionId, 'terminal/close', { terminalId: id, reason: 'closed' })
       return true
     },
 
@@ -319,7 +328,6 @@ export function createTerminalManager(opts: {
         const t = entries.get(id)
         if (!t || t.sessionId !== sessionId) continue
         if (t.status === 'running') { n++; this.kill(id) }
-        if (t.cleanupTimer) clearTimeout(t.cleanupTimer)
         // 会话结束（删除/归档）：条目全部回收，不留任何残留
         entries.delete(id)
       }
@@ -331,7 +339,6 @@ export function createTerminalManager(opts: {
         const t = entries.get(id)
         if (!t) continue
         if (t.status === 'running') this.kill(id)
-        if (t.cleanupTimer) clearTimeout(t.cleanupTimer)
         entries.delete(id)
       }
     },

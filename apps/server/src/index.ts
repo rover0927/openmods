@@ -25,6 +25,7 @@ import { probeWeb, proxyWeb } from './webview.js'
 import { createInteractionHub, type InteractionReply, type PendingInteraction } from './interaction.js'
 import { createTerminalManager } from './terminals.js'
 import { installLogCapture, getLogs, logFilePath } from './log-bus.js'
+import { listBuildLogs, readBuildLog } from './build-logs.js'
 import { applyUpdate, getUpdateStatus } from './update.js'
 import {
   getTestClientStatus, startTestClient, stopTestClient, testClientBusy, type TestClientJar,
@@ -1176,6 +1177,8 @@ async function runSessionTurn(
   const aborter = new AbortController()
   s.busy = true
   s.abortController = aborter
+  // 新回合：插件据此重置会话级节流（连续构建失败计数 / runClient 次数）
+  bus.emit('session/turn', { sessionId: s.id })
   s.sse.beginTurn()
   const isSubagent = s.mode === 'subagent'
   if (isSubagent) {
@@ -2806,6 +2809,17 @@ function prepareTestJars(body: any): TestClientJar[] {
   if (total > 256 * 1024 * 1024) throw new Error('选中的 jar 总大小超过 256MB')
   return out
 }
+
+// 构建日志：mc_gradle build 的完整 stdout+stderr 落盘在 data/build-logs
+app.get('/api/build-logs', async (req) => ({
+  logs: listBuildLogs(Number((req.query as any)?.limit ?? 30)),
+}))
+
+app.get('/api/build-logs/:id', async (req, reply) => {
+  const log = readBuildLog(String((req.params as any)?.id ?? ''))
+  if (!log) return reply.code(404).send({ error: '构建日志不存在' })
+  return log
+})
 
 // 统一测试启动器：状态 / 启动 / 停止
 app.get('/api/mc/test', async (req) => getTestClientStatus(Number((req.query as any)?.tail ?? 120)))

@@ -2,7 +2,7 @@
 import type {
   ArchivedView, FeaturesDto, ModelInfoDto, PrefsDto, ProjectBaselineDto, ProjectDto,
   SessionInfoDto, SessionSummaryDto, SettingsDto, StatsFrameDto, LibraryAssetDto, CanvasTreeDto,
-  LibraryJarItemDto, McTestJarSelectionDto, McTestStatusDto, LogsDto,
+  LibraryJarItemDto, McTestJarSelectionDto, McTestStatusDto, LogsDto, BuildLogMetaDto,
   UpdateStatusDto, UpdateApplyDto, EnvStatusDto, VendorDownloadDto,
 } from './types.js'
 
@@ -237,6 +237,18 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId }),
     }),
+  /** 关闭（移除）一个终端条目：运行中的先收进程树，已退出的直接丢弃 */
+  closeTerminal: (sessionId: string, terminalId: string) =>
+    jfetch<{ ok: boolean }>(`/api/terminals/${terminalId}/close`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    }),
+  /** 清空某会话的全部终端（运行中的先结束） */
+  closeAllTerminals: (sessionId: string) =>
+    jfetch<{ ok: boolean; closed: number }>(`/api/terminals?sessionId=${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+    }),
   // ---- 文档素材库（多文件资产） ----
   library: () => jfetch<{ assets: LibraryAssetDto[] }>('/api/library'),
   /** 上传一个文件新建素材（多选时其余文件走 appendLibraryFile） */
@@ -279,6 +291,11 @@ export const api = {
   /** 系统日志增量拉取：after 为上次拿到的 seq */
   logs: (after = 0, limit = 300) =>
     jfetch<LogsDto>(`/api/logs?after=${after}&limit=${limit}`),
+  /** 构建日志历史列表（最近 N 条，新的在前） */
+  buildLogs: (limit = 30) => jfetch<{ logs: BuildLogMetaDto[] }>(`/api/build-logs?limit=${limit}`),
+  /** 单条构建日志的完整文本 */
+  buildLog: (id: string) =>
+    jfetch<BuildLogMetaDto & { text: string }>(`/api/build-logs/${encodeURIComponent(id)}`),
   /** 自更新：检查 openmods main 与本地差异 */
   updateStatus: () => jfetch<UpdateStatusDto>('/api/update/status'),
   /** 自更新：手动确认后 git pull + 重建前端 */

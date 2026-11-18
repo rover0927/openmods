@@ -477,6 +477,8 @@ export function SubagentNoticeRow({ notice, onOpen }: { notice: NonNullable<Turn
 
 export function TurnCard({ turn, onOpenSubagent }: { turn: TurnEntry; onOpenSubagent?: (id: string) => void }) {
   const [openSteps, setOpenSteps] = useState(true)
+  // 步骤列表默认限高 220px；这里记「展开全部」状态（长构建/多步骤不撑高消息区）
+  const [openStepsFull, setOpenStepsFull] = useState(false)
   // 思考块：默认跟随流式状态（跑的时候展开，结束后收起）
   const [openThink, setOpenThink] = useState<boolean | null>(null)
   const [lightboxAt, setLightboxAt] = useState<number | null>(null)
@@ -539,11 +541,18 @@ export function TurnCard({ turn, onOpenSubagent }: { turn: TurnEntry; onOpenSuba
 
       {(turn.steps.length > 0 || turn.error) && (
         <div className="process">
-          <button className="process-toggle" onClick={() => setOpenSteps(o => !o)}>
-            {openSteps ? '▾' : '▸'} 制作过程 · {turn.steps.length} 步
-          </button>
+          <div className="process-head">
+            <button className="process-toggle" onClick={() => setOpenSteps(o => !o)}>
+              {openSteps ? '▾' : '▸'} 制作过程 · {turn.steps.length} 步
+            </button>
+            {openSteps && turn.steps.length > 8 && (
+              <button className="process-expand" onClick={() => setOpenStepsFull(v => !v)}>
+                {openStepsFull ? '收起' : '展开全部'}
+              </button>
+            )}
+          </div>
           {openSteps && (
-            <div className="process-steps">
+            <div className={`process-steps ${openStepsFull ? 'full' : ''}`}>
               {turn.steps.map(s => (
                 <div key={s.callId} className={`step ${s.done ? (s.isError ? 'err' : 'ok') : 'running'}`}>
                   {s.done ? (s.isError ? '✕' : '✓') : '◌'} {stepLabel(s.name)}

@@ -158,6 +158,64 @@ function tailLines(text: string, lines: number): string {
   return text.split(/\r?\n/).slice(-Math.max(1, lines)).join('\n')
 }
 
+/**
+ * 失败时的可读日志尾部：install.log / client-console.log / latest.log 各取最后 20 行，
+ * 总长度截断。already 里已包含的日志段不重复贴（installClient 自己会带 install.log 尾部）。
+ */
+function logTails(clientDir: string | undefined, already = '', maxChars = 6000): string {
+  const files: { label: string; path: string }[] = [
+    { label: 'install.log', path: INSTALL_LOG },
+    { label: 'client-console.log', path: CONSOLE_LOG },
+    { label: 'latest.log', path: join(clientDir ?? MINECRAFT_DIR, 'logs', 'latest.log') },
+  ]
+  const parts: string[] = []
+  for (const f of files) {
+    if (!existsSync(f.path)) continue
+    const tail = tailLines(readText(f.path), 20).trim()
+    if (!tail || (already && already.includes(tail.slice(-200)))) continue
+    parts.push(`--- ${f.label}（最后 20 行）---\n${tail}`)
+  }
+  if (!parts.length) return ''
+  let text = parts.join('\n')
+  if (text.length > maxChars) text = `…（日志已截断）\n${text.slice(-maxChars)}`
+  return `\n日志尾部：\n${text}`
+}
+
+/**
+ * 启动前预检：Java 可执行、自定义客户端目录存在、mods 目录可创建/可写。
+ * 在安装/同步等耗时步骤之前失败，错误信息可直接展示给用户。
+ */
+function preflight(opts: TestClientOptions) {
+  const home = javaHome()
+  if (!home) throw new Error(JAVA_HINT)
+  const exe = javaExe()
+  const probeJava = spawnSync(exe, ['-version'], { encoding: 'utf8', windowsHide: true, timeout: 15_000 })
+  if (probeJava.error || probeJava.status !== 0) {
+    throw new Error(`Java 无法运行（${exe}）：${probeJava.error?.message ?? `退出码 ${probeJava.status}`}。${JAVA_HINT}`)
+  }
+  const custom = String(opts.testClientDir ?? '').trim()
+  let modsParent = MINECRAFT_DIR
+  if (custom) {
+    const dir = resolve(custom)
+    let info: any
+    try { info = statSync(dir) } catch { /* 不存在 */ }
+    if (!info?.isDirectory()) throw new Error(`测试客户端目录不存在或不是目录：${dir}`)
+    modsParent = dir
+  }
+  const mods = join(modsParent, 'mods')
+  try { mkdirSync(mods, { recursive: true }) } catch {
+    throw new Error(`mods 目录不可创建：${mods}`)
+  }
+  const probe = join(mods, `.openmods-write-test-${process.pid}`)
+  try {
+    writeFileSync(probe, '')
+    unlinkSync(probe)
+  } catch {
+    try { unlinkSync(probe) } catch { /* 已不存在 */ }
+    throw new Error(`mods 目录不可写：${mods}`)
+  }
+}
+
 function readState(): TestClientState {
   try {
     const s = JSON.parse(readFileSync(STATE_FILE, 'utf8')) as TestClientState
@@ -891,11 +949,19 @@ function launch(clientDir: string, selected: TestClientState['selected'], env?: 
 export async function startTestClient(jars: TestClientJar[], opts: TestClientOptions = {}): Promise<void> {
   if (busy) throw new Error('测试客户端正在安装或启动，请稍候')
   if (!jars.length) throw new Error('至少选择一个 jar')
+  const selected = jars.map(j => ({ name: j.name, source: j.source }))
+  // 预检失败不进入安装流程：错误写进状态，前端 phase=error + error 里能看到原因
+  try {
+    preflight(opts)
+  } catch (e: any) {
+    const msg = e?.message ?? String(e)
+    writeState({ phase: 'error', selected, error: msg })
+    throw new Error(msg)
+  }
   busy = true
   // 同一时间只保留一个测试客户端：先停旧进程，避免 jar 被占用/双开
   const prev = readState()
   if (prev.pid && pidAlive(prev.pid)) stopTestClient()
-  const selected = jars.map(j => ({ name: j.name, source: j.source }))
   const mode = opts.testClientMode ?? 'auto'
   // production 只走联网安装器/testClientDir；auto/mdk 优先用本机 MDK 缓存离线组装
   const env = mode === 'production' ? undefined : resolveMdkEnv(opts.testMdkDir)
@@ -914,9 +980,13 @@ export async function startTestClient(jars: TestClientJar[], opts: TestClientOpt
     syncMods(join(clientDir, 'mods'), jars)
     launch(clientDir, selected, env, runDir)
   } catch (e: any) {
-    writeState({ phase: 'error', selected, runDir, error: e?.message ?? String(e) })
+    // ensureClient / syncMods / launch 失败：把三份日志的尾部一并带上，前端直接能看到原因
+    const base = e?.message ?? String(e)
+    const clientDir = String(opts.testClientDir ?? '').trim() ? resolve(String(opts.testClientDir)) : MINECRAFT_DIR
+    const msg = `${base}${logTails(clientDir, base)}`
+    writeState({ phase: 'error', selected, runDir, error: msg })
     archiveRun({ phase: 'error', selected, runDir, startedAt: Date.now() })
-    throw e
+    throw new Error(msg)
   } finally {
     busy = false
   }
@@ -947,8 +1017,17 @@ export function getTestClientStatus(tail = 120): TestClientStatus {
   else if (alive) phase = /Sound engine started/.test(log) ? 'running' : 'starting'
   else if (s.phase === 'exited' || s.pid) phase = 'exited'
   else phase = 'idle'
-  // 安装阶段优先看安装器日志：上一次启动的 console 还留在盘上，不能拿来当本次进度
-  const source = s.phase === 'installing' ? (readText(INSTALL_LOG) || console) : (log || console)
+  const installLog = readText(INSTALL_LOG)
+  // 安装阶段优先看安装器日志：上一次启动的 console 还留在盘上，不能拿来当本次进度。
+  // error 阶段把三份日志都带上（安装失败时 latest.log 往往还不存在），确保前端看得到原因。
+  const errorSource = [
+    log ? `--- latest.log ---\n${log}` : '',
+    console ? `--- client-console.log ---\n${console}` : '',
+    installLog ? `--- install.log ---\n${installLog}` : '',
+  ].filter(Boolean).join('\n')
+  const source = s.phase === 'installing' ? (installLog || console)
+    : s.phase === 'error' ? errorSource
+      : (log || console)
   const parseText = s.phase === 'installing' ? readText(INSTALL_LOG) : collectLogText(s)
   const selected = Array.isArray(s.selected) ? s.selected : []
   const selectedNames = new Set(selected.map(x => basename(x.name).toLowerCase()))

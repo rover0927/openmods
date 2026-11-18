@@ -1,4 +1,4 @@
-﻿﻿/* ==========================================================================
+﻿﻿﻿﻿/* ==========================================================================
    openmods · Minecraft 像素皮肤
    在 styles.css 之后加载：只覆盖令牌与组件选择器，不改原有布局规则。
    素材：物品图标 / 方块贴图来自 Minecraft 官方资源（public/mc），仅本地原型用途。
@@ -1193,6 +1193,40 @@ body,
 }
 .log-level { border-radius: 0; background: rgba(0, 0, 0, 0.35); }
 .log-row { border-bottom-color: rgba(255, 255, 255, 0.05); }
+
+/* 日志抽屉两栏 + 构建日志：像素标签与槽位 */
+.log-tab {
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
+  border-radius: 0;
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.35);
+}
+.log-tab.on {
+  background: var(--mc-accent-dim);
+  color: var(--mc-accent-text);
+  border-color: var(--mc-accent-deep) var(--mc-accent-soft) var(--mc-accent-soft) var(--mc-accent-deep);
+}
+.build-log-list,
+.build-log-text {
+  background: #0f0f0f;
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
+  border-radius: 0;
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.5);
+}
+.build-log-row {
+  background: var(--mc-slot);
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
+  border-radius: 0;
+}
+.build-log-row.on {
+  background: var(--mc-accent-dim);
+  border-color: var(--mc-accent-deep) var(--mc-accent-soft) var(--mc-accent-soft) var(--mc-accent-deep);
+}
+.build-log-state { border-radius: 0; background: rgba(0, 0, 0, 0.3); }
+.term-tab-state { border-radius: 0; background: rgba(0, 0, 0, 0.25); }
 .about-dialog {
   background: var(--mc-slot);
   border: 2px solid;

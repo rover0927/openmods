@@ -638,6 +638,21 @@ export interface LogsDto {
   file: string
 }
 
+/** 构建日志（GET /api/build-logs 的列表项；单条详情再带 text） */
+export interface BuildLogMetaDto {
+  id: string
+  project: string
+  task: string
+  startedAt: number
+  /** 缺省 = 还在构建中 */
+  finishedAt?: number
+  ok: boolean
+  exitCode?: number
+  /** 构建产物 jar（失败时可能没有） */
+  jarPath?: string
+  logPath: string
+}
+
 /** 自更新：本地与 GitHub main 的差异（/api/update/status） */
 export interface UpdateCommitDto {
   sha: string

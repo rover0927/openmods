@@ -8,6 +8,18 @@ function statusText(t: TerminalDto): string {
   return `已退出 ${t.exitCode ?? '?'}${t.signal ? ` · ${t.signal}` : ''}`
 }
 
+function dotClass(t: TerminalDto): string {
+  if (t.status === 'running') return 'ongoing'
+  return t.exitCode === 0 ? 'done' : 'err'
+}
+
+function fmtClock(ts?: number): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
 export function TerminalPane(props: {
   terminals: TerminalDto[]
   /** terminalId → 已累积的输出 */
@@ -64,13 +76,14 @@ export function TerminalPane(props: {
         {terminals.map(t => (
           <button
             key={t.id}
-            className={`term-tab ${active?.id === t.id ? 'active' : ''}`}
+            className={`term-tab ${active?.id === t.id ? 'active' : ''} ${t.status === 'exited' ? 'exited' : ''}`}
             onClick={() => props.onSelect(t.id)}
-            title={`${t.command || 'shell'} · ${t.cwd}`}
+            title={`${t.command || 'shell'} · ${t.cwd} · ${statusText(t)}${t.endedAt ? ` · 结束于 ${fmtClock(t.endedAt)}` : ''}`}
           >
-            <span className={`state-dot ${t.status === 'running' ? 'ongoing' : 'idle'}`} />
+            <span className={`state-dot ${dotClass(t)}`} />
             <span className="term-tab-id">{t.id}</span>
             <span className="term-tab-title">{t.title || t.command || 'shell'}</span>
+            {t.status === 'exited' && <span className="term-tab-state">已退出</span>}
             <span
               className="term-tab-close"
               role="button"
@@ -94,7 +107,10 @@ export function TerminalPane(props: {
       {active && (
         <>
           <div className="term-meta">
-            <span className="term-state">{statusText(active)}</span>
+            <span className={`term-state ${active.status === 'exited' ? 'exited' : ''}`}>
+              {statusText(active)}
+              {active.endedAt ? ` · 结束于 ${fmtClock(active.endedAt)}` : ''}
+            </span>
             <span className="dim term-cwd" title={active.cwd}>{active.cwd}</span>
             {active.status === 'running' && (
               <button className="term-kill" onClick={() => props.onKill(active.id)} title="结束这个终端（整棵进程树）">■ 结束</button>
