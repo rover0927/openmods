@@ -68,14 +68,33 @@ git clone https://github.com/rover0927/openmods.git
 cd openmods
 npm install
 npm run build:bbcanvas   # 从 ../blockbench 构建无头画布（仓库已带产物，跳过亦可）
+
+# 必做：下载离线构建包（约 224MB，Gradle 8.8 + ForgeGradle 缓存）
+# 不下载的话，首次构建/运行 Minecraft 客户端会临时联网补齐依赖，慢且受镜像影响
+curl -L -o openmods-vendor.zip \
+  https://github.com/rover0927/openmods/releases/latest/download/openmods-vendor.zip
+mkdir -p plugins/mcdev/vendor
+tar -xf openmods-vendor.zip -C plugins/mcdev/vendor
+# 解压后顶层应直接是 gradle-8.8/ 与 fg-maven/，不要再套一层 openmods-vendor/
+
+# 可选：测试客户端离线包（约 141MB），免去「测试 Mod」时联网安装
+curl -L -o openmods-test-client.zip \
+  https://github.com/rover0927/openmods/releases/latest/download/openmods-test-client.zip
+mkdir -p data/mc-test-client
+tar -xf openmods-test-client.zip -C data/mc-test-client
+# 解压后顶层应直接是 .minecraft/
+
 cp .env.example .env     # 按需修改；默认 MOCK=0（真实 LLM）
 npm start                # 生产：自动构建前端 → 单进程 http://127.0.0.1:8787
 # npm run dev            # 调试：tsx watch + vite 热更新（:8787 + :5173）
 ```
 
+> [!IMPORTANT]
+> **构建包是必做步骤**：`openmods-vendor.zip` 必须解压到 `plugins/mcdev/vendor/`（得到 `plugins/mcdev/vendor/gradle-8.8/` 与 `plugins/mcdev/vendor/fg-maven/`）。也可以在启动后到 设置 → 环境 的 Gradle 卡片点「GitHub 官方 / Release API」一键下载，效果相同。
+
 访问 `http://127.0.0.1:8787`：
 
-首次打开会先弹出 **环境检测**：JDK 17 / Gradle 缓存 / Git。已下载 vendor 时缓存会显示「就绪」；也可以「稍后配置」，随时在 设置 → 环境 修改。
+首次打开会先弹出 **环境检测**：JDK 17 / Gradle 缓存 / Git / 测试客户端。已下载 vendor 时缓存会显示「就绪」；也可以「稍后配置」，随时在 设置 → 环境 修改。
 
 1. 左栏顶部「**新建项目**」建一个项目（可关联电脑上的文件夹）；
 2. 在「**会话**」分区头部点 `＋`（或在项目行点 `＋`）新建会话；
