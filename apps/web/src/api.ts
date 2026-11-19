@@ -74,6 +74,13 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ baseURL, route: opts?.route, apiKey: opts?.apiKey }),
     }),
+  /** 视觉能力实测：给每个模型发一张极小图片，返回 true/false/null（未知） */
+  probeVision: (baseURL: string, models: string[], opts?: { route?: string; apiKey?: string }) =>
+    jfetch<{ results: { id: string; vision: boolean | null; error?: string }[] }>('/api/settings/probe-vision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseURL, models, route: opts?.route, apiKey: opts?.apiKey }),
+    }),
   createSession: (projectId?: string, cwd?: string) =>
     jfetch<{ id: string; projectId?: string; cwd?: string }>('/api/sessions', {
       method: 'POST',

@@ -1803,6 +1803,73 @@ app.post('/api/settings/discover-models', async (req, reply) => {
   }
 })
 
+// ---- 视觉能力实测：给每个模型发一张极小图片，按响应判断是否真的支持图片输入 ----
+/** 16×16 纯色 PNG：部分网关拒绝 1×1（要求宽高 > 10） */
+const VISION_PROBE_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAdSURBVDhPYzghJ/efEsyALkAqHjVg1IBRAwaLAQAG2gMfuJdtFgAAAABJRU5ErkJggg=='
+
+app.post('/api/settings/probe-vision', async (req, reply) => {
+  const body = (req.body ?? {}) as { baseURL?: string; route?: string; apiKey?: string; models?: unknown }
+  const base = String(body.baseURL ?? '').trim().replace(/\/+$/, '')
+  if (!base) return reply.code(400).send({ error: 'baseURL 不能为空' })
+  const apiKey = body.apiKey?.trim() || (body.route ? settingsStore.getCredential(body.route) : undefined)
+  const ids = Array.isArray(body.models)
+    ? [...new Set(body.models.map(v => String(v ?? '').trim()).filter(Boolean))]
+    : []
+  if (!ids.length) return reply.code(400).send({ error: 'models 不能为空' })
+
+  const results: { id: string; vision: boolean | null; error?: string }[] = []
+  const queue = [...ids]
+  const probeOne = async (id: string) => {
+    try {
+      const res = await fetch(`${base}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model: id,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: '只回复 OK' },
+              { type: 'image_url', image_url: { url: VISION_PROBE_IMAGE } },
+            ],
+          }],
+          max_tokens: 4,
+        }),
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (res.ok) { results.push({ id, vision: true }); return }
+      const detail = (await res.text().catch(() => '')).slice(0, 500)
+      const lower = detail.toLowerCase()
+      // 鉴权 / 余额 / 服务不可用：能力未知，不当作不支持
+      if (res.status === 401 || res.status === 402 || res.status === 403 || res.status === 404 || res.status >= 500) {
+        results.push({ id, vision: null, error: `HTTP ${res.status}${/balance|余额/.test(lower) ? '（余额不足）' : ''}` })
+        return
+      }
+      // 明确拒绝图片输入
+      if (/(only supports? text|does not support|not support|unsupported).{0,40}(image|vision|multimodal|image_url|modality)|仅支持文本|不支持(图片|图像|视觉)/i.test(detail)) {
+        results.push({ id, vision: false })
+        return
+      }
+      // 图片被接收但尺寸/格式不合规，说明链路本身支持图片输入
+      if (/image/i.test(lower) && /(length and width|dimension|width|height|resolution|format|size|尺寸|分辨率)/i.test(lower)) {
+        results.push({ id, vision: true })
+        return
+      }
+      results.push({ id, vision: null, error: `HTTP ${res.status} ${detail.slice(0, 160)}` })
+    } catch (e: any) {
+      results.push({ id, vision: null, error: e?.name === 'TimeoutError' ? '超时（30s）' : (e?.message ?? String(e)) })
+    }
+  }
+  const worker = async () => { while (queue.length) await probeOne(queue.shift()!) }
+  await Promise.all(Array.from({ length: Math.min(4, ids.length) }, worker))
+  // 按请求顺序返回，前端逐行对齐
+  const byId = new Map(results.map(r => [r.id, r]))
+  return { results: ids.map(id => byId.get(id) ?? { id, vision: null, error: '未探测' }) }
+})
+
 // ---- 会话 ----
 app.post('/api/sessions', async (req, reply) => {
   // 先清一遍历史空会话：点「新对话」不再立即建会话（前端惰性），但旧客户端/残留还是会产生

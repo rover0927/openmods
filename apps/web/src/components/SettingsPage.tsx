@@ -156,6 +156,8 @@ export function SettingsPage(props: {
   const [adding, setAdding] = useState(false)
   const [saving, setSaving] = useState(false)
   const [discovering, setDiscovering] = useState<string | null>(null)
+  /** 正在实测视觉能力的供应商 */
+  const [probing, setProbing] = useState<string | null>(null)
   /** mod-output 输入草稿：null = 沿用已保存值（失焦/回车才落盘，避免每键一次 PUT） */
   const [modOutputDraft, setModOutputDraft] = useState<string | null>(null)
   /** 测试客户端目录草稿（同上） */
@@ -232,6 +234,49 @@ export function SettingsPage(props: {
       props.onToast(`自动获取失败：${e.message}`)
     } finally {
       setDiscovering(null)
+    }
+  }
+
+  /**
+   * 实测视觉能力：给每个模型发一张 16×16 图片，按响应判断。
+   * 与「按名字猜」不同，结果是网关真实行为；余额不足/模型不可用的行保持原值并提示未知。
+   */
+  const probeVision = async (route: string) => {
+    const d = draft[route]
+    if (!d?.baseURL?.trim()) {
+      props.onToast('请先填写 Base URL')
+      return
+    }
+    const ids = [...new Set(d.models.map(m => m.id).filter(Boolean))]
+    if (!ids.length) {
+      props.onToast('模型目录为空，先自动获取或手动添加模型')
+      return
+    }
+    setProbing(route)
+    try {
+      const res = await api.probeVision(d.baseURL.trim(), ids, {
+        route,
+        apiKey: d.apiKeyInput.trim() || undefined,
+      })
+      const byId = new Map(res.results.map(r => [r.id, r]))
+      setDraft(prev => ({
+        ...prev,
+        [route]: {
+          ...prev[route],
+          models: prev[route].models.map(m => {
+            const hit = byId.get(m.id)
+            return hit && hit.vision !== null ? { ...m, vision: hit.vision } : m
+          }),
+        },
+      }))
+      const yes = res.results.filter(r => r.vision === true).length
+      const no = res.results.filter(r => r.vision === false).length
+      const unknown = res.results.length - yes - no
+      props.onToast(`✓ 视觉实测：${yes} 个支持 / ${no} 个不支持${unknown ? ` / ${unknown} 个未知（余额或服务不可用）` : ''}，保存后生效`)
+    } catch (e: any) {
+      props.onToast(`视觉检测失败：${e.message}`)
+    } finally {
+      setProbing(null)
     }
   }
 
@@ -810,6 +855,12 @@ export function SettingsPage(props: {
                     title="向 Base URL 的 /models 端点探测模型列表并自动填充"
                     onClick={() => discover(route)}
                   >{discovering === route ? '获取中…' : '⟳ 自动获取'}</button>
+                  <button
+                    className="btn ghost"
+                    disabled={probing === route || discovering === route}
+                    title="逐个模型发一张 16×16 图片，实测是否真的支持图片输入（会产生少量调用费用）"
+                    onClick={() => void probeVision(route)}
+                  >{probing === route ? '检测中…' : '👁 检测视觉'}</button>
                   <button className="btn ghost" onClick={() => patchProvider(route, {
                     models: [...d.models, { id: `model-${d.models.length + 1}`, name: '', contextWindow: 131072 }],
                   })}>＋ 添加模型</button>
