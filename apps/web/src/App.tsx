@@ -9,6 +9,7 @@ import { EMPTY_CONTEXT_STATS } from './types.js'
 import { LeftSidebar } from './components/LeftSidebar.js'
 import { LibraryDrawer } from './components/LibraryDrawer.js'
 import { LogDrawer } from './components/LogDrawer.js'
+import { JavaMonitor } from './components/JavaMonitor.js'
 import { AboutDialog } from './components/AboutDialog.js'
 import { MainPanel } from './components/MainPanel.js'
 import { DOCK_TABS, RightDock, useDockDrag, type DockTabId } from './components/RightDock.js'
@@ -1842,6 +1843,7 @@ export default function App() {
         sessionId={sessionId}
         mcEnabled={featureOn('mc')}
       />
+      {featureOn('mc') && <JavaMonitor onToast={showToast} />}
       <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} onToast={showToast} />
       {interactions[0] && (
         <AskDialog key={interactions[0].id} ask={interactions[0]} onSubmit={submitInteraction} />

@@ -2135,6 +2135,77 @@ select.think-chip option { background: var(--bg-layer-2); color: var(--label-pri
 .todo-panel-check.in_progress { border-color: var(--accent); color: var(--accent); }
 .todo-panel-text { flex: 1; min-width: 0; word-break: break-word; }
 .todo-panel-now { flex: none; font-size: 10.5px; color: var(--accent); }
+
+/* ---- Java 后台进程浮窗（Gradle daemon / 启动器 / MC 客户端） ---- */
+.java-monitor {
+  position: fixed; right: 18px; bottom: 18px; z-index: 950;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+}
+.jm-toggle {
+  position: relative; width: 40px; height: 40px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: linear-gradient(#8b8b8b, #6f6f6f);
+  border: 2px solid; border-color: #b9b9b9 #2b2b2b #2b2b2b #b9b9b9;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35);
+}
+.jm-toggle:hover { background: linear-gradient(#9c9c9c, #7f7f7f); }
+.jm-toggle.has { border-color: #9fe07a #2b4d1f #2b4d1f #9fe07a; }
+.jm-toggle img { image-rendering: pixelated; }
+.jm-badge {
+  position: absolute; top: -6px; right: -6px;
+  min-width: 16px; height: 16px; padding: 0 3px;
+  background: var(--danger); color: #fff;
+  font-size: 10px; line-height: 16px; text-align: center;
+  border: 1px solid #000;
+}
+.jm-panel {
+  width: min(400px, calc(100vw - 36px)); max-height: min(46vh, 360px);
+  display: flex; flex-direction: column;
+  background: var(--mc-panel-2, var(--bg-layer-2));
+  border: 2px solid;
+  border-color: #7a7a7a var(--mc-groove, #111) var(--mc-groove, #111) #7a7a7a;
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+.jm-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; flex: none;
+  background: linear-gradient(#6f6f6f, #5a5a5a);
+  border-bottom: 2px solid var(--mc-groove, #111);
+  color: #f4f4f4; font-size: 12px;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.55);
+}
+.jm-title { font-weight: 600; }
+.jm-count { font-size: 11px; color: #d8d8d8; }
+.jm-gap { flex: 1; }
+.jm-close { margin-left: auto; width: 20px; height: 20px; color: #f4f4f4; }
+.jm-close:hover { color: #fff; background: rgba(0, 0, 0, 0.2); }
+.jm-error { padding: 6px 10px; font-size: 11px; color: var(--danger); }
+.jm-list { flex: 1; min-height: 0; overflow: auto; padding: 6px 8px; }
+.jm-empty { padding: 8px 4px; font-size: 11.5px; color: var(--label-caption); }
+.jm-row { padding: 5px 2px; border-bottom: 1px solid var(--border-l1); }
+.jm-row:last-child { border-bottom: 0; }
+.jm-row-main { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--label-tertiary); }
+.jm-kind {
+  flex: none; padding: 1px 5px;
+  font-size: 10px; color: #16110c; background: #9b8c78;
+}
+.jm-kind.gradle-daemon { background: #8bdc5a; }
+.jm-kind.gradle-launcher { background: #e0c060; }
+.jm-kind.minecraft-client { background: #7aaaff; }
+.jm-pid { font-family: ui-monospace, Consolas, 'Courier New', monospace; color: var(--label-secondary); }
+.jm-stat { font-variant-numeric: tabular-nums; }
+.jm-kill { margin-left: auto; }
+.jm-cmd {
+  margin-top: 2px;
+  font-family: ui-monospace, Consolas, 'Courier New', monospace;
+  font-size: 10px; line-height: 14px; color: var(--label-caption);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.jm-foot {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; flex: none;
+  border-top: 2px solid var(--mc-groove, #111);
+}
 .plan-seg { align-self: flex-start; }
 .allowed-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11.5px; }
 .allowed-tool { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--bg-layer-3); color: var(--label-tertiary); }

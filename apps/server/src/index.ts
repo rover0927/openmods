@@ -27,6 +27,7 @@ import { createInteractionHub, type InteractionReply, type PendingInteraction } 
 import { createTerminalManager } from './terminals.js'
 import { installLogCapture, getLogs, logFilePath } from './log-bus.js'
 import { listBuildLogs, readBuildLog } from './build-logs.js'
+import { killJavaProcess, killJavaProcesses, listJavaProcesses } from './java-procs.js'
 import { applyUpdate, getUpdateStatus } from './update.js'
 import {
   getTestClientStatus, startTestClient, stopTestClient, testClientBusy, type TestClientJar,
@@ -1336,6 +1337,21 @@ app.get('/api/logs', async (req) => {
   const limit = Number((req.query as any)?.limit ?? 300)
   const result = getLogs(Number.isFinite(after) ? after : 0, Number.isFinite(limit) ? limit : 300)
   return { ...result, file: logFilePath() }
+})
+
+// ---- Java / Gradle 后台进程（前端浮窗自动检测 + 手动结束） ----
+app.get('/api/procs/java', async () => listJavaProcesses())
+
+app.post('/api/procs/java/kill', async (req, reply) => {
+  const body = (req.body ?? {}) as { pid?: number }
+  const r = killJavaProcess(Number(body.pid))
+  if (!r.ok) return reply.code(400).send({ error: r.error })
+  return { ok: true }
+})
+
+app.post('/api/procs/java/kill-all', async (req) => {
+  const body = (req.body ?? {}) as { includeClient?: boolean }
+  return killJavaProcesses({ includeClient: !!body.includeClient })
 })
 
 // 自更新：只检查 GitHub main；apply 由用户手动触发（git pull + 前端重建）

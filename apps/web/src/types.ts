@@ -742,6 +742,23 @@ export interface McRunLogDto {
   text: string
 }
 
+/** Java 后台进程（Gradle daemon / gradlew 启动器 / Minecraft 客户端） */
+export interface JavaProcDto {
+  pid: number
+  ppid: number
+  kind: 'gradle-daemon' | 'gradle-launcher' | 'minecraft-client'
+  cmd: string
+  memoryMB: number
+  cpuSec: number
+  startedAt: number
+}
+
+export interface JavaProcsDto {
+  ok: boolean
+  error?: string
+  processes: JavaProcDto[]
+}
+
 // ---- 设置 → 代理与技能 ----
 export interface AgentToolMetaDto {
   name: string

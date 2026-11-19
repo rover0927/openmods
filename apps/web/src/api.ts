@@ -303,6 +303,22 @@ export const api = {
   /** 单条构建日志的完整文本 */
   buildLog: (id: string) =>
     jfetch<BuildLogMetaDto & { text: string }>(`/api/build-logs/${encodeURIComponent(id)}`),
+  /** Java / Gradle 后台进程（Gradle daemon / 启动器 / Minecraft 客户端） */
+  javaProcs: () => jfetch<import('./types.js').JavaProcsDto>('/api/procs/java'),
+  /** 结束一个受监控的 Java 进程 */
+  killJavaProc: (pid: number) =>
+    jfetch<{ ok: boolean }>('/api/procs/java/kill', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pid }),
+    }),
+  /** 批量结束：默认只结束 Gradle，includeClient 时连 Minecraft 客户端一起 */
+  killAllJavaProcs: (includeClient: boolean) =>
+    jfetch<{ ok: boolean; killed: number[]; failed: { pid: number; error: string }[] }>('/api/procs/java/kill-all', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ includeClient }),
+    }),
   /** 自更新：检查 openmods main 与本地差异 */
   updateStatus: () => jfetch<UpdateStatusDto>('/api/update/status'),
   /** 自更新：手动确认后 git pull + 重建前端 */
