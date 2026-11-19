@@ -204,21 +204,28 @@ export function SettingsPage(props: {
         apiKey: d.apiKeyInput.trim() || undefined,
       })
       const found = res.models
-      setDraft(prev => ({
-        ...prev,
-        [route]: {
-          ...prev[route],
-          models: found.map(m => ({
-            id: m.id,
-            name: m.name ?? m.id,
-            // 发现的上下文窗口直接写入卡片；模态映射成视觉开关
-            contextWindow: m.contextWindow,
-            vision: m.inputModalities ? m.inputModalities.includes('image') : undefined,
-            reasoningEfforts: m.reasoningEfforts,
-            reasoningDefault: m.reasoningDefault,
-          })),
-        },
-      }))
+      setDraft(prev => {
+        // 端点通常只给模型 id：按 id 合并，保留用户此前手填的上下文/视觉/思考档位，
+        // 避免一次「自动获取」把它们全部抹成空（视觉被置空后运行时就会把图片丢掉）。
+        const oldById = new Map((prev[route]?.models ?? []).map(m => [m.id, m]))
+        return {
+          ...prev,
+          [route]: {
+            ...prev[route],
+            models: found.map(m => {
+              const old = oldById.get(m.id)
+              return {
+                id: m.id,
+                name: old?.name && old.name !== old.id ? old.name : (m.name ?? m.id),
+                contextWindow: m.contextWindow ?? old?.contextWindow,
+                vision: m.inputModalities ? m.inputModalities.includes('image') : old?.vision,
+                reasoningEfforts: m.reasoningEfforts ?? old?.reasoningEfforts,
+                reasoningDefault: m.reasoningDefault ?? old?.reasoningDefault,
+              }
+            }),
+          },
+        }
+      })
       const thinkCount = found.filter(m => m.reasoningEfforts?.length).length
       props.onToast(`✓ 自动获取到 ${found.length} 个模型（含上下文/视觉${thinkCount ? `，${thinkCount} 个支持思考强度` : ''}，保存后生效）`)
     } catch (e: any) {

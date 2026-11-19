@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ModelInfo } from '@openmods/agent-core'
+import { inferModelCapabilities, inferReasoningEfforts } from './model-caps.js'
 
 export interface ProviderModel {
   id: string
@@ -54,9 +55,6 @@ export const DEEPSEEK_DEFAULT_MODELS: ProviderModel[] = [
     inputModalities: ['text'],
   },
 ]
-
-/** dsh `DEFAULT_CONTEXT_WINDOW`：完全无可依据信息时的上下文窗口兜底 */
-export const DEFAULT_CONTEXT_WINDOW = 1_000_000
 
 export interface BridgeConfig {
   enabled: boolean
@@ -386,13 +384,18 @@ export class SettingsStore {
       const hasKey = !!this.getCredential(route) || mock
       for (const m of p.models) {
         const composite = `${route}/${m.id}`
-        // 复刻 dsh `modelInfo()`：目录条目优先，未声明的字段回落到官方默认目录 → provider 兜底 → 全局默认。
-        // 于是用户只写 {id,name} 也能拿到 deepseek-flash 的图像能力与 1M 窗口。
+        // 复刻 dsh `modelInfo()`：目录条目优先，未声明的字段回落到官方默认目录 → provider 兜底 → 模型名推断。
+        // 于是用户只写 {id,name} 也能拿到 deepseek-flash 的图像能力；网关模型（gpt-5/6）也能按名字补上下文与视觉。
         const fallback = route === 'deepseek' ? DEEPSEEK_DEFAULT_MODELS.find(d => d.id === m.id) : undefined
+        // 端点/设置都没声明时按模型名兜底：gpt-5/6 这类网关模型也能正确拿到视觉与上下文
+        const inferred = inferModelCapabilities(m.id)
         const inputModalities = m.inputModalities
           ?? fallback?.inputModalities
-          ?? (m.vision ? ['text', 'image'] : ['text'])
-        const vision = m.vision ?? inputModalities.includes('image')
+          ?? (m.vision !== undefined
+            ? (m.vision ? ['text', 'image'] : ['text'])
+            : inferred.vision === true ? ['text', 'image'] : ['text'])
+        const vision = m.vision ?? fallback?.inputModalities?.includes('image')
+          ?? inferred.vision ?? inputModalities.includes('image')
         out[composite] = {
           displayName: (m.name && m.name !== m.id) ? m.name : (fallback?.name ?? m.name ?? m.id),
           badge: m.badge ?? fallback?.badge,
@@ -403,12 +406,14 @@ export class SettingsStore {
           providerName: p.displayName,
           disabled: m.memberOnly ? true : (!hasKey && !mock),
           disabledReason: m.memberOnly ? '需会员' : ((!hasKey && !mock) ? '未配置 API key' : undefined),
-          contextWindow: m.contextWindow ?? fallback?.contextWindow ?? p.defaultContextWindow ?? DEFAULT_CONTEXT_WINDOW,
+          // 未声明的上下文窗口不再回落到 1M：那只是运行时兜底，展示成“已检测”会误导用户。
+          // 先按模型名推断；仍未知就留空，用户可手填（运行时按 1M 兜底，COMPACTION_CONTEXT_WINDOW 可覆盖）。
+          contextWindow: m.contextWindow ?? fallback?.contextWindow ?? p.defaultContextWindow ?? inferred.contextWindow,
           vision,
           inputModalities,
           maxOutputTokens: m.maxOutputTokens ?? fallback?.maxOutputTokens,
           // 只输出模型自己声明的档位；不支持 / 未检测到就留空，由输入框隐藏
-          reasoningEfforts: m.reasoningEfforts,
+          reasoningEfforts: m.reasoningEfforts ?? inferReasoningEfforts(m.id),
           reasoningDefault: m.reasoningDefault,
         }
       }

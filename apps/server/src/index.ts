@@ -28,6 +28,7 @@ import { createTerminalManager } from './terminals.js'
 import { installLogCapture, getLogs, logFilePath } from './log-bus.js'
 import { listBuildLogs, readBuildLog } from './build-logs.js'
 import { killJavaProcess, killJavaProcesses, listJavaProcesses } from './java-procs.js'
+import { inferModelCapabilities, inferReasoningEfforts } from './model-caps.js'
 import { applyUpdate, getUpdateStatus } from './update.js'
 import {
   getTestClientStatus, startTestClient, stopTestClient, testClientBusy, type TestClientJar,
@@ -1674,57 +1675,6 @@ app.put('/api/settings/credentials/:route', async (req, reply) => {
 })
 
 // 模型发现：向 OpenAI 兼容端点探测 /models（复刻 dsh llm.discoverModels）
-/**
- * 能力解析：端点声明优先，模型名兜底。
- * `llm-pi-ai` 的 discovery 解析：接受 data 数组或 models map，字段别名兼容各家网关。
- */
-/**
- * 端点没声明能力时的模型名兜底：上下文窗口 + 是否支持图片输入。
- * 只做保守的常见族匹配；命中不了就留空，交给用户在模型卡片里手填。
- */
-function inferModelCapabilities(id: string): { contextWindow?: number; vision?: boolean } {
-  const key = id.toLowerCase()
-  const rules: { test: RegExp; contextWindow?: number; vision?: boolean }[] = [
-    { test: /gpt-4\.1/, contextWindow: 1047576, vision: true },
-    { test: /gpt-4o/, contextWindow: 128000, vision: true },
-    { test: /gpt-4-turbo|gpt-4-vision/, contextWindow: 128000, vision: true },
-    { test: /gpt-4(?!o|-turbo|-vision)/, contextWindow: 8192, vision: false },
-    { test: /gpt-3\.5/, contextWindow: 16385, vision: false },
-    { test: /o[134](-|$)/, contextWindow: 200000, vision: true },
-    { test: /claude/, contextWindow: 200000, vision: true },
-    { test: /gemini-1\.5|gemini-2/, contextWindow: 1048576, vision: true },
-    { test: /gemini/, contextWindow: 32768, vision: true },
-    { test: /deepseek/, contextWindow: 65536, vision: false },
-    { test: /qwen.*(vl|vision)/, contextWindow: 131072, vision: true },
-    { test: /qwen/, contextWindow: 131072, vision: false },
-    { test: /llama.*vision|llava/, contextWindow: 131072, vision: true },
-    { test: /llama/, contextWindow: 128000, vision: false },
-    { test: /pixtral/, contextWindow: 128000, vision: true },
-    { test: /mistral/, contextWindow: 128000, vision: false },
-    { test: /glm-4.*v/, contextWindow: 8192, vision: true },
-    { test: /glm/, contextWindow: 128000, vision: false },
-    { test: /kimi|moonshot/, contextWindow: 131072, vision: false },
-    { test: /grok/, contextWindow: 131072, vision: true },
-    { test: /doubao.*vision/, contextWindow: 32768, vision: true },
-    { test: /doubao/, contextWindow: 32768, vision: false },
-  ]
-  return rules.find(r => r.test.test(key)) ?? {}
-}
-
-/**
- * 能力解析：端点声明优先，模型名兜底。
- * `llm-pi-ai` 的 discovery 解析：接受 data 数组或 models map，字段别名兼容各家网关。
- */
-/** 端点没声明推理档位时的模型名兜底；只覆盖明确支持 reasoning_effort 的族 */
-function inferReasoningEfforts(id: string): string[] | undefined {
-  const key = id.toLowerCase()
-  if (/gpt-5/.test(key)) return ['minimal', 'low', 'medium', 'high']
-  if (/(^|\/)o[134](-|$)/.test(key) || /o[134]-(mini|pro)/.test(key)) return ['low', 'medium', 'high']
-  if (/grok-(3-mini|4)/.test(key)) return ['low', 'high']
-  if (/gemini-2\.5/.test(key)) return ['low', 'high']
-  return undefined
-}
-
 /** 解析 /models 里的一条能力声明（上下文、模态、思考档位） */
 function normalizeListedModel(entry: any): { id: string; name?: string; contextWindow?: number; maxOutputTokens?: number; inputModalities?: string[]; reasoningEfforts?: string[]; reasoningDefault?: string } | undefined {
   if (typeof entry === 'string') entry = { id: entry }
