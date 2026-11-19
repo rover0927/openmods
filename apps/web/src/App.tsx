@@ -1693,6 +1693,7 @@ export default function App() {
         onBackToRoot={backToRoot}
         turns={turns}
         busy={busy}
+        todos={todos}
         waiting={waiting}
         streamChars={streamChars}
         elapsedSec={elapsedSec}

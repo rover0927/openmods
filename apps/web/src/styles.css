@@ -2092,6 +2092,49 @@ select.think-chip option { background: var(--bg-layer-2); color: var(--label-pri
 .todo-dot.completed { color: var(--success); }
 .todo-text { flex: 1; min-width: 0; word-break: break-word; }
 .todo-status { flex-shrink: 0; font-size: 11px; }
+
+/* ---- 输入框上方的 AI 任务清单（todo_write 实时投影） ---- */
+.todo-panel {
+  margin-bottom: 8px;
+  border-radius: var(--radius-md);
+  background: var(--bg-layer-1);
+  border: 1px solid var(--border-l1);
+  overflow: hidden;
+}
+.todo-panel-head {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 7px 10px;
+  background: transparent; color: var(--label-secondary);
+  font-size: 12px; text-align: left;
+}
+.todo-panel-head:hover { background: var(--interactive-hover); }
+.todo-panel-title { flex: none; color: var(--label-primary); font-weight: 600; }
+.todo-panel-count { flex: none; font-size: 11px; color: var(--label-caption); font-variant-numeric: tabular-nums; }
+.todo-panel-bar { flex: 1; min-width: 40px; height: 4px; border-radius: 2px; background: var(--bg-layer-3); overflow: hidden; }
+.todo-panel-bar > i { display: block; height: 100%; background: var(--success); transition: width 0.25s; }
+.todo-panel-chevron { flex: none; color: var(--label-caption); font-size: 11px; }
+.todo-panel-list {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 0 10px 8px; max-height: 176px; overflow: auto;
+}
+.todo-panel-row {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 3px 4px; border-radius: var(--radius-sm);
+  font-size: 12px; line-height: 17px; color: var(--label-secondary);
+}
+.todo-panel-row.in_progress { background: rgba(122, 170, 255, 0.1); color: var(--label-primary); }
+.todo-panel-row.completed { color: var(--label-caption); }
+.todo-panel-row.completed .todo-panel-text { text-decoration: line-through; }
+.todo-panel-check {
+  flex: none; width: 14px; height: 14px; margin-top: 1px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-l2); border-radius: 3px;
+  font-size: 9px; line-height: 1; color: var(--success);
+}
+.todo-panel-check.completed { border-color: rgba(90, 200, 120, 0.5); background: rgba(90, 200, 120, 0.15); }
+.todo-panel-check.in_progress { border-color: var(--accent); color: var(--accent); }
+.todo-panel-text { flex: 1; min-width: 0; word-break: break-word; }
+.todo-panel-now { flex: none; font-size: 10.5px; color: var(--accent); }
 .plan-seg { align-self: flex-start; }
 .allowed-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11.5px; }
 .allowed-tool { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--bg-layer-3); color: var(--label-tertiary); }

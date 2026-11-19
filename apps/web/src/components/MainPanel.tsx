@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type {
-  AgentProfileDto, ContextBreakdownDto, McProjectUiDto, ModelInfoDto, SessionInfoDto, SessionSummaryDto, StatsDto, SubagentWaitDto, TurnEntry,
+  AgentProfileDto, ContextBreakdownDto, McProjectUiDto, ModelInfoDto, SessionInfoDto, SessionSummaryDto, StatsDto, SubagentWaitDto, TodoItemDto, TurnEntry,
 } from '../types.js'
 import { SessionView } from './SessionView.js'
 import { McIcon } from './McIcon.js'
@@ -70,6 +70,8 @@ export function MainPanel(props: {
   mock: boolean
   /** 计划模式 / 授权 / 待处理交互（传给输入区与右侧拓展） */
   planMode: boolean
+  /** AI 任务清单（执行中显示在输入框上方） */
+  todos: TodoItemDto[] | null
   permission: 'ask' | 'auto'
   pendingAsks: number
   onTogglePlan: () => void
@@ -198,6 +200,7 @@ export function MainPanel(props: {
         sessionId={props.sessionId}
         turns={props.turns}
         busy={props.busy}
+        todos={props.todos}
         waiting={props.waiting}
         streamChars={props.streamChars}
         elapsedSec={props.elapsedSec}

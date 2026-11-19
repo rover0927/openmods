@@ -285,6 +285,52 @@ select.model-chip:focus {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 3px 0 rgba(0, 0, 0, 0.4);
 }
 
+/* 输入区上方的任务清单：MC 任务书面板（凸起外框 + 槽位进度条） */
+.todo-panel {
+  border: 2px solid;
+  border-color: #7a7a7a var(--mc-groove) var(--mc-groove) #7a7a7a;
+  border-radius: 0;
+  background: var(--mc-panel-2);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 3px 0 rgba(0, 0, 0, 0.35);
+}
+.todo-panel-head {
+  background: linear-gradient(#6f6f6f, #5a5a5a);
+  border-bottom: 2px solid var(--mc-groove);
+  color: #f4f4f4;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.55);
+}
+.todo-panel-head:hover { background: linear-gradient(#7d7d7d, #646464); }
+.todo-panel-title { color: #fff; }
+.todo-panel-count { color: #d8d8d8; }
+.todo-panel-bar {
+  height: 6px; border-radius: 0;
+  background: var(--mc-slot);
+  border: 1px solid var(--mc-slot-dark);
+}
+.todo-panel-bar > i { background: linear-gradient(#7ee787, #3f9d47); }
+.todo-panel-chevron { color: #d8d8d8; }
+.todo-panel-list { padding: 6px 8px 8px; gap: 3px; }
+.todo-panel-row { color: #cfcfcf; }
+.todo-panel-row.in_progress { background: rgba(122, 170, 255, 0.16); color: #fff; }
+.todo-panel-row.completed { color: #9a9a9a; }
+.todo-panel-check {
+  border: 2px solid;
+  border-color: var(--mc-slot-dark) #4a4a4a #4a4a4a var(--mc-slot-dark);
+  border-radius: 0;
+  background: var(--mc-slot);
+  color: #7ee787;
+}
+.todo-panel-check.completed {
+  border-color: #3f9d47 #1f4d26 #1f4d26 #3f9d47;
+  background: #2f6b36;
+  color: #c9ffcf;
+}
+.todo-panel-check.in_progress {
+  border-color: #7aaaff #2b4d80 #2b4d80 #7aaaff;
+  background: #2b3a55;
+}
+.todo-panel-now { color: #9dc0ff; text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.55); }
+
 .input-row {
   margin-top: 2px;
   padding: 6px 8px 0;

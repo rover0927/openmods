@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import type {
-  AgentProfileDto, ContextBreakdownDto, ModelInfoDto, SessionSummaryDto, StatsDto, SubagentWaitDto, TurnEntry,
+  AgentProfileDto, ContextBreakdownDto, ModelInfoDto, SessionSummaryDto, StatsDto, SubagentWaitDto, TodoItemDto, TurnEntry,
 } from '../types.js'
 import { stepLabel } from '../types.js'
 import { Lightbox } from './Lightbox.js'
@@ -9,6 +9,7 @@ import { ModelPicker } from './ModelPicker.js'
 import { SubagentActivity } from './SubagentActivity.js'
 import { ContextMeter } from './ContextMeter.js'
 import { McIcon } from './McIcon.js'
+import { TodoPanel } from './TodoPanel.js'
 
 // composer dock 状态条 —— 复刻 dsh InputBar 的 dock：ActivityPill / UsagePill / StatusPill / ContextMeter
 function fmtTok(n: number): string {
@@ -102,6 +103,8 @@ export function SessionView(props: {
   mock?: boolean
   /** 计划模式：只读出方案（写操作被运行时拦截） */
   planMode: boolean
+  /** AI 任务清单（todo_write 的整表投影，执行中显示在输入框上方） */
+  todos: TodoItemDto[] | null
   /** 授权策略：ask=写/命令工具弹窗；auto=自动放行 */
   permission: 'ask' | 'auto'
   /** 还没回答的提问/授权数量（>0 时输入框锁住，等弹窗处理） */
@@ -300,6 +303,7 @@ export function SessionView(props: {
             onStop={onStopSubagent}
           />
         )}
+        <TodoPanel todos={props.todos} busy={busy} />
         <div className="input-card">
           {refineMode && <div className="refine-hint">✦ 完善想法模式：描述你的想法，AI 会先打磨成建模描述再上画布</div>}
           {pendingAtts.length > 0 && (
