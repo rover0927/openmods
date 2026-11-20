@@ -86,7 +86,20 @@ function texIdFor(doc: BbDoc, color: string): string {
 
 const ALL_FACES = ['north', 'south', 'east', 'west', 'up', 'down'] as const
 
-export function addCube(doc: BbDoc, spec: { name: string; from: number[]; to: number[]; material?: string; parent?: string }): BbElement {
+export function addCube(doc: BbDoc, spec: {
+  name: string
+  from: number[]
+  to: number[]
+  material?: string
+  /** 调用级分组名（元素未指定 group 时生效） */
+  parent?: string
+  /** 元素级分组名，优先于 parent */
+  group?: string
+  /** 旋转角度 [x,y,z]，缺省不写 */
+  rotation?: number[]
+  /** 枢轴 [x,y,z]，缺省原点 */
+  origin?: number[]
+}): BbElement {
   // 名字去重
   let name = spec.name || 'cube'
   let n = 2
@@ -100,14 +113,17 @@ export function addCube(doc: BbDoc, spec: { name: string; from: number[]; to: nu
     type: 'cube',
     from: spec.from.map(Number),
     to: spec.to.map(Number),
-    origin: [0, 0, 0],
+    origin: (spec.origin ?? [0, 0, 0]).map(Number),
     autouv: 1,
     color: 0,
     faces: Object.fromEntries(ALL_FACES.map(f => [f, { uv: [0, 0, 16, 16], texture: texUuid }])) as BbElement['faces'],
   }
+  if (spec.rotation) el.rotation = spec.rotation.map(Number)
   doc.elements.push(el)
 
-  const parent = spec.parent && spec.parent !== 'root' ? findGroup(doc, spec.parent) : undefined
+  // 元素级 group 优先于调用级 parent
+  const target = spec.group ?? spec.parent
+  const parent = target && target !== 'root' ? findGroup(doc, target) : undefined
   if (parent) parent.children.push(el.uuid)
   else doc.outliner.push(el.uuid)
   return el

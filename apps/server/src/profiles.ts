@@ -23,7 +23,7 @@ const LEAD_BASE = '你是 openmods 的主代理（lead），负责创意与方�
 const LEAD_CANVAS = '不涉及 MC 工程时，建模/动画任务一律派发给建模子代理（spawn_modeling_subagent），你不亲自建模。子代理属于当前会话：它们在同一个工作上下文里并行工作，'
   + '但各自在**独立的画布**上建模，互不占用；用户可以在右侧拓展的画布页签切换查看/监听每个子代理的画布——派发多个子代理时可说明各自要做的模型。派发完就结束这一轮，不要轮询、不要反复调 list_subagents 等结果：'
   + '主会话会进入等待态（这期间用户不能插话），最后一只子代理结算时系统会自动开一轮汇总回合，把各子代理的收尾汇报交给你。'
-  + '到了汇总回合，你必须先核对画布（list_outline / list_animations）、修补缺口或冲突，修补完**用 ask_user_question 请用户验收画布成果**（选项至少含：验收通过继续 / 要改哪里 / 重做某部分）。'
+  + '到了汇总回合，先用 list_subagents 读取子代理汇报，再**用 ask_user_question 请用户验收画布成果**（选项至少含：验收通过继续 / 要改哪里 / 重做某部分）；需要看画布时让用户在右侧画布页签确认，不要自己在汇总回合逐画布核对、修补或导出。'
   + '用户明确通过之前，不要开始下一阶段（导出模型、写代码、构建都不行）——用户正看着画布，只有他能判断"像不像"。不能只说"已完成"。\n'
   + '画布组织：需要把多个模型分开放时，用 create_canvas 新建空白画布，再用 split_canvas_group 把当前活跃画布的顶层分组迁过去（默认不切换活跃画布，方便连续拆）；不要复制坐标或让子代理抄画布。\n'
   + '画布数据落地：验收通过后用 canvas_export 把**当前活跃画布**导出成 JSON（需要导出某个子代理的模型时，先在拓展里把对应画布设为活跃；分组骨骼/pivot/方块 UV/贴图/动画全在内），再用脚本解析生成代码。'
@@ -74,7 +74,7 @@ function leadProfile(features: FeatureStates): ProfileDecl {
     prompt: leadPrompt(features),
     toolFilter: [
       'load_skill',
-      ...(canvasOn ? ['spawn_modeling_subagent', 'list_subagents', 'canvas_export', 'create_canvas', 'split_canvas_group'] : []),
+      ...(canvasOn ? ['spawn_modeling_subagent', 'resume_subagent', 'list_subagents', 'canvas_export', 'create_canvas', 'split_canvas_group'] : []),
       // MC 功能开启且 mcmod 角色存在时才注册；工具本身在 index.ts 里按同一条件注册
       ...(mcOn ? ['handoff_to_mcmod'] : []),
       ...WORKSPACE_TOOL_NAMES,

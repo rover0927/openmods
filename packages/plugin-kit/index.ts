@@ -34,6 +34,11 @@ export interface ToolDef {
    */
   planSafe?: (args: any, exec: ToolExecContext) => boolean
   /**
+   * 计划模式拦截时给模型的具体原因（如 bash 指出第一个不允许的命令/分段）。
+   * 仅在 planSafe 判定不可行时调用；缺省用运行时的通用提示。
+   */
+  planDeniedReason?: (args: any, exec: ToolExecContext) => string | undefined
+  /**
    * 是否需要用户授权（复刻 dsh `approval/request` 的最小面）：
    * - `true`：每次调用都要（会话内可以「总是允许」把该工具加入白名单）
    * - 函数：返回原因字符串表示这次需要授权，返回 null 表示这次不用

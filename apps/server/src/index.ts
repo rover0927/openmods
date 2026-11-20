@@ -278,7 +278,7 @@ function saveSkillsOverrides() {
 if (bootFeatures.canvas !== false) {
 tools.push({
   name: 'spawn_modeling_subagent',
-  description: '在当前会话里派发一个建模/动画任务（后台并行，每个子代理在自己的独立画布上建模）。可连续调用多次，同时派出多个子代理并行工作；它们各自在自己的独立画布上建模，画布可通过右侧拓展页签查看，互不覆盖。立即返回子代理名，随后你就该结束这一轮——主会话进入等待态（用户不能插话），全部子代理结算后系统会自动开一轮汇总回合，把它们的收尾汇报交给你。不要轮询 list_subagents 等结果。description 为 3-5 字任务简述（面板展示），prompt 为完整任务描述（外形/配色/细节/动画；多子代理时写明各自负责的部件）。',
+  description: '在当前会话里派发一个建模/动画任务（后台并行，每个子代理在自己的独立画布上建模）。可连续调用多次，同时派出多个子代理并行工作；它们各自在自己的独立画布上建模，画布可通过右侧拓展页签查看，互不覆盖。立即返回子代理名，随后你就该结束这一轮——主会话进入等待态（用户不能插话），全部子代理结算后系统会自动开一轮汇总回合，把它们的收尾汇报交给你。不要轮询 list_subagents 等结果。已经完成的子代理要接着改，用 resume_subagent，不要用同名再派一次（会报「已被同级使用」）。description 为 3-5 字任务简述（面板展示），prompt 为完整任务描述（外形/配色/细节/动画；多子代理时写明各自负责的部件）。',
   parameters: {
     type: 'object',
     properties: {
@@ -317,6 +317,38 @@ tools.push({
       return head
     })
     return { forModel: lines.join('\n') }
+  },
+})
+
+tools.push({
+  name: 'resume_subagent',
+  description: '给本会话中一个已完成的建模/动画子代理继续下发任务（续作，不是新建）。它复用原来的子会话与原画布，不会出现「子代理名已被同级使用」；改动完成后照样会结算并触发汇总回合。参数传 id 或 name 之一，再加新的 prompt。运行中的子代理要等结算；上次出错的子代理请用 spawn_modeling_subagent 重新派发。',
+  parameters: {
+    type: 'object',
+    properties: {
+      id: { type: 'string', description: '子代理会话 id（list_subagents 返回）' },
+      name: { type: 'string', description: '子代理名（如 frostwolf）' },
+      prompt: { type: 'string', description: '要它继续做的修改任务（写清改哪里、要保持什么）' },
+    },
+    required: ['prompt'],
+  },
+  async execute(args, exec) {
+    const parent = sessions.get(exec.sessionId)
+    if (!parent) return { forModel: '会话不存在或已结束，无法续作子代理。', isError: true }
+    if (parent.mode === 'subagent') return { forModel: '只有主会话可以续作子代理。', isError: true }
+    try {
+      const child = await resumeSubagent(parent, {
+        id: args.id ? String(args.id).trim() : undefined,
+        name: args.name ? String(args.name).trim() : undefined,
+        prompt: String(args.prompt ?? '').trim(),
+      })
+      return {
+        forModel: `已把修改任务发给子代理 ${child.agentName ?? child.id}（${child.id}），它在原画布上继续工作。`
+          + '本轮到此收尾：全部子代理结算后系统会自动开一轮汇总回合；不要轮询等结果。',
+      }
+    } catch (e: any) {
+      return { forModel: `续作失败：${e?.message ?? e}`, isError: true }
+    }
   },
 })
 }
@@ -486,6 +518,11 @@ interface SessionEntry {
   settlements: SettledChild[]
   /** 自动汇总回合进行中（防重入：结算触发 + 回合收尾触发可能同时到达） */
   autoTurn: boolean
+  /**
+   * 本次用户请求已自动续跑的次数（mcmod 触发 step-limit 时使用）。
+   * 用户发新消息时清零；结算回合（autoTurn）不计入、也不触发续跑。
+   */
+  autoContinues: number
   /**
    * 待执行的 lead → mcmod 移交：本轮结束后用这份用户需求自动续跑一轮 mcmod。
    * 只存在内存里（回合收尾即消费），不需要落盘。
@@ -771,6 +808,7 @@ function createSession(id = randomUUID().slice(0, 8), opts: CreateSessionOptions
     waiting: new Set<string>(),
     settlements: [],
     autoTurn: false,
+    autoContinues: 0,
     coop,
   }
   sessions.set(id, entry)
@@ -906,7 +944,7 @@ function pickAgentName(parentId: string, requested?: string): string {
     if (requested === 'lead' || !AGENT_NAME_RE.test(requested)) {
       throw new Error(`非法子代理名 "${requested}"（小写字母开头，仅小写字母/数字/连字符，且不能是 lead）`)
     }
-    if (used.has(requested)) throw new Error(`子代理名 "${requested}" 已被同级使用`)
+    if (used.has(requested)) throw new Error(`子代理名 "${requested}" 已被同级使用（要给已完成的同名子代理继续派活，请用 resume_subagent）`)
     return requested
   }
   for (let i = 1; ; i++) {
@@ -1027,12 +1065,18 @@ function waitingRows(parent: SessionEntry) {
     }))
 }
 
+/** 结算回合的独立步数预算：只做汇报与验收，别把执行回合的 40 步额度烧在核对上 */
+const SETTLEMENT_MAX_STEPS = 12
+
 /**
  * 自动汇总回合：dsh "the next result starts a new turn" 的落点。
  *
  * 结算消息在 dsh 里是一条 `source: subagent-settled` 的 user 消息，父会话 idle 时
  * 走 `queue` 唤醒新一轮。openmods 没有 steer 通道，所以父会话忙时先把结果留在
  * `settlements` 里，由回合收尾（runSessionTurn 末尾）再来一次。
+ *
+ * 角色必须与会话当前角色一致：提示词、toolFilter、handoff 校验都按 `parent.profile` 走，
+ * 否则会出现「提示词是 lead、会话角色是 mcmod」的错位（71d031db）。
  */
 async function maybeAutoContinue(parent: SessionEntry) {
   if (parent.busy || parent.autoTurn) return
@@ -1046,7 +1090,9 @@ async function maybeAutoContinue(parent: SessionEntry) {
   parent.autoTurn = true
   try {
     await runSessionTurn(parent, {
-      text: formatSettlementPrompt(batch),
+      text: formatSettlementPrompt(batch, parent.profile),
+      profile: parent.profile,
+      maxSteps: SETTLEMENT_MAX_STEPS,
       source: {
         kind: 'subagent-settled',
         form: 'notice',
@@ -1072,8 +1118,18 @@ async function maybeAutoContinue(parent: SessionEntry) {
   }
 }
 
-/** 结算消息正文：对齐 dsh `createSettlementMessage()` 的措辞，再接一段汇总/验收要求 */
-function formatSettlementPrompt(batch: SettledChild[]): string {
+/** 该角色是否真的拥有某个工具（toolFilter 缺省 = 全部）：结算指令只引用真实存在的工具 */
+function profileHasTool(profileId: string, toolName: string): boolean {
+  const filter = profileRegistry.get(profileId)?.toolFilter
+  return !filter || filter.includes(toolName)
+}
+
+/**
+ * 结算消息正文：对齐 dsh `createSettlementMessage()` 的措辞，再接一段「有界验收」要求。
+ * 按 profile 生成，只引用该角色真实拥有的工具：不点名 list_outline / list_animations，
+ * 也不要求在同一回合里逐画布修补或导出（验收交给用户）。
+ */
+function formatSettlementPrompt(batch: SettledChild[], profile: string): string {
   const parts: string[] = []
   for (const b of batch) {
     const subject = `Background subagent ${b.name}`
@@ -1089,14 +1145,27 @@ function formatSettlementPrompt(batch: SettledChild[]): string {
       parts.push('It left no closing message.')
     }
   }
+  const readStep = profileHasTool(profile, 'list_subagents')
+    ? '1) 用 list_subagents 读取每个子代理的收尾汇报（做了什么、各自的画布、没把握的点）；不要逐个画布去读结构。'
+    : '1) 读取每个子代理的收尾汇报（做了什么、各自的画布、没把握的点）；不要逐个画布去读结构。'
+  const resumeStep = profileHasTool(profile, 'resume_subagent')
+    ? '用户指出要改时，用 resume_subagent 把修改任务发给同一个子代理（复用原画布），不要用同名重新 spawn。'
+    : '用户指出要改时，按用户的修改要求重新派发任务。'
+  const verifyStep = profileHasTool(profile, 'ask_user_question')
+    ? '3) 用 ask_user_question **请用户验收**：选项至少含「验收通过，继续下一步 / 要改（用户说明哪里）/ 重做某部分」。用户通过之前不要进入下一阶段。'
+    : '3) **请用户验收**（说清要看的画布与未把握的点）：验收通过 / 要改哪里 / 重做某部分。用户通过之前不要进入下一阶段。'
   parts.push(
     '',
-    '[runtime] 子代理已全部结算，这一轮是自动开启的汇总回合。收尾前必须完成验收：',
-    '1) 用 list_outline / list_animations 逐个核对每个子代理的**独立画布**（用 list_subagents 看 id，再按需切活跃画布/读取；不要假设它们在同一块画布上），确认部件数、贴图、动画、分组命名都对；',
-    '2) 有重叠部件、命名冲突、漏做或明显错误就直接修（只补缺口，不要重做整块，更不要 create_model）；',
-    '3) 修补完用 ask_user_question **请用户验收**：用户正看着画布，只有他能判断像不像。选项至少含「验收通过，继续下一步 / 要改（用户说明哪里）/ 重做某部分」。用户通过之前不要进入下一阶段（导出、写代码、构建都不行）。',
-    '4) 汇报里写清：每个子代理做了什么、各自的画布状态、你没把握的点（有就直接在提问里一并问，不要自己猜）。落地画布数据用 canvas_export 导出目标模型的**当前活跃画布**；要导出某个子代理的模型，先切换到它的画布（会让它成为活跃画布）。严禁派子代理"抄写"画布或让子代理用文字汇报几何坐标。',
+    `[runtime] 子代理已全部结算，这一轮是自动开启的汇总回合（角色：${profile}，步数预算有限）。这一轮只做汇报与验收：`,
+    readStep,
+    '2) 需要看画布时，让用户在右侧拓展的画布页签里确认（提问里写清看哪个子代理/画布），不要自己逐个画布核对、修补或导出。',
+    verifyStep,
+    `4) 不要在结算回合批量修补、导出、构建或重跑验收；${resumeStep}`,
+    '5) 汇报里写清：每个子代理做了什么、各自的画布页签、你没把握的点（有就直接在提问里一并问，不要自己猜）。',
   )
+  if (profileHasTool(profile, 'canvas_export')) {
+    parts.push('落地（如 canvas_export 导出）留到用户验收通过后的下一轮再做，本回合不导出。')
+  }
   return parts.join('\n')
 }
 
@@ -1147,6 +1216,54 @@ function startSubagent(parent: SessionEntry, input: { description: string; promp
   return child
 }
 
+/**
+ * 续作子代理：复用原子会话与原画布，把新任务发给它（不新建、不改名）。
+ * 只接受已结算（done/stopped）的直属子代理——运行中要等结算，出错的不能复用坏上下文。
+ */
+async function resumeSubagent(
+  parent: SessionEntry,
+  input: { id?: string; name?: string; prompt: string },
+): Promise<SessionEntry> {
+  if (parent.mode === 'subagent') throw new Error('只有主会话可以续作子代理')
+  if (isArchivedLineage(parent.id)) throw new Error('会话已归档，不能再续作子代理')
+  if (!input.prompt.trim()) throw new Error('prompt 不能为空')
+  if (!profileRegistry.has('modeling')) throw new Error('建模功能已关闭（设置 → 功能），不能续作建模子代理')
+  const key = (input.id ?? input.name ?? '').trim()
+  if (!key) throw new Error('id 或 name 至少传一个')
+  const row = subagentRows(parent.id).find(r => r.id === key || r.agentName === key)
+  if (!row) throw new Error(`本会话没有子代理 ${key}（用 list_subagents 看现有子代理）`)
+  const child = sessions.get(row.id) ?? await ensureSession(row.id)
+  if (child.parentId !== parent.id) throw new Error('该会话不是当前会话的子代理')
+  if (child.busy || child.status === 'running') {
+    throw new Error(`子代理 ${child.agentName ?? child.id} 还在运行，等它结算后再续作`)
+  }
+  if (child.status === 'error') {
+    throw new Error(`子代理 ${child.agentName ?? child.id} 上次运行出错（${child.lastError ?? '未知错误'}），不能续作；请派发新的子代理`)
+  }
+  if (child.status !== 'done' && child.status !== 'stopped') {
+    throw new Error(`子代理 ${child.agentName ?? child.id} 还没有完成过回合（${child.status}），不能续作`)
+  }
+  // 复用原会话与原画布：状态回到 running，并重新登记到父会话的等待集合（结算仍走 settleChild）
+  child.status = 'running'
+  child.lastError = undefined
+  persistMeta(child)
+  parent.waiting.add(child.id)
+  parent.sse.send('subagent/updated', {
+    childId: child.id, name: child.agentName, description: child.description, status: 'running',
+  })
+  parent.sse.send('session/waiting', { sessionId: parent.id, waiting: waitingRows(parent) })
+  void runSessionTurn(child, { text: input.prompt, profile: 'modeling', modelId: child.runtime.currentModelId })
+    .catch(e => {
+      console.warn('[subagent] 续作运行异常:', e?.message ?? e)
+      if (parent.waiting.has(child.id)) {
+        child.status = 'error'
+        child.lastError = e?.message ?? String(e)
+        settleChild(parent, child)
+      }
+    })
+  return child
+}
+
 function notifySubagentUpdate(child: SessionEntry) {
   const parent = child.parentId ? sessions.get(child.parentId) : undefined
   if (!parent) return
@@ -1174,6 +1291,8 @@ async function runSessionTurn(
     profile?: string
     /** 回合输入归属：自动汇总回合由 runtime 投递（dsh MessageSource） */
     source?: import('@openmods/agent-core').TurnSource
+    /** 本轮步数预算（缺省 40）；结算回合传更小的值，避免占满执行回合额度 */
+    maxSteps?: number
   },
 ) {
   const startedAt = Date.now()
@@ -1190,7 +1309,7 @@ async function runSessionTurn(
     notifySubagentUpdate(s)
   }
 
-  let result: { text: string; aborted: boolean } | undefined
+  let result: import('@openmods/agent-core').TurnResult | undefined
   let failure: Error | undefined
   try {
     result = await s.runtime.runTurn(opts, aborter.signal)
@@ -1234,15 +1353,18 @@ async function runSessionTurn(
     s.sse.send('done', { text: result?.text ?? '', aborted: result?.aborted ?? false })
   }
   s.sse.endTurn()
-  afterRootTurn(s)
+  afterRootTurn(s, result)
 }
 
+/** 同一用户请求最多自动续跑 2 次（mcmod 触发 step-limit 时） */
+const AUTO_CONTINUE_LIMIT = 2
+
 /**
- * 主会话回合收尾：决定"继续等 / 立刻汇总 / 真正空闲"。
+ * 主会话回合收尾：决定"继续等 / 立刻汇总 / 自动续跑 / 真正空闲"。
  * 这是 dsh 里 `parent.status === 'idle' ? queue : steer` 那段分派在 openmods 的落点——
  * 没有 steer 通道，所以忙时结算先留在收件箱，由这里再启动。
  */
-function afterRootTurn(s: SessionEntry) {
+function afterRootTurn(s: SessionEntry, result?: import('@openmods/agent-core').TurnResult) {
   // lead → mcmod 移交：优先用本回合的用户需求自动续跑一轮（不需要用户重发）。
   // 先清空标记，避免续跑回合收尾时再次触发。
   const handoff = s.pendingHandoff
@@ -1263,7 +1385,48 @@ function afterRootTurn(s: SessionEntry) {
     void maybeAutoContinue(s)
     return
   }
+  if (maybeAutoContinueAfterStepLimit(s, result)) return
   s.sse.send('session/waiting', { sessionId: s.id, waiting: [] })
+}
+
+/**
+ * 执行型角色（mcmod）触发 step-limit 时自动续跑：用户不需要反复输入「继续」。
+ * 结算回合（autoTurn）不续跑；同一用户请求最多 2 次，超过后停下并给出进度提示。
+ */
+function maybeAutoContinueAfterStepLimit(
+  s: SessionEntry,
+  result?: import('@openmods/agent-core').TurnResult,
+): boolean {
+  if (result?.reason !== 'step-limit') return false
+  if (s.profile !== 'mcmod') return false
+  // 结算回合与自动续跑互斥：自动汇总本身不触发续跑
+  if (s.autoTurn) return false
+  if (isArchivedLineage(s.id)) return false
+  if (s.autoContinues >= AUTO_CONTINUE_LIMIT) {
+    s.sse.send('session/progress', {
+      sessionId: s.id,
+      kind: 'auto-continue',
+      done: true,
+      text: `已自动续跑 ${s.autoContinues} 次仍未完成，先停下；未完成的部分见待办与最后一轮汇报。`,
+    })
+    return false
+  }
+  s.autoContinues += 1
+  const attempt = s.autoContinues
+  s.sse.send('session/progress', {
+    sessionId: s.id,
+    kind: 'auto-continue',
+    attempt,
+    limit: AUTO_CONTINUE_LIMIT,
+    text: `mcmod 单轮步数已用尽，正在自动续跑（第 ${attempt}/${AUTO_CONTINUE_LIMIT} 次）…`,
+  })
+  void runSessionTurn(s, {
+    text: '继续执行上一条请求中未完成的部分；不要重复已完成的工作。',
+    profile: s.profile,
+    // 归属标记：前端按 notice 渲染，不显示成用户自己发的消息
+    source: { kind: 'auto-continue', form: 'notice', attempt, limit: AUTO_CONTINUE_LIMIT },
+  }).catch(e => console.warn('[auto-continue] 续跑失败:', e?.message ?? e))
+  return true
 }
 
 /**
@@ -2641,6 +2804,8 @@ app.post('/api/sessions/:id/chat', async (req, reply) => {
     s.profile = wantedProfile
     persistMeta(s)
   }
+  // 新的用户请求：自动续跑计数重新开始（上一请求的续跑额度不延续）
+  s.autoContinues = 0
   // 思考强度：只接受短英文档位；空串表示回到模型默认
   if (typeof body.reasoningEffort === 'string') {
     const effort = body.reasoningEffort.trim().toLowerCase()

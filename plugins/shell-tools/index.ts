@@ -31,48 +31,73 @@ function fmtExit(r: { exitCode: number | null; signal?: string; timedOut: boolea
   return `（被信号结束${r.signal ? `：${r.signal}` : ''}）`
 }
 
-/** 计划模式只放行能明确判定为只读的 bash（grep/cat/find/git status 等） */
+/** 计划模式只放行能明确判定为只读的 bash（cd/grep/cat/find/git status 等） */
 const READONLY_COMMANDS = new Set([
-  'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'find', 'sed', 'awk', 'echo', 'pwd',
+  'cd', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'find', 'sed', 'awk', 'echo', 'pwd',
   'which', 'where', 'stat', 'file', 'tree', 'git', 'diff', 'sort', 'uniq', 'cut', 'tr', 'nl', 'du', 'df', 'printenv', 'type',
 ])
 const GIT_READONLY = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'branch'])
 
-export function isReadOnlyBash(command: string): boolean {
+/**
+ * 计划模式只读判定：返回 undefined = 只读放行；返回字符串 = 第一个不允许的地方（给模型的具体原因）。
+ * `cd dir && sed -n ...` 这类「无副作用前缀 + 只读命令」的组合按只读放行。
+ */
+export function bashReadOnlyReason(command: string): string | undefined {
   const cmd = String(command ?? '').trim()
-  if (!cmd) return false
+  if (!cmd) return '空命令'
   // 允许 2>/dev/null、2>&1 这类不影响文件的丢弃；其它 > / >> 一律视为写操作
   const cleaned = cmd.replace(/\d?>\s*\/dev\/null/g, '').replace(/2>&1/g, '')
-  if (cleaned.includes('>')) return false
+  if (cleaned.includes('>')) return '命令包含输出重定向「>」，会写入文件'
   // 命令替换/反引号里可能藏写操作，计划模式一律不猜
-  if (cleaned.includes('$(') || cleaned.includes('`')) return false
+  if (cleaned.includes('$(') || cleaned.includes('`')) return '命令包含命令替换 $() 或反引号，无法判定是否只读'
   const segments = cleaned.split(/\s*(?:;|&&|\|\||\|)\s*/).map(s => s.trim()).filter(Boolean)
-  if (!segments.length) return false
+  if (!segments.length) return '空命令'
   for (const seg of segments) {
     const tokens = seg.split(/\s+/)
     const head = tokens[0]
-    if (!READONLY_COMMANDS.has(head)) return false
+    if (!READONLY_COMMANDS.has(head)) return `第一个不允许的命令「${head}」（分段：${clip(seg)}）`
     if (head === 'git') {
       const sub = tokens[1] ?? ''
-      if (!GIT_READONLY.has(sub)) return false
-      if (sub === 'branch' && !tokens.some(t => t === '--show-current' || t === '-a' || t === '-v' || t === '-vv')) return false
+      if (!GIT_READONLY.has(sub)) return `git 子命令「${sub || '(空)'}」不是只读（分段：${clip(seg)}）`
+      if (sub === 'branch' && !tokens.some(t => t === '--show-current' || t === '-a' || t === '-v' || t === '-vv')) {
+        return `git branch 只允许查看（--show-current/-a/-v）（分段：${clip(seg)}）`
+      }
     }
-    if (head === 'sed' && tokens.some(t => t === '-i' || /^-[a-zA-Z]*i[a-zA-Z]*$/.test(t))) return false
-    if (head === 'find' && tokens.some(t => ['-delete', '-exec', '-execdir', '-ok', '-okdir'].includes(t))) return false
+    if (head === 'sed' && tokens.some(t => t === '-i' || /^-[a-zA-Z]*i[a-zA-Z]*$/.test(t))) {
+      return `sed -i 会原地改文件（分段：${clip(seg)}）`
+    }
+    if (head === 'find' && tokens.some(t => ['-delete', '-exec', '-execdir', '-ok', '-okdir'].includes(t))) {
+      return `find 的删除/执行参数会改文件（分段：${clip(seg)}）`
+    }
   }
-  return true
+  return undefined
+}
+
+export function isReadOnlyBash(command: string): boolean {
+  return bashReadOnlyReason(command) === undefined
+}
+
+/** 平台/shell 提示：Windows 上的 bash 工具跑在 Git Bash 里，不能用 cmd 专属语法 */
+function platformSection(): string {
+  if (process.platform === 'win32') {
+    return '[环境] 平台：Windows。bash 工具由 Git Bash（POSIX shell）执行：用 ls/cat/grep/sed 等 POSIX 语法，'
+      + '不要用 dir /b 这类 cmd 专属命令；路径用正斜杠（如 F:/Project/x）或加引号，注意反斜杠会被当作转义符。'
+  }
+  return `[环境] 平台：${process.platform === 'darwin' ? 'macOS' : 'Linux'}。bash 工具直接执行 POSIX shell 命令。`
 }
 
 export const plugin: Plugin = {
   name: 'shell-tools',
   apply(ctx) {
+    // 平台/shell 提示注入系统提示：避免模型在 Windows 上用 cmd 专属语法（如 dir /b）
+    ctx.hooks.registerSystemSection(() => platformSection())
     ctx.tools.register({
       name: 'bash',
-      description: '在会话工作目录执行一条 shell 命令，返回退出码与输出尾部。构建、测试、git 等短命令用前台（默认等 120 秒）；dev server / 客户端这类长跑命令用 run_in_background:true，立即拿 terminalId，再用 terminal_read / terminal_kill 管它。执行前会请求用户授权。',
+      description: '在会话工作目录执行一条 shell 命令，返回退出码与输出尾部。构建、测试、git 等短命令用前台（默认等 120 秒）；dev server / 客户端这类长跑命令用 run_in_background:true，立即拿 terminalId，再用 terminal_read / terminal_kill 管它。执行前会请求用户授权。命令按 POSIX shell 语法写：Windows 上由 Git Bash 执行（不要用 dir /b 这类 cmd 专属命令）。',
       parameters: {
         type: 'object',
         properties: {
-          command: { type: 'string', description: '要执行的命令（bash 语法；Windows 上优先 Git Bash，退化为 cmd）' },
+          command: { type: 'string', description: '要执行的命令（POSIX/bash 语法；Windows 上由 Git Bash 执行，无 Git Bash 时才退化为 cmd）' },
           description: { type: 'string', description: '一句话说明这条命令干什么（面板展示用）' },
           workdir: { type: 'string', description: '工作目录，默认会话工作目录' },
           timeoutMs: { type: 'number', description: `前台等待上限（毫秒），默认 ${DEFAULT_TIMEOUT}，最大 ${MAX_TIMEOUT}；超时后命令转入后台继续跑` },
@@ -82,6 +107,7 @@ export const plugin: Plugin = {
       },
       mutates: true,
       planSafe: args => isReadOnlyBash(String(args?.command ?? '')),
+      planDeniedReason: args => bashReadOnlyReason(String(args?.command ?? '')),
       requiresApproval: args => `执行命令：${clip(String(args?.command ?? ''))}`,
       async execute(args, exec) {
         const command = String(args.command ?? '').trim()

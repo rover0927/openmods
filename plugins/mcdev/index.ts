@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 import type { Plugin, ToolResult } from '@openmods/plugin-kit'
 import { WORKSPACE_TOOL_NAMES } from '@openmods/plugin-kit'
 import { createBuildLog, finishBuildLog } from '../../apps/server/src/build-logs.js'
+import { summarizeGradleErrors } from './error-summary.js'
 import { solidPng } from '../bb-tools/png.js'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
@@ -46,16 +47,19 @@ function resolveGradleHome(): string {
   return join(homedir(), '.gradle')
 }
 
-/** 可复制的现成参考工程（MC_ROOT 下含 build.gradle 的目录），列进 mc_scaffold 说明供 from 使用 */
-const REFERENCE_PROJECTS: string[] = (() => {
+/** MC_ROOT 下可复制的现成参考工程（含 build.gradle 的目录），最多 8 个 */
+function availableReferenceProjects(limit = 8): string[] {
   try {
     return readdirSync(MC_ROOT, { withFileTypes: true })
       .filter(e => e.isDirectory() && existsSync(join(MC_ROOT, e.name, 'build.gradle')))
       .map(e => e.name)
       .sort()
-      .slice(0, 8)
+      .slice(0, limit)
   } catch { return [] }
-})()
+}
+
+/** 列进 mc_scaffold 说明供 from 使用；按需重算，避免启动后新建的工程看不到 */
+const REFERENCE_PROJECTS: string[] = availableReferenceProjects()
 
 /**
  * 离线构建包（打包在项目里，共约 243M）：
@@ -230,13 +234,18 @@ async function seedMavenCache(gradleHome: string): Promise<{ added: number; skip
   return { added, skipped, failed }
 }
 
-export { seedMavenCache, seedWrapperDist }
+export { seedMavenCache, seedWrapperDist, summarizeGradleErrors }
 
 const MOD_ID_RE = /^[a-z][a-z0-9_]{1,63}$/
 const PKG_RE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
 
 function fail(text: string): ToolResult {
   return { forModel: text, isError: true }
+}
+
+/** 日志尾部截断：超长时只保留最后 max 字符 */
+function tailOf(text: string, max: number): string {
+  return text.length > max ? `…（截断，共 ${text.length} 字符）\n${text.slice(-max)}` : text
 }
 
 /**
@@ -403,12 +412,20 @@ function propOf(text: string, key: string): string {
   return text.match(new RegExp(`^${key}=(.*)$`, 'm'))?.[1]?.trim() ?? ''
 }
 
+/** from 解析失败时的提示：列出可用参考工程；没有可用的就建议省略 from 用官方模板 */
+function referenceHint(): string {
+  const names = availableReferenceProjects()
+  return names.length
+    ? `\n可用的参考工程（MC_ROOT 下）：${names.join('、')}。也可以传它们的绝对路径。`
+    : `\nMC_ROOT 下没有可用的参考工程（${MC_ROOT}），建议省略 from，直接用官方 MDK 模板创建。`
+}
+
 /** 参考工程：MC_ROOT 下的名字或绝对路径，必须是含 build.gradle 的目录 */
 async function resolveReference(input: string): Promise<string> {
   const dir = isAbsolute(input) ? resolve(input) : resolve(MC_ROOT, input)
   const info = await stat(dir).catch(() => null)
-  if (!info?.isDirectory()) throw new Error(`参考工程不存在：${dir}`)
-  if (!existsSync(join(dir, 'build.gradle'))) throw new Error(`不是 Forge 工程（缺 build.gradle）：${dir}`)
+  if (!info?.isDirectory()) throw new Error(`参考工程不存在：${dir}${referenceHint()}`)
+  if (!existsSync(join(dir, 'build.gradle'))) throw new Error(`不是 Forge 工程（缺 build.gradle）：${dir}${referenceHint()}`)
   return dir
 }
 
@@ -570,7 +587,16 @@ async function scaffold(opts: {
   const exists = await stat(projectDir).catch(() => null)
   if (exists) {
     const entries = await readdir(projectDir)
-    if (entries.length) throw new Error(`目标目录非空：${projectDir}`)
+    if (entries.length) {
+      // name="." 最常见：模型在已有文件的会话目录里建工程，会把目标解析成非空目录
+      if (rawName === '.' || rawName === './' || rawName === '.\\') {
+        throw new Error(
+          `目标目录非空：${projectDir}\n`
+          + "name 必须是新工程目录名，不能是 '.'；请换一个空目录名（如 ruby-mod）或绝对路径。",
+        )
+      }
+      throw new Error(`目标目录非空：${projectDir}`)
+    }
   }
 
   const mainClass = modId.split('_').map(s => s ? s[0].toUpperCase() + s.slice(1) : s).join('') + 'Mod'
@@ -681,9 +707,9 @@ async function runGradle(opts: {
   root?: string
   /** mod-output 目录（prefs.modOutput；空则用 <repo>/data/mod-output） */
   modOutput?: string
-  /** 非后台任务结束回调（构建结果推给 UI / 插件事件用） */
-  onResult?: (r: { task: string; ok: boolean; code: number; jarPath?: string; buildLogId?: string }) => void
-}): Promise<ToolResult> {
+  /** 非后台任务结束回调（构建结果推给 UI / 插件事件用）；errorSummary 供失败硬闸回放 */
+  onResult?: (r: { task: string; ok: boolean; code: number; jarPath?: string; buildLogId?: string; errorSummary?: string }) => void
+}): Promise<ToolResult & { errorSummary?: string }> {
   const { projectDir, task } = opts
   if (!/^[a-zA-Z][\w:.-]*$/.test(task)) return fail(`任务名不合法：${task}`)
   // 启动前先校验 Java 17：缺失或版本不对直接返回可操作中文错误，不再把原始报错丢给模型
@@ -746,7 +772,7 @@ async function runGradle(opts: {
   }
 
   const timeoutMs = Math.min(Math.max((opts.timeoutSec ?? 600) * 1000, 30_000), 3_600_000)
-  return await new Promise<ToolResult>(resolvePromise => {
+  return await new Promise<ToolResult & { errorSummary?: string }>(resolvePromise => {
     const child = spawn(gradlew, argv.slice(1), {
       cwd: projectDir, env, shell: process.platform === 'win32', windowsHide: true,
     })
@@ -781,13 +807,19 @@ async function runGradle(opts: {
           : ok ? '\n[openmods] 没有找到可分发 jar（build/libs 下只有 sources/javadoc？）\n' : '')
       }
       const logMeta = closeBuildLog(code, jarPath)
+      const out = text()
+      // 成功时保留日志尾部（便于确认产物）；失败时优先给前 3 条编译错误摘要，
+      // 不再把 20k+ 字符整段尾部丢给模型——首个编译错误通常不在尾部。
+      const summary = ok ? null : summarizeGradleErrors(out)
       opts.onResult?.({
         task, ok, code,
         ...(jarPath ? { jarPath } : {}),
         ...(logMeta ? { buildLogId: logMeta.id } : {}),
+        ...(summary?.text ? { errorSummary: summary.text } : {}),
       })
-      const out = text()
-      const tail = out.length > 8000 ? `…（截断，共 ${out.length} 字符）\n${out.slice(-8000)}` : out
+      const tail = ok
+        ? tailOf(out, 8000)
+        : (summary?.text || tailOf(out, 2500))
       const notes = [
         buildLog ? `构建日志：${buildLog.logPath}` : '',
         jarPath ? `jar 已归档：${jarPath}` : (ok && isBuild ? '没有找到可分发 jar（build/libs 下只有 sources/javadoc？）' : ''),
@@ -872,6 +904,38 @@ function newestSourceMtime(dir: string, depth = 0): number {
     }
   } catch { /* 目录不存在/无权限 */ }
   return newest
+}
+
+/**
+ * 源码指纹：src 下的文件 + 根目录构建脚本的 size/mtime（不读大文件内容）。
+ * 构建连续失败后用它判断「这次 build 之前是否真的改过代码」，没改就不再启动 Gradle。
+ */
+function sourceFingerprint(projectDir: string): string {
+  const parts: string[] = []
+  const addFile = (p: string) => {
+    try {
+      const s = statSync(p)
+      if (s.isFile()) parts.push(`${relative(projectDir, p)}:${s.size}:${s.mtimeMs}`)
+    } catch { /* 文件不存在 */ }
+  }
+  addFile(join(projectDir, 'build.gradle'))
+  addFile(join(projectDir, 'settings.gradle'))
+  addFile(join(projectDir, 'gradle.properties'))
+  const walk = (dir: string, depth: number) => {
+    if (depth > 12) return
+    let entries
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (SOURCE_SKIP.has(e.name)) continue
+      const p = join(dir, e.name)
+      if (e.isDirectory()) { walk(p, depth + 1); continue }
+      addFile(p)
+    }
+  }
+  walk(join(projectDir, 'src'), 0)
+  if (!parts.length) return ''
+  parts.sort()
+  return createHash('sha1').update(parts.join('\n')).digest('hex')
 }
 
 /** latest.log 尾部 + 启动状态；waitSec > 0 时轮询等待启动标记（最多 180s） */
@@ -986,7 +1050,7 @@ const MCMOD_PROMPT = '你是 Minecraft 1.20.1 Forge 模组开发主代理（mcmo
   + '需要精确签名时用 load_skill name="minecraft-forge-1.20.1" file="references/forge-1.20.1-api.md" 读取，不要凭记忆写，也不要从会话目录猜 skills/ 相对路径。\n'
   + '2) 核对需求：modid、Java 包名、要加的东西（物品/方块/实体/命令/玩法）。信息不足时用 ask_user_question 一次问全，别反复问。\n'
   + '3) 建工程：先看会话目录里是否已有工程（存在 build.gradle 就直接沿用，不要重复 scaffold）。目录为空才用 mc_scaffold：'
-  + 'name 只传目录名或绝对路径，目标必须是空目录，建完不要再手工 mv 文件。做龙/实体/方块等有现成示例时，'
+  + 'name 只传新的工程目录名或绝对路径，目标必须是空目录（会话目录已有文件时不要传 "."），建完不要再手工 mv 文件。做龙/实体/方块等有现成示例时，'
   + '用 mc_scaffold 的 from=参考工程（可用项见工具说明）复制骨架，再改包名/modid，不要从零手搓框架。\n'
   + '   然后用 read/edit/write（或 mc_list/mc_read/mc_write）改 Java 与资源。\n'
   + '4) 构建失败先分流：出现 Connection refused / SSL / Could not resolve / Read timed out 是镜像或网络问题——'
@@ -1010,8 +1074,9 @@ const MCMOD_PROMPT = '你是 Minecraft 1.20.1 Forge 模组开发主代理（mcmo
   + '   **runClient 启动后不要改源码**；如果改了，先 build 再重新 runClient（会自动停旧客户端），'
   + '   不要拿旧客户端的日志验收新代码——mc_log 检测到启动后源码有改动会直接提示。'
   + '   连续两次 mc_log waitSec 仍没有启动标记，就把当前进度和日志片段告诉用户，不要继续加长 sleep。\n'
-  + '   **构建失败最多重试 2 次**：同一个错误改两轮仍 build 失败就立即停止，把错误摘要与构建日志尾部（工具结果里的构建日志路径）汇报给用户；'
-  + '   连续第 3 次失败会被工具直接拒绝，不要试图换个参数绕过。\n'
+  + '   **构建失败最多重试 2 次**：同一个错误改两轮仍 build 失败就立即停止，把错误摘要与构建日志路径（工具结果里会给）汇报给用户；'
+  + '   源码没改动时第 3 次 build 会被工具直接拒绝，不要试图换个参数绕过；'
+  + '   只有用户明确要求重试时才传 force=true，不要自己用它硬撞。\n'
   + '   **build 成功后 runClient 只启动一次**：等一次启动结果后就把「Mod 是否加载成功 / 客户端是否崩溃」汇报给用户并等待指示，'
   + '   禁止 build→runClient→再 build→再 runClient 的闷头自测循环；第二次 runClient 会被工具拒绝。'
   + '   构建成功后 jar 会自动归档到 mod-output，工具结果与 mc/build 事件里都带绝对路径。\n'
@@ -1023,7 +1088,7 @@ const MCMOD_PROMPT = '你是 Minecraft 1.20.1 Forge 模组开发主代理（mcmo
 
 const MCMOD_TOOLS = [
   'load_skill', 'mc_scaffold', 'mc_list', 'mc_read', 'mc_write', 'mc_gradle', 'mc_log', 'mc_export_model', 'canvas_export',
-  'create_canvas', 'split_canvas_group', 'spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOL_NAMES,
+  'create_canvas', 'split_canvas_group', 'spawn_modeling_subagent', 'list_subagents', 'resume_subagent', ...WORKSPACE_TOOL_NAMES,
 ]
 
 const plugin: Plugin = {
@@ -1171,9 +1236,17 @@ const plugin: Plugin = {
     })
 
     // ---- 会话级构建自测节流 ----
-    // 连续 build 失败 2 次必须停下汇报；build 成功后最多自动 runClient 1 次。
-    // 用户新回合（服务端 session/turn 事件）会重置计数，避免跨回合永久锁死。
-    const throttle = new Map<string, { failures: number; clients: number }>()
+    // 连续 build 失败 2 次后：源码指纹没变就拒绝第 3 次（不启动 Gradle），除非用户明确要求 force。
+    // build 成功后最多自动 runClient 1 次。用户新回合（服务端 session/turn 事件）会重置计数。
+    interface BuildThrottle {
+      failures: number
+      clients: number
+      /** 最近一次失败时的源码指纹：用来判断重试前是否真的改过代码 */
+      failureFingerprint?: string
+      /** 最近一次失败摘要：拒绝重试时一并返回，模型不用再要一遍 */
+      lastSummary?: string
+    }
+    const throttle = new Map<string, BuildThrottle>()
     ctx.events.on('session/turn', (data: any) => {
       const sid = String(data?.sessionId ?? '')
       if (sid) throttle.delete(sid)
@@ -1184,9 +1257,10 @@ const plugin: Plugin = {
       mutates: true,
       description: '在工程里跑 gradlew 任务（build / runClient / runData / --stop）。'
         + 'runClient 是长驻进程，必须 background=true；启动前会自动停掉同一工程的上一个客户端。'
-        + '普通任务默认 600s 超时，返回尾部输出。'
+        + '普通任务默认 600s 超时，返回尾部输出；失败时返回前 3 条编译错误摘要。'
         + 'build 输出会完整落盘到 data/build-logs；成功产物自动归档到 mod-output。'
-        + '连续构建失败 2 次会被拒绝，build 成功后 runClient 只允许一次——必须汇报后等待用户。',
+        + '连续构建失败 2 次且源码未改动时，第 3 次 build 会被直接拒绝（不启动 Gradle）；'
+        + '只有用户明确要求重试才传 force=true。build 成功后 runClient 只允许一次——必须汇报后等待用户。',
       parameters: {
         type: 'object',
         properties: {
@@ -1195,24 +1269,38 @@ const plugin: Plugin = {
           args: { type: 'string', description: '附加参数（空格分隔，可空）' },
           background: { type: 'boolean', description: 'true 时立即返回 pid（runClient 用）' },
           timeoutSec: { type: 'integer', description: '超时秒数，默认 600' },
+          force: { type: 'boolean', description: '仅在用户明确要求重试时使用：绕过「连续失败 2 次」的构建硬闸（默认 false）' },
         },
         required: ['project', 'task'],
       },
       async execute(args, exec) {
         const task = String(args.task)
         const background = !!args.background
+        const force = args.force === true
         const key = exec.sessionId || 'default'
         const st = throttle.get(key) ?? { failures: 0, clients: 0 }
-        // 连续失败 2 次的 build 直接拒绝：模型必须停下汇报，而不是继续盲试
-        if (task === 'build' && !background && st.failures >= 2) {
-          return fail('已连续构建失败 2 次，必须停止重试并向用户汇报错误摘要与日志尾部。')
-        }
         // 同一会话内自动 runClient 最多一次：之后必须汇报并等待用户决定
         if (task === 'runClient' && st.clients >= 1) {
           return fail('已启动过测试客户端，必须汇报并等待用户。')
         }
+        let dir = ''
         try {
-          const dir = await resolveProject(String(args.project), rootOf(exec))
+          dir = await resolveProject(String(args.project), rootOf(exec))
+          // 连续失败 2 次：源码指纹没变就拒绝第 3 次，直接返回上次摘要，不启动 Gradle
+          if (task === 'build' && !background && st.failures >= 2 && !force) {
+            const fp = sourceFingerprint(dir)
+            if (fp && st.failureFingerprint && fp === st.failureFingerprint) {
+              return fail(
+                `已连续构建失败 ${st.failures} 次，且源码没有改动，本次 build 已直接拒绝（未启动 Gradle）。\n`
+                + '请先修代码；只有用户明确要求重试时才传 force=true。\n'
+                + (st.lastSummary ? `上次失败摘要：\n${st.lastSummary}` : ''),
+              )
+            }
+            // 源码已改动：视为新的尝试，重新计数
+            st.failures = 0
+            st.failureFingerprint = undefined
+            st.lastSummary = undefined
+          }
           const extra = String(args.args ?? '').trim() ? String(args.args).trim().split(/\s+/) : []
           const result = await runGradle({
             projectDir: dir,
@@ -1238,13 +1326,23 @@ const plugin: Plugin = {
           })
           if (task === 'runClient' && !result.isError) st.clients++
           else if (task === 'build' && !background) {
-            if (result.isError) st.failures++
-            else st.failures = 0
+            if (result.isError) {
+              st.failures++
+              st.failureFingerprint = sourceFingerprint(dir)
+              st.lastSummary = result.errorSummary
+            } else {
+              st.failures = 0
+              st.failureFingerprint = undefined
+              st.lastSummary = undefined
+            }
           }
           throttle.set(key, st)
           return result
         } catch (e: any) {
-          if (task === 'build' && !background) st.failures++
+          if (task === 'build' && !background) {
+            st.failures++
+            if (dir) st.failureFingerprint = sourceFingerprint(dir)
+          }
           throttle.set(key, st)
           return fail(e.message)
         }

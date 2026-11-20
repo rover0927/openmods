@@ -91,13 +91,13 @@ const tools: ToolDef[] = [
   {
     name: 'place_cubes',
     mutates: true,
-    description: '批量放置立方体（只读画布自动更新）。from/to 为 [x,y,z] 角点，Y 向上。建议先搭大轮廓再补细节；部件名用材质前缀。',
+    description: '批量放置立方体（只读画布自动更新）。from/to 为 [x,y,z] 角点，Y 向上。每个元素可带 rotation（角度 [x,y,z]）、origin（枢轴 [x,y,z]）和 group（覆盖调用级 group），因此**一次调用尽量批量放置带旋转的部件**（如 11 段弧线棱柱），不要先放置再逐件 modify_cube。建议先搭大轮廓再补细节；部件名用材质前缀。',
     parameters: {
       type: 'object',
       properties: {
         elements: {
           type: 'array',
-          description: '立方体数组，一次调用尽量批量放置',
+          description: '立方体数组，一次调用尽量批量放置（可同时写入旋转/枢轴/分组）',
           items: {
             type: 'object',
             properties: {
@@ -105,11 +105,14 @@ const tools: ToolDef[] = [
               from: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
               to: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
               material: { type: 'string', description: '材质关键字或 #RRGGBB' },
+              rotation: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description: '可选：旋转角度 [x,y,z]，缺省不旋转' },
+              origin: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3, description: '可选：枢轴 [x,y,z]，缺省原点' },
+              group: { type: 'string', description: '可选：该元素的分组名，优先于调用级 group' },
             },
             required: ['name', 'from', 'to'],
           },
         },
-        group: { type: 'string', description: '可选：放入的分组名（root=顶层）' },
+        group: { type: 'string', description: '可选：默认分组名（root=顶层）；元素的 group 可覆盖它' },
       },
       required: ['elements'],
     },
@@ -124,6 +127,9 @@ const tools: ToolDef[] = [
           to: spec.to,
           material: spec.material,
           parent: args.group,
+          group: spec.group,
+          rotation: spec.rotation,
+          origin: spec.origin,
         })
       }
       sync(ctx, doc)
@@ -208,6 +214,45 @@ const tools: ToolDef[] = [
       const g = addGroup(doc, String(args.name), args.parent, args.origin ?? [0, 0, 0])
       sync(ctx, doc)
       return ok(`已创建分组 ${g.name}。`)
+    },
+  },
+  {
+    name: 'add_groups',
+    mutates: true,
+    description: '一次创建多个分组/骨骼（按数组顺序创建，origin 为枢轴）。前面的分组可以作后面分组的 parent；需要多根骨骼时优先用本工具而不是多次 add_group。',
+    parameters: {
+      type: 'object',
+      properties: {
+        groups: {
+          type: 'array',
+          description: '分组数组，按顺序创建（父分组需先于子分组出现）',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              parent: { type: 'string', description: '父分组名，缺省为顶层' },
+              origin: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+            },
+            required: ['name'],
+          },
+        },
+      },
+      required: ['groups'],
+    },
+    async execute(args, ctx) {
+      const doc = getDoc(ctx)
+      const list = Array.isArray(args.groups) ? args.groups : []
+      if (!list.length) return { forModel: 'groups 为空', isError: true }
+      // 先校验再创建，避免中途失败留下半截分组
+      const specs = list.map((spec: any) => ({
+        name: String(spec?.name ?? '').trim(),
+        parent: spec?.parent,
+        origin: spec?.origin ?? [0, 0, 0],
+      }))
+      if (specs.some((s: any) => !s.name)) return { forModel: 'groups 中存在缺少 name 的项', isError: true }
+      for (const spec of specs) addGroup(doc, spec.name, spec.parent, spec.origin)
+      sync(ctx, doc)
+      return ok(`已创建 ${specs.length} 个分组：${specs.map((s: any) => s.name).join('、')}。`)
     },
   },
   {

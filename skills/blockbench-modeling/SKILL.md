@@ -83,6 +83,25 @@ place_cube: elements=[
 ], group="body"
 ```
 
+### Batch Rotated Parts and Multiple Groups
+
+When parts need rotation or a pivot, or you need several bones, write everything in one batch instead of placing first and fixing each part with `modify_cube`. `place_cubes` accepts per-element `rotation` (degrees `[x,y,z]`), `origin` (pivot `[x,y,z]`) and `group` (overrides the call-level `group`), and `add_groups` creates several groups/bones in one call (list parents before their children).
+
+```
+add_groups: groups=[
+  {name: "arc_root", origin: [0, 12, 0]},
+  {name: "arc_0", parent: "arc_root", origin: [0, 12, 0]},
+  {name: "arc_1", parent: "arc_root", origin: [2, 13, 0]}
+]
+
+place_cubes: elements=[
+  {name: "arc_0_geo", from: [-1, 11, -1], to: [1, 13, 1], rotation: [0, 0, -15], origin: [0, 12, 0], group: "arc_0"},
+  {name: "arc_1_geo", from: [1, 12, -1], to: [3, 14, 1], rotation: [0, 0, -5], origin: [2, 13, 0], group: "arc_1"}
+]
+```
+
+An 11-segment crescent arc is one `place_cubes` call containing 11 rotated prisms with their origins — not 11 placements followed by 30 `modify_cube` calls.
+
 ### Modify Cube
 
 ```

@@ -62,22 +62,30 @@ export interface AgentProfile {
 
 /**
  * 回合输入的归属（复刻 dsh `MessageSource` 的 `subagent-settled` 形态）。
- * 自动汇总回合的 user 消息不是用户手打的：它由 runtime 在子代理结算后投递，
- * UI 按 `form:'notice'` 渲染成系统行，模型侧仍是一条普通 user 消息。
+ * 非用户手打的 user 消息都带 source：UI 按 `form:'notice'` 渲染成系统行，
+ * 模型侧仍是一条普通 user 消息。
  */
-export interface TurnSource {
-  kind: 'subagent-settled'
-  form: 'notice'
-  /** 本批结算的子代理（一条消息可合并多个，对应 dsh 一条 settlement message） */
-  settled: {
-    childId: string
-    name: string
-    description?: string
-    status: string
-    stopReason: string
-    summary: string
-  }[]
-}
+export type TurnSource =
+  | {
+      kind: 'subagent-settled'
+      form: 'notice'
+      /** 本批结算的子代理（一条消息可合并多个，对应 dsh 一条 settlement message） */
+      settled: {
+        childId: string
+        name: string
+        description?: string
+        status: string
+        stopReason: string
+        summary: string
+      }[]
+    }
+  | {
+      /** mcmod 触发 step-limit 后的自动续跑（runtime 投递，不是用户输入） */
+      kind: 'auto-continue'
+      form: 'notice'
+      attempt?: number
+      limit?: number
+    }
 
 /** 授权请求的结果（复刻 dsh ApprovalOutcome 的最小面） */
 export interface ApprovalDecision {
@@ -144,7 +152,26 @@ export interface SessionRuntime extends SessionRuntimeLike {
   setCwd(dir: string): void
   /** 上下文三段构成（系统提示词 / 工具定义 / 对话）；totalTokens 缺省时现算 */
   contextBreakdown(totalTokens?: number): { systemTokens: number; toolsTokens: number; messageTokens: number }
-  runTurn(opts: { text: string; attachments?: any[]; modelId?: string; mode?: 'build' | 'refine'; profile?: string; source?: TurnSource }, signal: AbortSignal): Promise<{ text: string; aborted: boolean }>
+  runTurn(opts: {
+    text: string
+    attachments?: any[]
+    modelId?: string
+    mode?: 'build' | 'refine'
+    profile?: string
+    source?: TurnSource
+    /** 本轮步数预算；缺省走 MAX_STEPS（40）。结算回合用它拿到更小的上限 */
+    maxSteps?: number
+  }, signal: AbortSignal): Promise<TurnResult>
+}
+
+/**
+ * 单轮结果：`reason` 让 server 区分自然结束 / 步数上限 / 用户中止
+ * （mcmod 的自动续跑只认 step-limit；其余角色保持人工确认）。
+ */
+export interface TurnResult {
+  text: string
+  aborted: boolean
+  reason: 'natural' | 'step-limit' | 'aborted'
 }
 
 /**
@@ -158,6 +185,17 @@ const MAX_STEPS = (() => {
 
 function safeJsonParse(s: string): any {
   try { return JSON.parse(s) } catch { return {} }
+}
+
+/**
+ * 空回复兜底：模型只产出了思考时，至少给用户一段可见文本。
+ * 取 reasoning 的收尾段（最后 600 字符），没有 reasoning 就明确说明本轮没有可见回复。
+ */
+function emptyReplyFallback(reasoning?: string): string {
+  const text = String(reasoning ?? '').trim()
+  if (!text) return '本轮未产生可见回复。请再发一次指令，或让我换个方式说明。'
+  const tail = text.length > 600 ? text.slice(-600).replace(/^\s+/, '') : text
+  return `（本轮没有产生可见回复，以下是模型最后的思考摘要）\n${tail}`
 }
 
 export function createSessionRuntime(deps: RuntimeDeps, registries: Registries): SessionRuntime {
@@ -243,6 +281,8 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
       const requested = opts.profile ?? 'lead'
       const profileId = registries.profiles[requested] ? requested : (registries.profiles['lead'] ? 'lead' : undefined)
       lastProfileId = profileId
+      // 本轮步数预算：结算等短回合可传更小的 maxSteps，不占用执行回合的 40 步额度
+      const maxSteps = Math.max(1, Math.min(200, Math.floor(Number(opts.maxSteps) || MAX_STEPS)))
       const turn = deps.log.append('turn/start', { modelId: currentModelId, mode: opts.mode ?? 'build', profile: profileId })
       const turnId = `t${turn.seq}`
 
@@ -279,12 +319,20 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
       let finalText = ''
       let overflowRetried = false
       let aborted = false
-      // 跑满 MAX_STEPS 且没有自然收尾（无工具调用）＝步数上限截断，要在对话里明确告诉用户
+      // 跑满步数预算且没有自然收尾（无工具调用）＝步数上限截断，要在对话里明确告诉用户
       let hitStepLimit = false
+      // 空回复兜底：自然结束但正文为空时只重试一次，仍为空就输出可见兜底文本
+      let emptyReplyRetried = false
+      // 一次性提示：下一步请求时插到消息末尾，不落日志（避免界面出现一条假的用户气泡）
+      let retryNudge = ''
+      // 计划模式：同一轮连续拦截写操作时直接结束本轮，避免模型原地重试烧步数
+      let haltPlanTurn = false
+      const planBlockedCalls: string[] = []
+      let reason: TurnResult['reason'] = 'natural'
       let stepNo = 0
 
       try {
-        for (stepNo = 1; stepNo <= MAX_STEPS; stepNo++) {
+        for (stepNo = 1; stepNo <= maxSteps; stepNo++) {
           if (signal.aborted) { aborted = true; break }
           const stepId = `${turnId}s${stepNo}`
 
@@ -298,6 +346,11 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
 
           const turnTools = selectTools(registries.tools, profileId, registries.profiles, rt)
           const messages = buildLlmMessages(buildSystemPrompt(registries, deps, opts.mode, profileId, rt), rt.getSurfaceMessages() as any, deps.resolveImage)
+          // 空回复重试的一次性提示：只随这一次请求发出，随后清空（不进会话日志/界面）
+          if (retryNudge) {
+            messages.push({ role: 'user', content: retryNudge })
+            retryNudge = ''
+          }
           let res
           try {
             res = await deps.llm.chat({
@@ -346,7 +399,10 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
               rt.emit('tool/call', { turnId, stepId, callId: call.id, name: call.name, args: safeJsonParse(call.args) })
               const def = registries.tools.find(d => d.name === call.name)
               let result: ToolResult
-              if (!def) result = { forModel: `未知工具: ${call.name}`, isError: true }
+              if (haltPlanTurn) {
+                // 本轮已决定结束：同一步里剩下的调用只补结果，不再执行
+                result = { forModel: '本轮已因计划模式连续拦截写操作而结束，该调用未执行。', isError: true }
+              } else if (!def) result = { forModel: `未知工具: ${call.name}`, isError: true }
               else {
                 const exec: ToolExecContext = {
                   sessionId: rt.id, session: rt, canvas: deps.canvas, callId: call.id, signal,
@@ -355,8 +411,16 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
                 // 计划模式：只读出方案。写操作一律拦在运行时，插件不需要各自实现；
                 // 工具可用 planSafe 放行无副作用的只读用法（如 bash 里的 grep/cat）。
                 if (def.mutates && rt.planMode && !def.planSafe?.(args, exec)) {
+                  // 只记工具名：finalText 会展示给用户，不能带出参数里的文件内容
+                  planBlockedCalls.push(def.name)
+                  const repeated = planBlockedCalls.length > 1
+                  // 第二次同类拦截：本轮直接收尾，别让模型继续原地重试
+                  if (repeated) haltPlanTurn = true
+                  const hint = def.planDeniedReason?.(args, exec)
                   result = {
-                    forModel: `计划模式中：${def.name} 会修改内容，已被拦截。继续调研，把步骤写进 todo_write；方案完整后用 exit_plan_mode 提交给用户批准（批准后本模式自动关闭）。`,
+                    forModel: repeated
+                      ? `计划模式中：${def.name} 会修改内容，已被拦截（本轮第 ${planBlockedCalls.length} 次拦截）。本轮到此结束——先用 todo_write 整理方案，再用 exit_plan_mode 提交给用户批准，批准后再执行。`
+                      : `计划模式中：${def.name} 会修改内容，已被拦截${hint ? `：${hint}` : '。'}不要重试本调用，改用 todo_write 记录步骤；方案完整后用 exit_plan_mode 提交给用户批准（批准后本模式自动关闭）。`,
                     isError: true,
                   }
                 } else {
@@ -386,27 +450,44 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
             }
             deps.log.append('step/end', { turnId, stepId })
             rt.emit('step/end', { turnId, stepId })
+            if (haltPlanTurn) {
+              finalText = `计划模式：本轮连续拦截了写操作（${[...new Set(planBlockedCalls)].join('、')}），已提前结束。请先用 todo_write 整理方案，再通过 exit_plan_mode 提交给用户批准。`
+              break
+            }
             if (aborted) break
             continue
           }
 
           // 无工具调用 → 本轮结束
           finalText = res.text
+          if (!String(res.text ?? '').trim()) {
+            const reasoning = String(res.reasoning ?? '').trim()
+            // 自然结束但正文为空（模型只产出了思考）：在步数预算内再请求一次（提示不进日志）
+            if (!emptyReplyRetried && reasoning && stepNo < maxSteps) {
+              emptyReplyRetried = true
+              finalText = ''
+              retryNudge = '上一回合没有产生任何可见回复。请直接给出面向用户的回答（或明确说明下一步），不要只输出思考过程。'
+              deps.log.append('step/end', { turnId, stepId })
+              rt.emit('step/end', { turnId, stepId })
+              continue
+            }
+            finalText = emptyReplyFallback(reasoning)
+          }
           deps.log.append('step/end', { turnId, stepId })
           rt.emit('step/end', { turnId, stepId })
           break
         }
         // for 循环走完（stepNo 超出上限）且不是用户中止 → 判定为步数上限截断
-        if (stepNo > MAX_STEPS && !aborted) hitStepLimit = true
+        if (stepNo > maxSteps && !aborted && !haltPlanTurn) hitStepLimit = true
       } finally {
         if (hitStepLimit && !finalText) {
-          finalText = `已达到单轮 ${MAX_STEPS} 步上限，任务还没做完。回复「继续」我接着做。`
+          finalText = `已达到单轮 ${maxSteps} 步上限，任务还没做完。回复「继续」我接着做。`
         }
-        const reason = hitStepLimit ? 'step-limit' : aborted ? 'aborted' : 'natural'
+        reason = hitStepLimit ? 'step-limit' : aborted ? 'aborted' : 'natural'
         deps.log.append('turn/end', { turnId, text: finalText, aborted, reason })
         rt.emit('turn/end', { turnId, text: finalText, aborted, reason })
       }
-      return { text: finalText, aborted }
+      return { text: finalText, aborted, reason }
     },
   }
   return rt

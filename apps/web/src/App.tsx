@@ -68,6 +68,25 @@ function settledToNotices(source: any): SubagentNoticeDto[] {
   }))
 }
 
+/** runtime 投递的 user 消息 → 通知行：结算与自动续跑都不展开成用户气泡 */
+function sourceToNotices(source: any): SubagentNoticeDto[] {
+  if (source?.kind === 'subagent-settled') return settledToNotices(source)
+  if (source?.kind === 'auto-continue') {
+    const attempt = Number(source.attempt) || 0
+    const limit = Number(source.limit) || 0
+    return [{
+      childId: '',
+      name: 'mcmod',
+      description: '自动续跑',
+      status: 'running',
+      summary: attempt && limit
+        ? `单轮步数用尽，正在自动续跑（第 ${attempt}/${limit} 次）…`
+        : '单轮步数用尽，正在自动续跑…',
+    }]
+  }
+  return []
+}
+
 /** 附件 part → 可渲染的图片（新格式是引用走 /api/attachments，旧格式直接是 data URL） */
 function toImages(parts: any[] | undefined): { id: string; name?: string; src: string }[] {
   if (!parts?.length) return []
@@ -92,6 +111,8 @@ function replayEvents(events: any[]): TurnEntry[] {
   const out: TurnEntry[] = []
   for (const ev of events) {
     if (ev.t === 'user/message') {
+      // runtime 投递的消息（结算 / 自动续跑）渲染成通知行，不是用户气泡
+      const notices = sourceToNotices(ev.source)
       out.push({
         // 优先用日志里的 turnId（= turn/start 的 t<seq>）：SSE 回放的 turn/start 也带同一个 id，
         // 两边一致才能按 turnId 去重；老日志没有 turnId 才退回自己的 seq。
@@ -100,8 +121,7 @@ function replayEvents(events: any[]): TurnEntry[] {
         ...(toImages(ev.attachments).length ? { images: toImages(ev.attachments) } : {}),
         ...(ev.imagesOmitted ? { imagesOmitted: true } : {}),
         steps: [], assistantText: '', streaming: false,
-        // runtime 投递的结算消息（source: subagent-settled）渲染成通知行，不是用户气泡
-        ...(ev.source?.kind === 'subagent-settled' ? { notices: settledToNotices(ev.source) } : {}),
+        ...(notices.length ? { notices } : {}),
       })
     } else if (ev.t === 'assistant/message' && out.length && !out[out.length - 1].notice) {
       const cur = out[out.length - 1]
@@ -534,9 +554,9 @@ export default function App() {
         })
         break
       case 'user/message':
-        if (f.source?.kind === 'subagent-settled') {
-          // 自动汇总回合的输入是 runtime 投递的结算：显示成通知行，不是用户气泡
-          const notices = settledToNotices(f.source)
+        if (f.source?.kind === 'subagent-settled' || f.source?.kind === 'auto-continue') {
+          // runtime 投递的结算 / 自动续跑：显示成通知行，不是用户气泡
+          const notices = sourceToNotices(f.source)
           updateLastTurn(t => ({ ...t, notices, userText: '' }))
         } else {
           updateLastTurn(t => (t.userText
