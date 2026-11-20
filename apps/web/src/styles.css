@@ -2329,12 +2329,52 @@ select.think-chip option { background: var(--bg-layer-2); color: var(--label-pri
 .agent-count { margin-left: auto; color: var(--label-tertiary); font-size: 11.5px; }
 .agent-body { padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-primary); background: var(--bg-secondary); }
 .agent-sub { font-size: 11.5px; font-weight: 600; color: var(--label-secondary); margin-top: 4px; letter-spacing: 0.02em; }
-.tool-chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.tool-chip {
-  padding: 2px 8px; border-radius: 999px;
-  background: var(--bg-primary); border: 1px solid var(--border-primary);
-  color: var(--label-secondary); font-size: 11.5px; font-family: var(--mono-font, ui-monospace, SFMono-Regular, Consolas, monospace);
-  cursor: default;
+.tool-grid { display: flex; flex-direction: column; gap: 5px; }
+.tool-item {
+  border: 1px solid var(--border-primary); border-radius: var(--radius-sm);
+  background: var(--bg-primary); overflow: hidden;
+}
+.tool-head { display: flex; align-items: baseline; gap: 8px; padding: 6px 9px; cursor: pointer; list-style: none; }
+.tool-head::-webkit-details-marker { display: none; }
+.tool-name {
+  color: var(--label-primary); font-size: 11.5px; white-space: nowrap;
+  font-family: var(--mono-font, ui-monospace, SFMono-Regular, Consolas, monospace);
+}
+.tool-badge {
+  font-size: 10px; padding: 0 4px; border-radius: 3px; white-space: nowrap;
+  background: var(--bg-secondary); border: 1px solid var(--border-primary); color: var(--label-tertiary);
+}
+.tool-summary {
+  flex: 1; min-width: 0; color: var(--label-secondary); font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tool-caret { color: var(--label-tertiary); font-size: 10px; transition: transform 0.15s; }
+.tool-item[open] .tool-caret { transform: rotate(90deg); }
+.tool-body {
+  padding: 8px 10px 10px; border-top: 1px solid var(--border-primary);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.tool-sec-title {
+  font-size: 10.5px; font-weight: 600; color: var(--label-tertiary);
+  letter-spacing: 0.04em; margin-bottom: 3px;
+}
+.tool-text { font-size: 11px; line-height: 1.5; color: var(--label-secondary); white-space: pre-wrap; word-break: break-word; }
+.tool-params { display: flex; flex-direction: column; gap: 3px; }
+.tool-param {
+  display: grid; grid-template-columns: minmax(90px, 150px) minmax(80px, 130px) 1fr;
+  gap: 8px; font-size: 11px; align-items: baseline;
+}
+.tool-param-name {
+  color: var(--label-primary);
+  font-family: var(--mono-font, ui-monospace, SFMono-Regular, Consolas, monospace);
+}
+.tool-param-type { color: var(--label-tertiary); }
+.tool-param-desc { color: var(--label-secondary); line-height: 1.45; }
+.tool-returns {
+  display: block; padding: 4px 6px; border-radius: 4px; overflow-x: auto;
+  background: var(--bg-secondary); border: 1px solid var(--border-primary);
+  color: var(--label-primary); font-size: 10.5px;
+  font-family: var(--mono-font, ui-monospace, SFMono-Regular, Consolas, monospace);
 }
 .agent-skills {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 16px;

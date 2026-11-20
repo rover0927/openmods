@@ -1408,13 +1408,27 @@ app.get('/api/features', async () => {
 // ---- 设置 → 代理与技能 ----
 
 /** 按角色解析生效工具（与 runtime 的 selectTools 同一语义：白名单 ∩ 非排除） */
-function resolveProfileTools(profileId: string): { name: string; description: string }[] {
+function resolveProfileTools(profileId: string): {
+  name: string
+  description: string
+  parameters: unknown
+  mutates: boolean
+  returns: string
+}[] {
   const p = profileRegistry.get(profileId)
   if (!p) return []
   let list = tools
   if (p.toolFilter) list = list.filter(t => p.toolFilter!.includes(t.name))
   if (p.toolExclude) list = list.filter(t => !p.toolExclude!.includes(t.name))
-  return list.map(t => ({ name: t.name, description: t.description.split('\n')[0] }))
+  return list.map(t => ({
+    name: t.name,
+    // 全量描述：首行当摘要，其余正文在设置页展开后看
+    description: t.description,
+    parameters: t.parameters ?? null,
+    mutates: !!t.mutates,
+    // 所有工具统一走 ToolResult：给模型看的文本 + 可选错误标记
+    returns: '{ forModel: string; isError?: boolean }',
+  }))
 }
 
 /** 设置页看全三个角色（含 modeling 子代理）：工具清单 + 技能分配 */

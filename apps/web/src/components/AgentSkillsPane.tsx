@@ -2,6 +2,26 @@ import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import type { AgentDetailDto, SkillMetaDto } from '../types.js'
 
+/** 把工具入参 JSON Schema 摊平成「名 / 类型 / 是否必填 / 说明」 */
+function toolParams(schema: any): { name: string; type: string; required: boolean; desc: string }[] {
+  const props = schema?.properties
+  if (!props || typeof props !== 'object') return []
+  const required: string[] = Array.isArray(schema.required) ? schema.required : []
+  const typeOf = (s: any): string => {
+    if (!s) return 'any'
+    if (Array.isArray(s.enum)) return s.enum.map((v: unknown) => JSON.stringify(v)).join(' | ')
+    if (s.type === 'array') return `array<${typeOf(s.items)}>`
+    if (s.type === 'object') return 'object'
+    return String(s.type ?? 'any')
+  }
+  return Object.entries(props).map(([name, s]: [string, any]) => ({
+    name,
+    type: typeOf(s),
+    required: required.includes(name),
+    desc: typeof s?.description === 'string' ? s.description : '',
+  }))
+}
+
 /** 设置 → 代理与技能：三个角色各有哪些工具/技能，技能支持注入（新建/编辑/删除，热生效） */
 export function AgentsSkillsPane(props: { onToast: (msg: string) => void }) {
   const [agents, setAgents] = useState<AgentDetailDto[]>([])
@@ -164,11 +184,48 @@ export function AgentsSkillsPane(props: { onToast: (msg: string) => void }) {
             </button>
             {expanded === a.id && (
               <div className="agent-body">
-                <div className="agent-sub">可调用工具</div>
-                <div className="tool-chips">
-                  {a.tools.map(t => (
-                    <span key={t.name} className="tool-chip" title={t.description}>{t.name}</span>
-                  ))}
+                <div className="agent-sub">可调用工具（{a.tools.length}，点开看参数与输出）</div>
+                <div className="tool-grid">
+                  {a.tools.map(t => {
+                    const params = toolParams(t.parameters)
+                    return (
+                      <details key={t.name} className="tool-item">
+                        <summary className="tool-head">
+                          <span className="tool-name">{t.name}</span>
+                          {t.mutates && <span className="tool-badge">写操作</span>}
+                          <span className="tool-summary">{t.description.split('\n')[0]}</span>
+                          <span className="tool-caret">▸</span>
+                        </summary>
+                        <div className="tool-body">
+                          <div>
+                            <div className="tool-sec-title">功能</div>
+                            <div className="tool-text">{t.description}</div>
+                          </div>
+                          <div>
+                            <div className="tool-sec-title">输入参数</div>
+                            {params.length === 0 ? (
+                              <div className="tool-text">无参数</div>
+                            ) : (
+                              <div className="tool-params">
+                                {params.map(p => (
+                                  <div key={p.name} className="tool-param">
+                                    <span className="tool-param-name">{p.name}</span>
+                                    <span className="tool-param-type">{p.type}{p.required ? ' · 必填' : ' · 可选'}</span>
+                                    <span className="tool-param-desc">{p.desc}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <div className="tool-sec-title">输出格式</div>
+                            <code className="tool-returns">{t.returns ?? '{ forModel: string; isError?: boolean }'}</code>
+                            <div className="tool-text">forModel 是返回给模型的文本；isError=true 表示执行失败。</div>
+                          </div>
+                        </div>
+                      </details>
+                    )
+                  })}
                 </div>
                 <div className="agent-sub">可加载技能（勾选生效，写入会话提示词）</div>
                 <div className="agent-skills">

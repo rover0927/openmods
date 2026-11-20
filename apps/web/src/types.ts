@@ -762,7 +762,14 @@ export interface JavaProcsDto {
 // ---- 设置 → 代理与技能 ----
 export interface AgentToolMetaDto {
   name: string
+  /** 全量描述：首行是摘要，展开后看完整正文 */
   description: string
+  /** 工具入参 JSON Schema（properties / required） */
+  parameters?: any
+  /** 写操作（计划模式下会被拦截） */
+  mutates?: boolean
+  /** 输出格式说明 */
+  returns?: string
 }
 
 export interface AgentDetailDto {
