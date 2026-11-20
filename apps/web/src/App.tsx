@@ -1703,10 +1703,10 @@ export default function App() {
         currentModelId={currentModelId ?? ''}
         refineMode={refineMode}
         onToggleRefine={() => setRefineMode(r => !r)}
-        stats={viewStats}
-        ctxTokens={viewCtxTokens}
-        modelWindow={viewModelWindow}
-        ctxBreakdown={viewCtxBreakdown}
+        stats={stats}
+        ctxTokens={ctxTokens}
+        modelWindow={modelWindow}
+        ctxBreakdown={ctxBreakdown}
         profiles={profiles}
         agentProfile={agentProfile}
         onPickProfile={(id) => { setAgentProfile(id); localStorage.setItem('openmods.profile', id) }}
