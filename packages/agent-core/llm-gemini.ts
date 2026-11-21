@@ -193,6 +193,18 @@ function unaryResult(json: any, started: number): LlmResult {
   }
 }
 
+/** 把上游错误体压成一行可读消息（UI 只显示 message，不能把 detail 藏在对象里） */
+function geminiErrorMessage(status: number, body: string): string {
+  const raw = String(body ?? '').trim()
+  if (!raw) return `Gemini HTTP ${status}`
+  try {
+    const json = JSON.parse(raw)
+    const msg = json?.error?.message ?? json?.[0]?.error?.message
+    if (typeof msg === 'string' && msg) return `Gemini HTTP ${status}：${msg}`
+  } catch { /* 非 JSON 错误体，按原文截断 */ }
+  return `Gemini HTTP ${status}：${raw.slice(0, 400)}`
+}
+
 export function createGeminiLlm(config: GeminiLlmConfig): LlmAdapter {
   return {
     async chat(opts: LlmChatOptions): Promise<LlmResult> {
@@ -211,10 +223,14 @@ export function createGeminiLlm(config: GeminiLlmConfig): LlmAdapter {
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
           res = await fetch(url, { method: 'POST', signal: opts.signal, headers, body: bodyPayload })
-          if (!res.ok && (res.status >= 500 || res.status === 429) && attempt < 3) {
-            lastErr = new LlmError(`Gemini HTTP ${res.status}`, res.status, (await res.text().catch(() => '')).slice(0, 500))
-            await new Promise(r => setTimeout(r, 800 * attempt))
-            continue
+          if (!res.ok) {
+            // 先读错误体：上游用 message 说明是模型不支持、参数错误还是鉴权问题
+            const bodyText = await res.text().catch(() => '')
+            lastErr = new LlmError(geminiErrorMessage(res.status, bodyText), res.status, bodyText.slice(0, 2000))
+            if ((res.status >= 500 || res.status === 429) && attempt < 3) {
+              await new Promise(r => setTimeout(r, 800 * attempt))
+              continue
+            }
           }
           break
         } catch (err: any) {
