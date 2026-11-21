@@ -100,11 +100,9 @@ export function toGeminiInput(messages: ChatMessage[]): { system?: string; input
     }
     if (msg.role === 'user') {
       const parts = contentParts(msg.content)
-      if (!parts.length) continue
-      // Interactions API 的 REST 文档把图片作为顶层 Content 平铺在 input 里；
-      // 包进 user_input.content 时纯文本可用，但图片会让上游一直不回包（2026-11 实测）。
-      if (parts.some(p => p.type === 'image')) input.push(...parts)
-      else input.push({ type: 'user_input', content: parts })
+      // input 必须是“纯 Content 列表”或“纯 Step 列表”，图片 Content 与工具 Step 不能混排；
+      // 这里统一用 user_input Step（content 允许 text + image），多轮工具调用才合法。
+      if (parts.length) input.push({ type: 'user_input', content: parts })
       continue
     }
     if (msg.role === 'assistant') {
