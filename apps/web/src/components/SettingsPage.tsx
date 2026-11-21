@@ -864,19 +864,21 @@ export function SettingsPage(props: {
               </label>
               <label className="field">
                 接口格式
-                <Seg
+                <select
                   value={d.format}
-                  options={[
-                    { value: 'openai', label: 'OpenAI 兼容' },
-                    { value: 'gemini', label: 'Gemini' },
-                  ]}
-                  onChange={(v: 'openai' | 'gemini') => patchProvider(route, {
-                    format: v,
-                    ...(v === 'gemini' && (!d.baseURL.trim() || d.baseURL.trim() === 'https://')
-                      ? { baseURL: 'https://generativelanguage.googleapis.com' }
-                      : {}),
-                  })}
-                />
+                  onChange={e => {
+                    const v = e.target.value === 'gemini' ? 'gemini' : 'openai'
+                    patchProvider(route, {
+                      format: v,
+                      ...(v === 'gemini' && (!d.baseURL.trim() || d.baseURL.trim() === 'https://')
+                        ? { baseURL: 'https://generativelanguage.googleapis.com' }
+                        : {}),
+                    })
+                  }}
+                >
+                  <option value="openai">OpenAI 兼容</option>
+                  <option value="gemini">Gemini</option>
+                </select>
               </label>
               <label className="field">
                 Base URL
