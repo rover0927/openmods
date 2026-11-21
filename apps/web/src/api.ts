@@ -441,6 +441,17 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model }),
     }),
+  /** 上传一个聊天附件（图片或普通文件），返回可放进 chat.attachments 的引用 part */
+  uploadAttachment: (file: File) =>
+    jfetch<{ part: any }>(
+      `/api/attachments?name=${encodeURIComponent(file.name || '附件')}`
+      + `&mediaType=${encodeURIComponent(file.type || 'application/octet-stream')}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': bufferMime(file.name) },
+        body: file,
+      },
+    ),
   /** 异步启动一轮对话：事件走 streamUrl 的 EventSource */
   chat: (id: string, body: { text: string; modelId?: string; mode?: 'build' | 'refine'; attachments?: any[]; profile?: string; reasoningEffort?: string }) =>
     jfetch<{ ok: boolean; sessionId: string }>(`/api/sessions/${id}/chat`, {

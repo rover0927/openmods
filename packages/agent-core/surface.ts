@@ -8,7 +8,17 @@ import type { SurfaceItem } from './session-log.js'
 
 export type SurfaceTransform = (items: SurfaceItem[]) => SurfaceItem[]
 
+/** 文件引用 → 落盘位置（server 注入；请求投影期才解析，日志里只有引用） */
+export type FileResolver = (ref: any) => { path: string; name?: string; bytes?: number; mediaType?: string } | undefined
+
 const transforms: SurfaceTransform[] = []
+
+function fmtBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '未知大小'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
 
 export function registerSurfaceTransform(t: SurfaceTransform) {
   transforms.push(t)
@@ -20,12 +30,26 @@ export function registerSurfaceTransform(t: SurfaceTransform) {
  * @param part 日志中的附件
  * @param resolveImage 引用 → data URL
  * @returns content part；取不到字节时退化成一句可诊断的文本 */
-function toWirePart(part: any, resolveImage?: (ref: any) => string | undefined): any {
+function toWirePart(
+  part: any,
+  resolveImage?: (ref: any) => string | undefined,
+  resolveFile?: FileResolver,
+): any {
   if (part?.type === 'image_url' && part?.image_url?.url) return part
   if (part?.type === 'image' && part?.attachment?.attachmentId) {
     const url = resolveImage?.(part.attachment)
     if (url) return { type: 'image_url', image_url: { url } }
     return { type: 'text', text: `[image unavailable: ${part.attachment.attachmentId}]` }
+  }
+  if (part?.type === 'file' && part?.attachment?.attachmentId) {
+    const ref = part.attachment
+    const found = resolveFile?.(ref)
+    const name = String(ref.name || found?.name || ref.attachmentId)
+    const size = fmtBytes(Number(ref.bytes ?? found?.bytes ?? 0))
+    const mime = String(ref.mediaType || found?.mediaType || '')
+    if (!found?.path) return { type: 'text', text: `[file unavailable: ${name} ${ref.attachmentId}]` }
+    // 文件本身不塞进上下文：给模型一个可读路径，由它按需用 read / bash 打开
+    return { type: 'text', text: `[附件] ${name}（${size}${mime ? `，${mime}` : ''}）→ ${found.path}` }
   }
   if (typeof part?.text === 'string') return { type: 'text', text: part.text }
   return undefined
@@ -35,6 +59,7 @@ export function buildLlmMessages(
   systemPrompt: string,
   surfaceItems: SurfaceItem[],
   resolveImage?: (ref: any) => string | undefined,
+  resolveFile?: FileResolver,
 ): ChatMessage[] {
   let items = surfaceItems.filter(i => !i.shadowed)
   for (const t of transforms) items = t(items)
@@ -47,7 +72,7 @@ export function buildLlmMessages(
       const sendImages = !!item.attachments?.length && !item.transcribed && !item.imagesOmitted
       if (sendImages) {
         const parts = (item.attachments ?? [])
-          .map(p => toWirePart(p, resolveImage))
+          .map(p => toWirePart(p, resolveImage, resolveFile))
           .filter((p): p is any => p !== undefined)
         messages.push({
           role: 'user',

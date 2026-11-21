@@ -1,7 +1,8 @@
 import { useCallback, useRef, useState, type RefObject } from 'react'
 import type {
-  CanvasPageDto, CanvasRefDto, CanvasState, SessionImageDto, SessionSummaryDto, StatsDto, TerminalDto, TodoItemDto,
+  CanvasPageDto, CanvasRefDto, CanvasState, PendingAttachmentDto, SessionImageDto, SessionSummaryDto, StatsDto, TerminalDto, TodoItemDto,
 } from '../types.js'
+import { fmtBytes } from './SessionView.js'
 import { CanvasPane } from './CanvasPane.js'
 import { StatsTab } from './StatsTab.js'
 import { FilesPane, ImagesPane, WebPane } from './DockPreview.js'
@@ -91,7 +92,7 @@ export function RightDock(props: {
   activeAnimations: CanvasState['animations']
   /** 画布模型还在加载：只在这种情况下禁用动画按钮（不因会话 busy 整体禁用） */
   canvasLoading: boolean
-  pendingAtts: { name: string; dataUrl: string }[]
+  pendingAtts: PendingAttachmentDto[]
   onAddFiles: (files: FileList | null) => void
   onRemoveDockAtt: (idx: number) => void
   modelTagline: string
@@ -344,10 +345,17 @@ export function RightDock(props: {
                 )}
                 {props.pendingAtts.length > 0 && (
                   <div className="attach-row" style={{ padding: 0 }}>
-                    {props.pendingAtts.map((a, i) => (
+                    {props.pendingAtts.map((a, i) => a.kind === 'image' && a.previewUrl ? (
                       <span key={i} className="attach-thumb" title={a.name}>
-                        <img src={a.dataUrl} alt={a.name} />
+                        <img src={a.previewUrl} alt={a.name} />
                         <button className="attach-remove" onClick={() => props.onRemoveDockAtt(i)} title="移除">✕</button>
+                      </span>
+                    ) : (
+                      <span key={i} className="attach-chip attach-file" title={a.name}>
+                        <McIcon name="attach" size={12} />
+                        <span className="attach-file-name">{a.name}</span>
+                        <span className="attach-file-size">{fmtBytes(a.bytes)}</span>
+                        <button className="attach-file-remove" onClick={() => props.onRemoveDockAtt(i)} title="移除">✕</button>
                       </span>
                     ))}
                   </div>

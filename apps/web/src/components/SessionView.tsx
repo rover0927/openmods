@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import type {
-  AgentProfileDto, ContextBreakdownDto, ModelInfoDto, SessionSummaryDto, StatsDto, SubagentWaitDto, TodoItemDto, TurnEntry,
+  AgentProfileDto, ContextBreakdownDto, ModelInfoDto, PendingAttachmentDto, SessionSummaryDto, StatsDto, SubagentWaitDto, TodoItemDto, TurnEntry,
 } from '../types.js'
 import { stepLabel } from '../types.js'
 import { Lightbox } from './Lightbox.js'
@@ -58,6 +58,14 @@ function baseName(p: string): string {
   return i >= 0 ? s.slice(i + 1) : s
 }
 
+/** 附件大小（输入框与消息气泡共用） */
+export function fmtBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return ''
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
 export function SessionView(props: {
   sessionId: string
   turns: TurnEntry[]
@@ -81,7 +89,7 @@ export function SessionView(props: {
   agentProfile: string
   onPickProfile: (id: string) => void
   iframeReady: boolean
-  pendingAtts: { name: string; dataUrl: string }[]
+  pendingAtts: PendingAttachmentDto[]
   onAddFiles: (files: FileList | null) => void
   onRemoveAtt: (idx: number) => void
   onPickModel: (id: string) => void
@@ -182,7 +190,7 @@ export function SessionView(props: {
     },
     {
       id: 'views', name: '三视图', keys: ['views', 'image', 'sanshitu'], on: false,
-      hint: '附参考图（三视图等），随下一条消息发给 AI',
+      hint: '附参考图或文件（三视图等），随下一条消息发给 AI',
       run: () => fileRef.current?.click(),
     },
   ]
@@ -213,10 +221,11 @@ export function SessionView(props: {
     if (!items) return
     const files: File[] = []
     for (const item of Array.from(items)) {
-      if (item.kind === 'file' && item.type.startsWith('image/')) {
-        const f = item.getAsFile()
-        if (f) files.push(new File([f], f.name || `粘贴图片${Date.now()}.png`, { type: f.type }))
-      }
+      if (item.kind !== 'file') continue
+      const f = item.getAsFile()
+      if (!f) continue
+      const fallback = f.type.startsWith('image/') ? `粘贴图片${Date.now()}.png` : `粘贴文件${Date.now()}`
+      files.push(new File([f], f.name || fallback, { type: f.type }))
     }
     if (files.length) {
       e.preventDefault()
@@ -308,10 +317,17 @@ export function SessionView(props: {
           {refineMode && <div className="refine-hint">✦ 完善想法模式：描述你的想法，AI 会先打磨成建模描述再上画布</div>}
           {pendingAtts.length > 0 && (
             <div className="attach-row">
-              {pendingAtts.map((a, i) => (
+              {pendingAtts.map((a, i) => a.kind === 'image' && a.previewUrl ? (
                 <span key={i} className="attach-thumb" title={a.name}>
-                  <img src={a.dataUrl} alt={a.name} />
+                  <img src={a.previewUrl} alt={a.name} />
                   <button className="attach-remove" onClick={() => onRemoveAtt(i)} title="移除">✕</button>
+                </span>
+              ) : (
+                <span key={i} className="attach-chip attach-file" title={a.name}>
+                  <McIcon name="attach" size={12} />
+                  <span className="attach-file-name">{a.name}</span>
+                  <span className="attach-file-size">{fmtBytes(a.bytes)}</span>
+                  <button className="attach-file-remove" onClick={() => onRemoveAtt(i)} title="移除">✕</button>
                 </span>
               ))}
             </div>
@@ -325,7 +341,7 @@ export function SessionView(props: {
               ? `等待 ${waiting.length} 个子代理完成中…（结算后会自动汇总，不能插话）`
               : isSubagent
                 ? '给这个子代理继续下达指令（独立画布）'
-                : refineMode ? '描述你的想法，AI 帮你完善…' : '输入消息，可粘贴图片 · 输入 / 调用命令'}
+                : refineMode ? '描述你的想法，AI 帮你完善…' : '输入消息，可粘贴图片或添加文件 · 输入 / 调用命令'}
             value={text}
             onChange={e => { setText(e.target.value); setSlashIdx(0) }}
             onPaste={onPaste}
@@ -382,8 +398,8 @@ export function SessionView(props: {
             </div>
           )}
           <div className="input-row">
-            <button className="icon-btn" title="附图（支持 Ctrl+V 粘贴）" onClick={() => fileRef.current?.click()}><McIcon name="attach" size={16} /></button>
-            <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={e => { onAddFiles(e.target.files); e.target.value = '' }} />
+            <button className="icon-btn" title="添加附件（图片或文件，支持 Ctrl+V 粘贴）" onClick={() => fileRef.current?.click()}><McIcon name="attach" size={16} /></button>
+            <input ref={fileRef} type="file" multiple hidden onChange={e => { onAddFiles(e.target.files); e.target.value = '' }} />
             <button
               className={`model-chip coop-chip ${planMode ? 'on' : ''}`}
               onClick={onTogglePlan}
@@ -489,6 +505,7 @@ export function TurnCard({ turn, onOpenSubagent }: { turn: TurnEntry; onOpenSuba
   const thinkOpen = openThink ?? (turn.streaming && !turn.assistantText)
   const think = turn.reasoning ?? ''
   const images = turn.images ?? []
+  const files = turn.files ?? []
 
   return (
     <div className="turn">
@@ -499,10 +516,36 @@ export function TurnCard({ turn, onOpenSubagent }: { turn: TurnEntry; onOpenSuba
             <SubagentNoticeRow key={n.childId} notice={n} onOpen={() => onOpenSubagent?.(n.childId)} />
           ))}
         </div>
-      ) : turn.userText || images.length ? (
+      ) : turn.userText || images.length || files.length ? (
         <div className="msg user">
           <div className="msg-bubble user-bubble">
             {turn.userText && <MessageText text={turn.userText} />}
+            {/* 普通文件：显示名字与大小；已上传的走附件下载接口 */}
+            {files.length > 0 && (
+              <div className="msg-files">
+                {files.map((f, i) => {
+                  const label = (
+                    <>
+                      <McIcon name="attach" size={12} />
+                      <span className="msg-file-name">{f.name}</span>
+                      {fmtBytes(f.bytes) && <span className="dim">{fmtBytes(f.bytes)}</span>}
+                    </>
+                  )
+                  return f.id.startsWith('pending-') ? (
+                    <span key={`${f.id}-${i}`} className="msg-file" title={f.name}>{label}</span>
+                  ) : (
+                    <a
+                      key={`${f.id}-${i}`}
+                      className="msg-file"
+                      href={`/api/attachments/${encodeURIComponent(f.id)}?download=1`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`下载 ${f.name}`}
+                    >{label}</a>
+                  )
+                })}
+              </div>
+            )}
             {/* 参考图：直接铺缩略图（原来只有一行"附带参考图 N 张"），点击开灯箱 */}
             {images.length > 0 ? (
               <div
@@ -520,8 +563,8 @@ export function TurnCard({ turn, onOpenSubagent }: { turn: TurnEntry; onOpenSuba
                   </button>
                 ))}
               </div>
-            ) : turn.attachments > 0 ? (
-              <div className="msg-attach">附带参考图 {turn.attachments} 张</div>
+            ) : files.length === 0 && turn.attachments > 0 ? (
+              <div className="msg-attach">附带 {turn.attachments} 个附件</div>
             ) : null}
             {images.length > 0 && turn.imagesOmitted && (
               <div className="msg-attach">本轮模型不接受图像输入，图片未发送</div>

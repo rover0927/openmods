@@ -33,12 +33,31 @@ export interface SessionImageDto {
   src: string
 }
 
+/** 一个随消息上传的普通文件（非图片），可从 /api/attachments/<id>?download=1 下载 */
+export interface SessionFileDto {
+  id: string
+  name: string
+  bytes: number
+}
+
+/** 输入框里待发送的附件（本地文件，点发送时才上传） */
+export interface PendingAttachmentDto {
+  file: File
+  name: string
+  bytes: number
+  kind: 'image' | 'file'
+  /** 图片的本地预览（data URL）；普通文件为空 */
+  previewUrl?: string
+}
+
 export interface TurnEntry {
   turnId: string
   userText: string
   attachments: number
   /** 本轮的参考图（引用形式；消息列表缩略图与右侧「图片」标签都用它） */
   images?: SessionImageDto[]
+  /** 本轮上传的普通文件（图片之外） */
+  files?: SessionFileDto[]
   /** 本轮模型是纯文本路由，图片没有发给模型（缩略图照常显示，只是标注一下） */
   imagesOmitted?: boolean
   steps: StepItem[]

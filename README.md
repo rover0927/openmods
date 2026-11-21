@@ -43,7 +43,7 @@
 | <img src="apps/web/public/mc/item/lava_bucket.png" width="16" alt=""> **MC 开发闭环** | `mc_scaffold` 建工程 → 建模子代理出模型并在独立画布导出 JSON → `mc_gradle build` → 标题栏「▶ 测试 Mod」→「jar ⤓」导出（Forge 1.20.1 / 国内镜像 / 离线构建包） |
 | <img src="apps/web/public/mc/item/enchanted_book.png" width="16" alt=""> **代理与技能** | 三个角色（lead / mcmod / modeling）的工具与技能分配可视化；技能自注入、内置技能只读 |
 | <img src="apps/web/public/mc/item/ender_eye.png" width="16" alt=""> **上下文面板** | 底部状态条与右侧面板跟随当前画布页的 owner 会话；分段占用、工具用量、耗时分布、token 环形图、每轮明细 |
-| <img src="apps/web/public/mc/item/map.png" width="16" alt=""> **图片输入** | Ctrl+V 粘贴直发视觉模型；纯文本模型按 dsh 语义诚实降级 |
+| <img src="apps/web/public/mc/item/map.png" width="16" alt=""> **附件输入** | Ctrl+V 粘贴图片直发视觉模型；也可选择任意文件作为附件，由代理按路径读取 |
 | <img src="apps/web/public/mc/item/paper.png" width="16" alt=""> **输入框自适应** | 随内容自动长高（36–196px），超过后内部滚动；发送后自动缩回单行 |
 | <img src="apps/web/public/mc/item/experience_bottle.png" width="16" alt=""> **省 token** | 阈值触发八段式检查点摘要 + 工具结果免费裁剪，按模型覆盖阈值 |
 | <img src="apps/web/public/mc/item/redstone.png" width="16" alt=""> **可裁剪功能** | 画布与建模 / Minecraft 模组开发 / 素材库可在设置里独立关闭 |
@@ -161,7 +161,7 @@ npm start                     # 生产：自动构建前端 → 单进程 http:/
 - **开发与实现文档**
   - [1. 快速上手](#1-快速上手) · [2. 目录结构](#2-目录结构)
   - [3. Agent 架构](#3-agent-架构)（运行时 · 工作台 · 子代理与多画布 · LLM 适配器 · 项目分组 · 消息渲染 · 上下文面板 · MC 代理）
-  - [4. 插件系统](#4-插件系统packagesplugin-kit) · [5. 图片输入](#5-图片输入) · [6. 动画](#6-动画set_animation) · [7. 无头 Blockbench 画布](#7-无头-blockbench-画布bbcanvas)
+  - [4. 插件系统](#4-插件系统packagesplugin-kit) · [5. 图片与文件输入](#5-图片与文件输入) · [6. 动画](#6-动画set_animation) · [7. 无头 Blockbench 画布](#7-无头-blockbench-画布bbcanvas)
   - [8. 设置系统](#8-设置系统) · [9. 外观：MC 像素皮肤](#9-外观mc-像素皮肤)
   - [10. 右侧拓展](#10-右侧拓展)（多标签 · 多画布页签 · 自动唤醒 · 活动条 · 预览标签）
   - [11. 省 token](#11-省-tokencompaction-插件) · [12. 统计看板](#12-统计看板stats-插件)
@@ -199,7 +199,7 @@ openmods/
 │   │   ├── library.ts        素材库存储（模型/Jar/图片/文件分类）+ 模型等距预览
 │   │   ├── mc-test-client.ts 独立 Forge 1.20.1 生产测试客户端（安装/mods/启动/状态）
 │   │   ├── model-preview.ts  纯 TS 等距 3D 模型缩略图渲染
-│   │   ├── attachments.ts    图片附件：魔数判型 + sha256 内容寻址
+│   │   ├── attachments.ts    图片 / 文件附件：魔数判型 + sha256 内容寻址
 │   │   ├── files.ts          工作区文件浏览（路径锁在 ROOT 内）
 │   │   ├── webview.ts        网页标签：嵌入性探测 + 同源代理渲染
 │   │   ├── terminals.ts      终端进程管理（输出缓冲 / stdin / 进程树终止）
@@ -371,7 +371,7 @@ interface PluginContext {
 
 ---
 
-## 5. 图片输入<img src="apps/web/public/mc/item/map.png" width="16" alt="">
+## 5. 图片与文件输入<img src="apps/web/public/mc/item/map.png" width="16" alt="">
 
 **模型能力标记**：
 
@@ -390,6 +390,13 @@ interface PluginContext {
 - **会话日志不含 base64**：`GET /api/attachments/:id` 是唯一出口，前端 `<img>` 与「图片」标签都走它。
 - 准入：单条 ≤20 张、单张 ≤50 MiB。
 - 前端入口：composer `＋` / Ctrl+V、右 dock「图片」；用户气泡直接铺缩略图，点击开灯箱。
+
+**发送文件附件**：
+
+- 输入框支持选择任意文件（回形针 / Ctrl+V）；png/jpeg/webp/gif 仍走视觉链路，SVG 等其他类型按普通文件处理。
+- 前端先 `POST /api/attachments`（原始字节，≤50 MiB）换取引用，聊天 JSON 不再携带 base64。
+- 日志只存 `{type:'file', attachment:{attachmentId, name, mediaType, bytes}}`；请求投影时给模型一行 `[附件] 名字（大小，MIME）→ 绝对路径`，代理按需用 `read` / `bash` 读取，文件内容不塞进上下文。
+- `GET /api/attachments/:id?download=1` 下载原文件；单条消息附件上限 20 个。
 
 **与 dsh 的差异**：dsh 会按模型路由二次重编码并在超预算时把最老的图换成文本句柄；openmods 目前直接原字节发送，也没有 image/offload。
 

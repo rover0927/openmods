@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, type SseFrame } from './api.js'
 import type {
-  AgentProfileDto, AnimationMetaDto, CanvasPageDto, CanvasRefDto, CanvasState, ContextBreakdownDto, FeaturesDto, McProjectUiDto, ModelInfoDto, PendingInteractionDto, PrefsDto, SessionInfoDto,
+  AgentProfileDto, AnimationMetaDto, CanvasPageDto, CanvasRefDto, CanvasState, ContextBreakdownDto, FeaturesDto, McProjectUiDto, ModelInfoDto, PendingAttachmentDto, PendingInteractionDto, PrefsDto, SessionInfoDto,
   SessionSummaryDto, StatsDto, SubagentNoticeDto, SubagentWaitDto, TerminalDto, TodoItemDto, TurnEntry, WakeEntry,
   McTestStatusDto,
 } from './types.js'
@@ -106,6 +106,22 @@ function toImages(parts: any[] | undefined): { id: string; name?: string; src: s
   return out
 }
 
+/** 附件 part → 可渲染的普通文件（图片走 toImages） */
+function toFiles(parts: any[] | undefined): { id: string; name: string; bytes: number }[] {
+  if (!parts?.length) return []
+  const out: { id: string; name: string; bytes: number }[] = []
+  for (const p of parts) {
+    if (p?.type === 'file' && p?.attachment?.attachmentId) {
+      out.push({
+        id: p.attachment.attachmentId,
+        name: String(p.attachment.name ?? '附件'),
+        bytes: Number(p.attachment.bytes ?? 0),
+      })
+    }
+  }
+  return out
+}
+
 /** 日志回放：用户/助手/工具 + 子代理完成通知（通知是紧凑系统行，不是聊天轮次） */
 function replayEvents(events: any[]): TurnEntry[] {
   const out: TurnEntry[] = []
@@ -119,6 +135,7 @@ function replayEvents(events: any[]): TurnEntry[] {
         turnId: ev.turnId ?? `t${ev.seq}`, userText: ev.source ? '' : (ev.text ?? ''), attachments: ev.attachments?.length ?? 0,
         // 图片始终显示（即使是纯文本模型没发出去的那几张，用户自己也该看到）
         ...(toImages(ev.attachments).length ? { images: toImages(ev.attachments) } : {}),
+        ...(toFiles(ev.attachments).length ? { files: toFiles(ev.attachments) } : {}),
         ...(ev.imagesOmitted ? { imagesOmitted: true } : {}),
         steps: [], assistantText: '', streaming: false,
         ...(notices.length ? { notices } : {}),
@@ -240,7 +257,7 @@ export default function App() {
   // 画布
   const [canvas, setCanvas] = useState<CanvasState>(emptyCanvas)
   const [playingAnim, setPlayingAnim] = useState<string | null>(null)
-  const [pendingAtts, setPendingAtts] = useState<{ name: string; dataUrl: string }[]>([])
+  const [pendingAtts, setPendingAtts] = useState<PendingAttachmentDto[]>([])
   // 看板
   const [stats, setStats] = useState<StatsDto | null>(null)
   // 「图片」标签的数据源：本会话所有回合的参考图（按 id 去重，保留出现顺序）
@@ -564,6 +581,7 @@ export default function App() {
             : {
               ...t, userText: f.text ?? '',
               ...(toImages(f.attachments).length ? { images: toImages(f.attachments) } : {}),
+              ...(toFiles(f.attachments).length ? { files: toFiles(f.attachments) } : {}),
               ...(f.imagesOmitted ? { imagesOmitted: true } : {}),
             }))
         }
@@ -1298,11 +1316,26 @@ export default function App() {
   const addPendingFiles = useCallback((files: FileList | null) => {
     if (!files) return
     for (const file of Array.from(files).slice(0, 3)) {
+      if (file.size > 50 * 1024 * 1024) {
+        showToast(`「${file.name || '文件'}」超过 50 MB，未添加`)
+        continue
+      }
+      const name = file.name || `附件-${Date.now()}`
+      // 视觉链路只认这四种 raster：SVG 等按普通文件处理，避免“缩略图能看、模型收不到”
+      const isImage = /^image\/(png|jpeg|webp|gif)$/i.test(file.type)
+        || (!file.type && /\.(png|jpe?g|webp|gif)$/i.test(file.name))
+      if (!isImage) {
+        setPendingAtts(prev => [...prev, { file, name, bytes: file.size, kind: 'file' }])
+        continue
+      }
+      // 图片读成 data URL 只用于发送前的本地预览；真正上传在 send 里走原始字节
       const reader = new FileReader()
-      reader.onload = () => setPendingAtts(prev => [...prev, { name: file.name, dataUrl: String(reader.result) }])
+      reader.onload = () => setPendingAtts(prev => [
+        ...prev, { file, name, bytes: file.size, kind: 'image', previewUrl: String(reader.result) },
+      ])
       reader.readAsDataURL(file)
     }
-  }, [])
+  }, [showToast])
 
   const send = useCallback(async (text: string, mode: 'build' | 'refine', attachments?: any[]) => {
     // 等待子代理期间不接新指令：这一轮还没结束（服务端同样会 409）
@@ -1341,19 +1374,27 @@ export default function App() {
         return
       }
     }
+    const localImages = pendingAtts
+      .filter(a => a.kind === 'image' && a.previewUrl)
+      .map((a, i) => ({ id: `pending-${i}-${Date.now()}`, name: a.name, src: a.previewUrl! }))
+    const localFiles = pendingAtts
+      .filter(a => a.kind === 'file')
+      .map((a, i) => ({ id: `pending-file-${i}-${Date.now()}`, name: a.name, bytes: a.bytes }))
     setTurns(prev => [...prev, {
-      turnId: 'pending', userText: text, attachments: pendingAtts.length,
-      images: pendingAtts.map((a, i) => ({ id: `pending-${i}-${Date.now()}`, name: a.name, src: a.dataUrl })),
+      turnId: 'pending', userText: text, attachments: pendingAtts.length + (attachments?.length ?? 0),
+      ...(localImages.length ? { images: localImages } : {}),
+      ...(localFiles.length ? { files: localFiles } : {}),
       steps: [], assistantText: '', streaming: true,
     }])
     setBusy(true)
     setStreamChars(0)
     setThinkTail('')
-    // 客户端只送 data URL；准入/落盘/引用化在服务端完成（复刻 dsh PromptContentPart）
-    const attParts = pendingAtts.map(a => ({ type: 'image', dataUrl: a.dataUrl, name: a.name }))
-    const allAtts = [...(attachments ?? []), ...attParts]
-    setPendingAtts([])
+    const pendingSnapshot = pendingAtts
     try {
+      // 先上传成本地引用再启动回合：聊天 JSON 不带 base64，文件大小也不受 15MB body 限制
+      const uploaded = await Promise.all(pendingSnapshot.map(a => api.uploadAttachment(a.file)))
+      setPendingAtts(prev => prev.filter(a => !pendingSnapshot.includes(a)))
+      const allAtts = [...(attachments ?? []), ...uploaded.map(r => r.part)]
       await api.chat(sid, {
         text, modelId: currentModelId ?? undefined, mode,
         reasoningEffort: reasoningEffort || undefined,

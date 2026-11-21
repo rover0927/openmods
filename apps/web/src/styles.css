@@ -477,6 +477,16 @@ input, textarea, select { font-family: inherit; }
 .msg-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .msg-images.single .msg-img { width: 176px; height: 132px; background: var(--bg-base); }
 .msg-images.single .msg-img img { object-fit: contain; }
+/* 用户消息里的普通文件：可点击下载 */
+.msg-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.msg-file {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  height: 28px; padding: 0 8px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-l2); background: var(--bg-layer-2);
+  color: var(--label-secondary); font-size: 12px; text-decoration: none;
+}
+a.msg-file:hover { border-color: var(--border-l4); color: var(--label-primary); }
+.msg-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 思考过程：dsh TurnProcessNode 的 think 分支 —— 折叠行 + 弱化正文 */
 .think { max-width: 100%; }
@@ -568,6 +578,16 @@ input, textarea, select { font-family: inherit; }
   border-radius: var(--radius-sm); padding: 2px 4px 2px 8px;
   display: inline-flex; align-items: center; gap: 5px;
 }
+/* 普通文件附件：输入框上方一行名字 + 大小，不占缩略图格 */
+.attach-file { max-width: 260px; height: 30px; font-size: 12px; padding: 0 6px 0 8px; }
+.attach-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
+.attach-file-size { flex: none; color: var(--label-caption); font-size: 10px; }
+.attach-file-remove {
+  flex: none; width: 16px; height: 16px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--label-tertiary); font-size: 9px;
+}
+.attach-file-remove:hover { color: #fff; background: rgba(255, 255, 255, 0.12); }
 .refine-hint {
   margin: 0 12px; font-size: 12px; line-height: 18px;
   color: var(--accent); background: rgba(122, 170, 255, 0.1);

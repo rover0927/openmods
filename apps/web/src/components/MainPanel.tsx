@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type {
-  AgentProfileDto, ContextBreakdownDto, McProjectUiDto, ModelInfoDto, SessionInfoDto, SessionSummaryDto, StatsDto, SubagentWaitDto, TodoItemDto, TurnEntry,
+  AgentProfileDto, ContextBreakdownDto, McProjectUiDto, ModelInfoDto, PendingAttachmentDto, SessionInfoDto, SessionSummaryDto, StatsDto, SubagentWaitDto, TodoItemDto, TurnEntry,
 } from '../types.js'
 import { SessionView } from './SessionView.js'
 import { McIcon } from './McIcon.js'
@@ -52,7 +52,7 @@ export function MainPanel(props: {
   agentProfile: string
   onPickProfile: (id: string) => void
   iframeReady: boolean
-  pendingAtts: { name: string; dataUrl: string }[]
+  pendingAtts: PendingAttachmentDto[]
   onAddFiles: (files: FileList | null) => void
   onRemoveAtt: (idx: number) => void
   onPickModel: (id: string) => void

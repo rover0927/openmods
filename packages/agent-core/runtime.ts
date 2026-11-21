@@ -113,6 +113,8 @@ export interface RuntimeDeps {
   resolveModel: (modelId: string) => ModelInfo | undefined
   /** 图片引用 → data URL（server 注入；请求投影期才取字节，日志里只有引用） */
   resolveImage?: (ref: any) => string | undefined
+  /** 文件引用 → 落盘路径（server 注入；模型拿到可读路径，而不是文件字节） */
+  resolveFile?: (ref: any) => { path: string; name?: string; bytes?: number; mediaType?: string } | undefined
   defaultModelId: string
   /** 本会话当前选择的思考强度（server 注入；空 = 不发送 reasoning_effort） */
   getReasoningEffort?: () => string | undefined
@@ -291,8 +293,9 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
       // 声明为纯文本则投影成一行确定性占位文本（projectImagesForTextModel），不猜图里的内容。
       let userFinalText = opts.text
       let imagesOmitted = false
-      const imgCount = opts.attachments?.length ?? 0
-      if (imgCount > 0) {
+      // 只有图片参与视觉能力判断；普通文件走文本路径提示，不需要视觉模型
+      const imageParts = (opts.attachments ?? []).filter((p: any) => p?.type === 'image' || p?.type === 'image_url')
+      if (imageParts.length > 0) {
         const modelInfo = deps.resolveModel(currentModelId)
         // 能力事实源优先 inputModalities（dsh llm-deepseek 语义），vision 是兼容旧设置的派生字段
         const supportsImage = modelInfo?.inputModalities
@@ -300,7 +303,7 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
           : !!modelInfo?.vision
         if (!supportsImage) {
           imagesOmitted = true
-          const placeholders = (opts.attachments ?? []).map((p: any) => textOnlyImageText(p))
+          const placeholders = imageParts.map((p: any) => textOnlyImageText(p))
           userFinalText = `${opts.text}\n\n${placeholders.join('\n')}`
         }
       }
@@ -345,7 +348,12 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
           rt.emit('step/start', { turnId, stepId })
 
           const turnTools = selectTools(registries.tools, profileId, registries.profiles, rt)
-          const messages = buildLlmMessages(buildSystemPrompt(registries, deps, opts.mode, profileId, rt), rt.getSurfaceMessages() as any, deps.resolveImage)
+          const messages = buildLlmMessages(
+            buildSystemPrompt(registries, deps, opts.mode, profileId, rt),
+            rt.getSurfaceMessages() as any,
+            deps.resolveImage,
+            deps.resolveFile,
+          )
           // 空回复重试的一次性提示：只随这一次请求发出，随后清空（不进会话日志/界面）
           if (retryNudge) {
             messages.push({ role: 'user', content: retryNudge })

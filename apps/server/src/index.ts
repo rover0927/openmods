@@ -19,7 +19,7 @@ import { createProfileRegistry, registerBuiltinProfiles } from './profiles.js'
 import { SessionStore, isValidSessionId, summarize, type SessionSummary, type SubagentStatus } from './session-store.js'
 import { CanvasService } from './canvas.js'
 import { ProjectStore, ProjectActiveSessionError, type SessionActivity } from './project-store.js'
-import { createAttachmentStore, MAX_IMAGES_PER_MESSAGE } from './attachments.js'
+import { createAttachmentStore, MAX_ATTACHMENTS_PER_MESSAGE } from './attachments.js'
 import { createLibraryStore, findAllJars, type LibraryAsset, type LibraryDoc } from './library.js'
 import { createFileService } from './files.js'
 import { probeWeb, proxyWeb } from './webview.js'
@@ -739,6 +739,11 @@ function createSession(id = randomUUID().slice(0, 8), opts: CreateSessionOptions
       resolveModel: modelId => settingsStore.modelDirectory()[modelId],
       // 请求投影期才把引用还原成字节（日志不含 base64，与 dsh readImageRequest 同位置）
       resolveImage: ref => attachments.dataUrl(ref),
+      // 普通文件只把落盘路径交给模型，由它按需 read / bash，不把字节塞进上下文
+      resolveFile: ref => {
+        const path = attachments.filePath(ref)
+        return path ? { path, name: ref?.name, bytes: ref?.bytes, mediaType: ref?.mediaType } : undefined
+      },
       defaultModelId: settingsStore.defaultModelId(),
       // 每步现读：用户在输入框切换思考强度后，下一步立即使用
       getReasoningEffort: () => coop.reasoningEffort,
@@ -2844,8 +2849,8 @@ app.post('/api/sessions/:id/chat', async (req, reply) => {
   // 客户端发来的是 data URL，这里换成内容寻址引用；日志与事件里不再出现 base64。
   let admitted: any[] | undefined
   if (body.attachments?.length) {
-    if (body.attachments.length > MAX_IMAGES_PER_MESSAGE) {
-      return reply.code(400).send({ error: `一条消息最多 ${MAX_IMAGES_PER_MESSAGE} 张图片` })
+    if (body.attachments.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+      return reply.code(400).send({ error: `一条消息最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件` })
     }
     try {
       admitted = body.attachments.map(part => attachments.admit(part))
@@ -3441,11 +3446,30 @@ canvas.onChange(change => {
   }, 900))
 })
 
-// 图片字节出口（右侧「图片」标签、历史回看、灯箱都用它）
+// 输入框附件上传：原始字节体（不走 base64/JSON），返回可直接放进 chat.attachments 的引用 part。
+// 图片按魔数识别后仍走视觉链路；其他文件保存为文件引用，聊天日志里只留引用。
+app.post('/api/attachments', { bodyLimit: 64 * 1024 * 1024 }, async (req, reply) => {
+  const q = (req.query ?? {}) as { name?: string; mediaType?: string }
+  const data = req.body
+  if (!Buffer.isBuffer(data) || data.length === 0) {
+    return reply.code(400).send({ error: '请求体为空（请传文件字节）' })
+  }
+  try {
+    return { part: attachments.admitBytes(data, { name: q.name, mediaType: q.mediaType }) }
+  } catch (e: any) {
+    return reply.code(400).send({ error: e.message })
+  }
+})
+
+// 附件字节出口（右侧「图片」标签、历史回看、灯箱、文件下载都用它）
 // 内容寻址 → 永久缓存；id 形如 sha256:<digest>（与日志里的引用一致）
 app.get('/api/attachments/:id', async (req, reply) => {
-  const found = attachments.read((req.params as any).id)
+  const id = String((req.params as any).id)
+  const found = attachments.read(id)
   if (!found) return reply.code(404).send({ error: '附件不存在或已被删除' })
+  if (String((req.query as any)?.download ?? '') === '1') {
+    reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(found.name ?? id)}`)
+  }
   return reply
     .header('content-type', found.mediaType)
     .header('cache-control', 'public, max-age=31536000, immutable')
