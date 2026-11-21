@@ -1,4 +1,4 @@
-// Java 后台进程探测（仅 Windows）：Gradle daemon / gradlew 启动器 / Minecraft 客户端。
+// Java 后台进程探测（Windows / Linux）：Gradle daemon / gradlew 启动器 / Minecraft 客户端。
 // 供前端浮窗自动检测与手动结束；结束接口只允许操作本模块列表里的 PID，避免误杀任意进程。
 import { spawnSync } from 'node:child_process'
 
@@ -25,8 +25,65 @@ function classify(cmd: string): JavaProcKind | null {
   return null
 }
 
+/** ps 的 etime / time：`[[dd-]hh:]mm:ss` → 秒 */
+function parseElapsed(raw: string): number {
+  const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(String(raw ?? '').trim())
+  if (!m) return 0
+  return Number(m[1] ?? 0) * 86_400 + Number(m[2] ?? 0) * 3_600 + Number(m[3]) * 60 + Number(m[4])
+}
+
+/** Linux：只列当前用户的 java 进程，避免“全部结束”碰到别人的 Gradle */
+function listLinuxProcesses(): { ok: boolean; error?: string; processes: JavaProcInfo[] } {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined
+  const r = spawnSync('ps', [
+    ...(uid === undefined ? [] : ['-u', String(uid)]),
+    '-o', 'pid=,ppid=,rss=,etime=,time=,comm=,args=',
+  ], {
+    encoding: 'utf8',
+    timeout: 15_000,
+    env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
+  })
+  if (r.error) return { ok: false, error: `检测失败：${r.error.message}`, processes: [] }
+  if (r.status !== 0) {
+    return { ok: false, error: (String(r.stderr ?? '').trim() || `ps 退出码 ${r.status}`).slice(0, 300), processes: [] }
+  }
+  const now = Date.now()
+  const processes: JavaProcInfo[] = []
+  for (const line of String(r.stdout ?? '').split(/\r?\n/)) {
+    if (!line.trim()) continue
+    // 列：pid ppid rss(KB) etime time comm args（args 可含空格，放最后整段取）
+    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/.exec(line)
+    if (!m) continue
+    const [, pid, ppid, rss, etime, cputime, comm, cmdRaw] = m
+    if (!/^java(w)?$/i.test(comm)) continue
+    const cmd = cmdRaw.trim()
+    const kind = classify(cmd)
+    if (!kind) continue
+    const elapsed = parseElapsed(etime)
+    processes.push({
+      pid: Number(pid),
+      ppid: Number(ppid),
+      kind,
+      cmd: cmd.length > 500 ? `${cmd.slice(0, 500)}…` : cmd,
+      memoryMB: Math.round(Number(rss) / 1024),
+      cpuSec: parseElapsed(cputime),
+      startedAt: elapsed > 0 ? now - elapsed * 1000 : 0,
+    })
+  }
+  return { ok: true, processes }
+}
+
+function sortProcesses(processes: JavaProcInfo[]): JavaProcInfo[] {
+  const order: Record<JavaProcKind, number> = { 'gradle-daemon': 0, 'gradle-launcher': 1, 'minecraft-client': 2 }
+  return processes.sort((a, b) => (order[a.kind] - order[b.kind]) || (a.startedAt - b.startedAt))
+}
+
 export function listJavaProcesses(): { ok: boolean; error?: string; processes: JavaProcInfo[] } {
-  if (process.platform !== 'win32') return { ok: false, error: '仅支持 Windows 进程检测', processes: [] }
+  if (process.platform === 'linux') {
+    const r = listLinuxProcesses()
+    return r.ok ? { ...r, processes: sortProcesses(r.processes) } : r
+  }
+  if (process.platform !== 'win32') return { ok: false, error: '仅支持 Windows / Linux 进程检测', processes: [] }
   const script = [
     '[Console]::OutputEncoding = [Text.Encoding]::UTF8;',
     'Get-CimInstance Win32_Process -Filter "Name=\'java.exe\'" |',
@@ -61,12 +118,19 @@ export function listJavaProcesses(): { ok: boolean; error?: string; processes: J
       startedAt: p.StartedAt ? (Date.parse(String(p.StartedAt)) || 0) : 0,
     })
   }
-  const order: Record<JavaProcKind, number> = { 'gradle-daemon': 0, 'gradle-launcher': 1, 'minecraft-client': 2 }
-  processes.sort((a, b) => (order[a.kind] - order[b.kind]) || (a.startedAt - b.startedAt))
-  return { ok: true, processes }
+  return { ok: true, processes: sortProcesses(processes) }
 }
 
 function killPid(pid: number): { ok: boolean; error?: string } {
+  if (process.platform !== 'win32') {
+    // Linux：只允许结束本模块列出的进程（同用户），发送 SIGTERM 让它优雅退出
+    try {
+      process.kill(pid, 'SIGTERM')
+    } catch (e: any) {
+      return { ok: false, error: e?.code === 'ESRCH' ? '进程已不存在' : (e?.message ?? String(e)) }
+    }
+    return { ok: true }
+  }
   const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, encoding: 'utf8', timeout: 15_000 })
   if (r.error) return { ok: false, error: r.error.message }
   if (r.status !== 0) {
