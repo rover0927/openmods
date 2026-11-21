@@ -1188,7 +1188,18 @@ select.think-chip option { background: var(--bg-layer-2); color: var(--label-pri
 }
 .settings-card.adding { border-style: dashed; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.provider-route { font-size: 14px; font-weight: 500; }
+.provider-route { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 供应商手风琴：收缩时只留一行供应商名字 */
+.provider-card { padding: 0; gap: 0; overflow: hidden; }
+.provider-head-row { display: flex; align-items: center; gap: 8px; padding: 12px 14px; }
+.provider-head-row:hover { background: var(--bg-layer-2); }
+.provider-toggle {
+  flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.provider-chevron { flex: none; color: var(--label-tertiary); font-size: 12px; transition: transform .16s ease; }
+.provider-chevron.open { transform: rotate(90deg); }
+.provider-body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--label-tertiary); }
 .field input, .field select {
   height: 32px; background: var(--bg-layer-2); color: var(--label-primary);

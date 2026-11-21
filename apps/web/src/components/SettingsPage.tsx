@@ -153,6 +153,8 @@ export function SettingsPage(props: {
   const revisionRef = useRef(0)
   const [routeOrder, setRouteOrder] = useState<string[]>([])
   const [draft, setDraft] = useState<Record<string, DraftProvider>>({})
+  /** 供应商卡片展开状态：收缩时只显示供应商名字 */
+  const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({})
   const [newRoute, setNewRoute] = useState('')
   const [adding, setAdding] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -316,6 +318,8 @@ export function SettingsPage(props: {
           }
         }
         setDraft(d)
+        // 默认展开第一个供应商，其余保持收缩；用户点标题即可展开/收起
+        setExpandedProviders(Object.fromEntries(order.map((r, i) => [r, i === 0])))
       })
       .catch(e => props.onToast(`加载设置失败：${e.message}`))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -391,6 +395,7 @@ export function SettingsPage(props: {
       [route]: { displayName: route, baseURL: 'https://', format: 'openai', apiKeyInput: '', apiKeySet: false, models: [{ id: 'model-1', name: '模型 1', contextWindow: 131072 }] },
     }))
     setRouteOrder(prev => [...prev, route])
+    setExpandedProviders(prev => ({ ...prev, [route]: true }))
     setNewRoute('')
     setAdding(false)
   }
@@ -402,6 +407,15 @@ export function SettingsPage(props: {
       return next
     })
     setRouteOrder(prev => prev.filter(r => r !== route))
+    setExpandedProviders(prev => {
+      const next = { ...prev }
+      delete next[route]
+      return next
+    })
+  }
+
+  const toggleProvider = (route: string) => {
+    setExpandedProviders(prev => ({ ...prev, [route]: !prev[route] }))
   }
 
   const save = async () => {
@@ -825,13 +839,25 @@ export function SettingsPage(props: {
       {routeOrder.map(route => {
         const d = draft[route]
         if (!d) return null
+        const open = !!expandedProviders[route]
         return (
-          <div key={route} className="settings-card">
-            <div className="card-head">
-              <span className="provider-route">{route}</span>
-              <button className="btn ghost danger-text" onClick={() => removeProvider(route)}>删除</button>
+          <div key={route} className={`settings-card provider-card ${open ? 'open' : ''}`}>
+            <div className="provider-head-row">
+              <button
+                type="button"
+                className="provider-toggle"
+                aria-expanded={open}
+                title={route}
+                onClick={() => toggleProvider(route)}
+              >
+                <span className="provider-route">{d.displayName || route}</span>
+                <span className={`provider-chevron ${open ? 'open' : ''}`}>▸</span>
+              </button>
+              {open && <button className="btn ghost danger-text" onClick={() => removeProvider(route)}>删除</button>}
             </div>
-            <div className="field-grid">
+            {open && (
+              <div className="provider-body">
+                <div className="field-grid">
               <label className="field">
                 显示名
                 <input value={d.displayName} onChange={e => patchProvider(route, { displayName: e.target.value })} />
@@ -918,7 +944,9 @@ export function SettingsPage(props: {
                   <button className="btn ghost danger-text" onClick={() => patchProvider(route, { models: d.models.filter((_, i) => i !== idx) })}>✕</button>
                 </div>
               ))}
-            </div>
+                </div>
+              </div>
+            )}
           </div>
         )
       })}
