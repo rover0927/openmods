@@ -370,6 +370,8 @@ export interface ProviderModelDto {
 export interface RedactedProviderDto {
   displayName: string
   baseURL: string
+  /** 供应商 API 线格式；旧服务端可能不返回，前端按 openai 处理 */
+  format?: 'openai' | 'gemini'
   models: ProviderModelDto[]
   apiKey: { set: boolean }
 }

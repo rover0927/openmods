@@ -1,5 +1,8 @@
 // agent-core 共享类型
 
+/** 供应商 API 线格式：同一套内部消息由适配器翻译成不同协议 */
+export type LlmApiFormat = 'openai' | 'gemini'
+
 export interface ToolCall {
   id: string
   name: string

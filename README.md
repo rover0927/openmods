@@ -274,10 +274,13 @@ openmods/
 
 ### 3.4 LLM 适配器（packages/agent-core/llm.ts）
 
+- **线格式可选**：`ProviderProfile.format` = `openai` | `gemini`；`createHttpLlm({ baseUrl, apiKey, format })` 按注册表选择适配器。新增供应商协议只需实现一个工厂并注册，设置页与运行时不用再加分支。
 - OpenAI 兼容 `/chat/completions` 流式；解析 delta / tool_calls / usage（含 `cached_tokens`）。
-- **推理模型思考流**：`delta.reasoning_content`（兼容 `reasoning` / `reasoning_text`）单独累积，经 `onReasoningDelta` → SSE `assistant/reasoning` → 前端「思考过程」块；只展示、不写回下一轮 messages。
+- **Gemini Interactions**：`POST /v1beta/interactions` 流式；内部消息翻译成 `user_input` / `model_output` / `function_call` / `function_result` steps，`system_instruction` 单独下发，`store=false` 由 openmods 自己维护历史；鉴权用 `x-goog-api-key`。Base URL 可填根域名、`/v1beta` 或完整的 `/v1beta/interactions`。
+- **Gemini 已知限制**：历史按现有的 OpenAI 风格消息无状态重建，未回放 Gemini 的 thought signature；Gemini 3 深度思考 + 多轮工具调用若被上游要求签名，需要后续把原始 `steps` 持久化到会话。文本与单轮工具调用不受影响。
+- **推理模型思考流**：`delta.reasoning_content`（兼容 `reasoning` / `reasoning_text`）单独累积，经 `onReasoningDelta` → SSE `assistant/reasoning` → 前端「思考过程」块；只展示、不写回下一轮 messages。Gemini 的 thought step 走同一条通道。
 - **重试**：网络失败 / 5xx / 429 最多 3 次（800ms×attempt 退避）；流已开始后不重试。
-- **per-request 供应商解析**：`model` 传 `"providerRoute/llmModel"`，适配器每次现查 SettingsStore 取 baseURL/key，下一轮生效。
+- **per-request 供应商解析**：`model` 传 `"providerRoute/llmModel"`，适配器每次现查 SettingsStore 取 baseURL/key/format，下一轮生效。
 - 可选代理：`.env` 设 `HTTPS_PROXY` → undici ProxyAgent 全局接管。
 
 ### 3.5 项目分组与归档
@@ -450,7 +453,7 @@ interface PluginContext {
 
 - **即时保存**：除模型页外没有「保存」按钮——开关一动就 `PUT /api/settings {prefs, expectedRevision}`；409/失败回滚并 toast。服务端 `normalizePrefs()` 做容错与区间夹取。
 - **模型目录**：所有 provider 的 models 展开为复合 id `"<route>/<modelId>"`；字段解析顺序：条目显式值 → 内置官方目录 → provider `defaultContextWindow` → 1,000,000。
-- **自动获取**：解析 `{baseURL}/models`，支持常见上下文窗口/输出上限/模态别名，直接填好能力，保存后即用于图片判定与压缩阈值。
+- **自动获取**：OpenAI 解析 `{baseURL}/models` 的 `{data:[{id}]}`；Gemini 解析 `/v1beta/models` 的 `{models:[{name,inputTokenLimit,outputTokenLimit}]}` 并去掉 `models/` 前缀。视觉实测按供应商格式发对应请求（Gemini 用 Interactions 的 `image` content part）。
 
 ---
 
@@ -618,7 +621,8 @@ GET    /api/settings                     {settings:{providers(redacted), bridge,
 PUT    /api/settings                     body {providers?, bridge?, prefs?, environment?, expectedRevision?} → {ok, revision, prefs}
 GET    /api/settings/file                下载原始 settings.json
 PUT    /api/settings/credentials/:route  写 API key
-POST   /api/settings/discover-models     探测 {baseURL}/models（返回上下文窗口、视觉能力与思考档位，缺失时按模型名推断）
+POST   /api/settings/discover-models     探测模型目录，body {baseURL, format?: openai|gemini}；OpenAI 走 {base}/models，Gemini 走 /v1beta/models
+POST   /api/settings/probe-vision        逐个模型发图实测视觉能力，body {baseURL, models, format?}
 GET    /api/env/status                   环境检测（Java 17 / Gradle 缓存 / Git / 测试客户端）
 POST   /api/env/vendor/download          在线下载离线构建包 {source: official|release}（后台下载，轮询状态）
 GET    /api/env/vendor/download          下载状态 {status, received, total, speed}

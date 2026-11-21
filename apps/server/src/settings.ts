@@ -5,7 +5,7 @@
 // - llm 适配器每次请求现解析 provider（下一轮生效，无需重启）
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { ModelInfo } from '@openmods/agent-core'
+import type { LlmApiFormat, ModelInfo } from '@openmods/agent-core'
 import { inferModelCapabilities, inferReasoningEfforts } from './model-caps.js'
 
 export interface ProviderModel {
@@ -31,6 +31,8 @@ export interface ProviderModel {
 export interface ProviderProfile {
   displayName: string
   baseURL: string
+  /** 供应商 API 线格式；缺省 openai，兼容旧 settings.json */
+  format?: LlmApiFormat
   models: ProviderModel[]
   /** 未逐个声明 contextWindow 的模型统一兜底（dsh pi-ai `defaultContextWindow`） */
   defaultContextWindow?: number
@@ -216,6 +218,10 @@ export class SettingsStore {
     // 容错：手改/半截文件导致的缺字段，不应让整个模型目录炸掉
     if (!this.doc || typeof this.doc !== 'object') this.doc = this.seed()
     if (!this.doc.providers || typeof this.doc.providers !== 'object') this.doc.providers = this.seed().providers
+    // 老配置没有 format：补成 openai；未知值也回落到 openai，避免适配器拿到不存在的协议
+    for (const p of Object.values(this.doc.providers)) {
+      if (p && typeof p === 'object') p.format = p.format === 'gemini' ? 'gemini' : 'openai'
+    }
     if (typeof this.doc.revision !== 'number' || !Number.isFinite(this.doc.revision)) this.doc.revision = 1
     if (!this.doc.bridge) this.doc.bridge = { enabled: false }
     // 老版本 settings.json 没有 prefs：补齐默认值，不报错
@@ -283,6 +289,7 @@ export class SettingsStore {
         Object.entries(this.doc.providers).map(([route, p]) => [route, {
           displayName: p.displayName,
           baseURL: p.baseURL,
+          format: p.format ?? 'openai',
           models: p.models,
           apiKey: { set: !!this.credentials[route] },
         }]),
@@ -327,7 +334,13 @@ export class SettingsStore {
     }
     let providers = this.doc.providers
     if (patch.providers !== undefined) {
-      providers = patch.providers
+      // 保存时把 format 归一化后落盘；新增协议只需在 agent-core 注册适配器
+      providers = Object.fromEntries(
+        Object.entries(patch.providers).map(([route, p]) => [
+          route,
+          { ...p, format: p.format === 'gemini' ? 'gemini' as const : 'openai' as const },
+        ]),
+      )
     }
     for (const [route, p] of Object.entries(providers)) {
       if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(route)) {

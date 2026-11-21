@@ -23,6 +23,7 @@ export function inferModelCapabilities(id: string): InferredCaps {
     { test: /o[134](-|$)/, contextWindow: 200000, vision: true },
     { test: /claude/, contextWindow: 200000, vision: true },
     { test: /gemini-1\.5|gemini-2/, contextWindow: 1048576, vision: true },
+    { test: /gemini-3|gemini-(flash|pro)-latest/, contextWindow: 1048576, vision: true },
     { test: /gemini/, contextWindow: 32768, vision: true },
     { test: /deepseek/, contextWindow: 65536, vision: false },
     { test: /qwen.*(vl|vision)/, contextWindow: 131072, vision: true },
@@ -49,6 +50,7 @@ export function inferReasoningEfforts(id: string): string[] | undefined {
   if (/gpt-6/.test(key)) return ['low', 'medium', 'high']
   if (/(^|\/)o[134](-|$)/.test(key) || /o[134]-(mini|pro)/.test(key)) return ['low', 'medium', 'high']
   if (/grok-(3-mini|4)/.test(key)) return ['low', 'high']
+  if (/gemini-3/.test(key)) return ['minimal', 'low', 'medium', 'high']
   if (/gemini-2\.5/.test(key)) return ['low', 'high']
   return undefined
 }

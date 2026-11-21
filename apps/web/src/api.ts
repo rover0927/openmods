@@ -68,18 +68,18 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ apiKey }),
     }),
-  discoverModels: (baseURL: string, opts?: { route?: string; apiKey?: string }) =>
+  discoverModels: (baseURL: string, opts?: { route?: string; apiKey?: string; format?: 'openai' | 'gemini' }) =>
     jfetch<{ models: { id: string; name?: string; contextWindow?: number; maxOutputTokens?: number; inputModalities?: string[]; reasoningEfforts?: string[]; reasoningDefault?: string }[] }>('/api/settings/discover-models', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ baseURL, route: opts?.route, apiKey: opts?.apiKey }),
+      body: JSON.stringify({ baseURL, route: opts?.route, apiKey: opts?.apiKey, format: opts?.format }),
     }),
   /** 视觉能力实测：给每个模型发一张极小图片，返回 true/false/null（未知） */
-  probeVision: (baseURL: string, models: string[], opts?: { route?: string; apiKey?: string }) =>
+  probeVision: (baseURL: string, models: string[], opts?: { route?: string; apiKey?: string; format?: 'openai' | 'gemini' }) =>
     jfetch<{ results: { id: string; vision: boolean | null; error?: string }[] }>('/api/settings/probe-vision', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ baseURL, models, route: opts?.route, apiKey: opts?.apiKey }),
+      body: JSON.stringify({ baseURL, models, route: opts?.route, apiKey: opts?.apiKey, format: opts?.format }),
     }),
   createSession: (projectId?: string, cwd?: string) =>
     jfetch<{ id: string; projectId?: string; cwd?: string }>('/api/sessions', {

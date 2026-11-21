@@ -1,15 +1,18 @@
 // OpenAI 兼容 /chat/completions 流式适配器（DeepSeek 等直连可用）
-import type { ChatMessage, LlmAdapter, LlmChatOptions, LlmResult } from './types.js'
+import type { ChatMessage, LlmAdapter, LlmApiFormat, LlmChatOptions, LlmResult } from './types.js'
 import { LlmError } from './types.js'
+import { createGeminiLlm } from './llm-gemini.js'
 
 export interface HttpLlmConfig {
   baseUrl: string
   apiKey: string
+  /** 线格式；缺省 openai，保持旧配置兼容 */
+  format?: LlmApiFormat
 }
 
 interface ToolCallAcc { id: string; name: string; args: string }
 
-export function createHttpLlm(config: HttpLlmConfig): LlmAdapter {
+export function createOpenAiLlm(config: HttpLlmConfig): LlmAdapter {
   return {
     async chat(opts: LlmChatOptions): Promise<LlmResult> {
       const started = Date.now()
@@ -134,5 +137,18 @@ export function createHttpLlm(config: HttpLlmConfig): LlmAdapter {
   }
 }
 
+const ADAPTER_FACTORIES: Record<LlmApiFormat, (config: HttpLlmConfig) => LlmAdapter> = {
+  openai: createOpenAiLlm,
+  gemini: createGeminiLlm,
+}
+
+/**
+ * 按供应商 format 选择线协议适配器。
+ * 新增协议时只需实现一个工厂并注册到这里，设置/运行时不需要再改分支。
+ */
+export function createHttpLlm(config: HttpLlmConfig): LlmAdapter {
+  return (ADAPTER_FACTORIES[config.format ?? 'openai'] ?? createOpenAiLlm)(config)
+}
+
 // 保持 import 引用（避免 TS6133 噪音，同时给外部复用类型）
-export type { ChatMessage, LlmAdapter, LlmResult }
+export type { ChatMessage, LlmAdapter, LlmApiFormat, LlmResult }

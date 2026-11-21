@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import type { FeatureDecl, HttpMethod, HttpRouteOptions, LoadedPlugin, PluginContext, SessionRuntimeLike, SkillProvider, ToolDef, ToolResult } from '@openmods/plugin-kit'
 import { applyPlugins, discoverPlugins, WORKSPACE_TOOL_NAMES } from '@openmods/plugin-kit'
-import { createSessionRuntime, createHttpLlm, createMockLlm, registerSurfaceTransform, SessionLog, type SessionRuntime, type LlmAdapter, LlmError } from '@openmods/agent-core'
+import { createSessionRuntime, createHttpLlm, createMockLlm, geminiInteractionsUrl, geminiModelsUrl, registerSurfaceTransform, SessionLog, type SessionRuntime, type LlmAdapter, LlmError } from '@openmods/agent-core'
 import { DirSkillProvider, FilteredSkillProvider } from './skills.js'
 import { SettingsStore } from './settings.js'
 import { applyEnvironment, checkEnvStatus, fixVendorLayout, validateEnvironmentPatch } from './env-check.js'
@@ -141,7 +141,7 @@ if (env.HTTPS_PROXY || env.HTTP_PROXY) {
     console.warn('[llm] 代理启用失败（未安装 undici？）:', e.message)
   }
 }
-const httpLlmFor = (baseUrl: string, apiKey: string) => createHttpLlm({ baseUrl, apiKey })
+const httpLlmFor = (baseUrl: string, apiKey: string, format?: 'openai' | 'gemini') => createHttpLlm({ baseUrl, apiKey, format })
 
 const llm: LlmAdapter = MOCK
   ? createMockLlm()
@@ -154,7 +154,7 @@ const llm: LlmAdapter = MOCK
         if (!profile) throw new LlmError(`供应商 "${route}" 不存在（设置 → 模型 中配置）`, 400)
         // 无 key 也放行（本地/匿名端点可用）；真实端点的鉴权错误由端点明确报出
         const apiKey = settingsStore.getCredential(route)
-        const delegate = httpLlmFor(profile.baseURL, apiKey ?? '')
+        const delegate = httpLlmFor(profile.baseURL, apiKey ?? '', profile.format)
         return delegate.chat({ ...opts, model: llmModel })
       },
     }
@@ -1851,13 +1851,15 @@ app.put('/api/settings/credentials/:route', async (req, reply) => {
   }
 })
 
-// 模型发现：向 OpenAI 兼容端点探测 /models（复刻 dsh llm.discoverModels）
+// 模型发现：OpenAI 兼容端点探测 /models，Gemini 探测 /v1beta/models（复刻 dsh llm.discoverModels）
 /** 解析 /models 里的一条能力声明（上下文、模态、思考档位） */
 function normalizeListedModel(entry: any): { id: string; name?: string; contextWindow?: number; maxOutputTokens?: number; inputModalities?: string[]; reasoningEfforts?: string[]; reasoningDefault?: string } | undefined {
   if (typeof entry === 'string') entry = { id: entry }
   if (!entry || typeof entry !== 'object') return undefined
-  const id = entry.id ?? entry.name ?? entry.model
-  if (typeof id !== 'string' || !id.trim()) return undefined
+  const rawId = entry.id ?? entry.name ?? entry.model
+  if (typeof rawId !== 'string' || !rawId.trim()) return undefined
+  // Gemini /v1beta/models 的 name 是 "models/gemini-..."，统一去掉前缀，复合 id 才是 route/modelId
+  const id = rawId.trim().replace(/^models\//, '')
   const top = entry.top_provider ?? {}
   const num = (...vals: any[]) => {
     for (const v of vals) {
@@ -1869,10 +1871,12 @@ function normalizeListedModel(entry: any): { id: string; name?: string; contextW
   const contextWindow = num(
     entry.context_window, entry.context_length, entry.contextWindow,
     entry.max_input_tokens, entry.max_context_length, entry.max_model_len,
+    entry.inputTokenLimit,
     top.context_length, entry.limits?.context_window,
   )
   const maxOutputTokens = num(
     entry.max_output_tokens, entry.max_tokens, entry.maxOutputTokens,
+    entry.outputTokenLimit,
     top.max_completion_tokens, entry.limits?.max_output_tokens,
   )
   // 模态：dsh 用 `input_modalities`；OpenRouter 用 `architecture.input_modalities`；
@@ -1935,7 +1939,8 @@ function normalizeListedModel(entry: any): { id: string; name?: string; contextW
   return {
     id,
     name: typeof entry.display_name === 'string' ? entry.display_name
-      : typeof entry.name === 'string' && entry.name !== id ? entry.name : undefined,
+      : typeof entry.displayName === 'string' && entry.displayName !== id ? entry.displayName
+        : typeof entry.name === 'string' && entry.name !== id && !/^models\//.test(entry.name) ? entry.name : undefined,
     // 端点声明优先，缺什么补什么；都缺就留空让用户手填
     contextWindow: contextWindow ?? inferred.contextWindow,
     maxOutputTokens,
@@ -1948,14 +1953,17 @@ function normalizeListedModel(entry: any): { id: string; name?: string; contextW
 }
 
 app.post('/api/settings/discover-models', async (req, reply) => {
-  const body = (req.body ?? {}) as { baseURL?: string; route?: string; apiKey?: string }
+  const body = (req.body ?? {}) as { baseURL?: string; route?: string; apiKey?: string; format?: string }
   const baseURL = String(body.baseURL ?? '').trim()
   if (!baseURL) return reply.code(400).send({ error: 'baseURL 不能为空' })
+  const format = body.format === 'gemini' ? 'gemini' : 'openai'
   const apiKey = body.apiKey?.trim() || (body.route ? settingsStore.getCredential(body.route) : undefined)
   try {
-    const url = `${baseURL.replace(/\/+$/, '')}/models`
+    const url = format === 'gemini' ? geminiModelsUrl(baseURL) : `${baseURL.replace(/\/+$/, '')}/models`
     const res = await fetch(url, {
-      headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+      headers: apiKey
+        ? (format === 'gemini' ? { 'x-goog-api-key': apiKey } : { authorization: `Bearer ${apiKey}` })
+        : {},
       signal: AbortSignal.timeout(15000),
     })
     if (!res.ok) {
@@ -1964,15 +1972,16 @@ app.post('/api/settings/discover-models', async (req, reply) => {
       return reply.code(400).send({ error: `端点返回 HTTP ${res.status}${hint} ${detail}` })
     }
     const json: any = await res.json()
-    // dsh：标准 `data` 数组或富化的 `models` map 都接受
+    // dsh：标准 `data` 数组、富化的 `models` map、Gemini `models` 数组都接受
     const raw: any[] = Array.isArray(json) ? json
       : Array.isArray(json?.data) ? json.data
-        : json?.models && typeof json.models === 'object' ? Object.entries(json.models).map(([k, v]) => ({ id: k, ...(v ?? {}) }))
-          : []
+        : Array.isArray(json?.models) ? json.models
+          : json?.models && typeof json.models === 'object' ? Object.entries(json.models).map(([k, v]) => ({ id: k, ...(v ?? {}) }))
+            : []
     const models = raw.map(normalizeListedModel).filter((m): m is NonNullable<typeof m> => !!m)
     const seen = new Set<string>()
     const unique = models.filter(m => (seen.has(m.id) ? false : (seen.add(m.id), true)))
-    if (!unique.length) return reply.code(400).send({ error: '端点响应中没有可识别的模型列表（期望 OpenAI 兼容 {data:[{id}]} 格式）' })
+    if (!unique.length) return reply.code(400).send({ error: `端点响应中没有可识别的模型列表（期望 OpenAI {data:[{id}]} 或 Gemini {models:[{name}]}）` })
     return { models: unique }
   } catch (e: any) {
     const msg = e.name === 'TimeoutError' ? '端点连接超时（15s）' : `无法访问端点：${e.message}`
@@ -1985,9 +1994,10 @@ app.post('/api/settings/discover-models', async (req, reply) => {
 const VISION_PROBE_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAdSURBVDhPYzghJ/efEsyALkAqHjVg1IBRAwaLAQAG2gMfuJdtFgAAAABJRU5ErkJggg=='
 
 app.post('/api/settings/probe-vision', async (req, reply) => {
-  const body = (req.body ?? {}) as { baseURL?: string; route?: string; apiKey?: string; models?: unknown }
+  const body = (req.body ?? {}) as { baseURL?: string; route?: string; apiKey?: string; models?: unknown; format?: string }
   const base = String(body.baseURL ?? '').trim().replace(/\/+$/, '')
   if (!base) return reply.code(400).send({ error: 'baseURL 不能为空' })
+  const format = body.format === 'gemini' ? 'gemini' : 'openai'
   const apiKey = body.apiKey?.trim() || (body.route ? settingsStore.getCredential(body.route) : undefined)
   const ids = Array.isArray(body.models)
     ? [...new Set(body.models.map(v => String(v ?? '').trim()).filter(Boolean))]
@@ -1998,23 +2008,41 @@ app.post('/api/settings/probe-vision', async (req, reply) => {
   const queue = [...ids]
   const probeOne = async (id: string) => {
     try {
-      const res = await fetch(`${base}/chat/completions`, {
+      const url = format === 'gemini' ? geminiInteractionsUrl(base) : `${base}/chat/completions`
+      const headers = {
+        'content-type': 'application/json',
+        ...(apiKey
+          ? (format === 'gemini' ? { 'x-goog-api-key': apiKey } : { authorization: `Bearer ${apiKey}` })
+          : {}),
+      }
+      const payload = format === 'gemini'
+        ? {
+            model: id.replace(/^models\//, ''),
+            store: false,
+            input: [{
+              type: 'user_input',
+              content: [
+                { type: 'text', text: '只回复 OK' },
+                { type: 'image', data: VISION_PROBE_IMAGE.split(',')[1], mime_type: 'image/png' },
+              ],
+            }],
+            generation_config: { max_output_tokens: 4 },
+          }
+        : {
+            model: id,
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'text', text: '只回复 OK' },
+                { type: 'image_url', image_url: { url: VISION_PROBE_IMAGE } },
+              ],
+            }],
+            max_tokens: 4,
+          }
+      const res = await fetch(url, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          model: id,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'text', text: '只回复 OK' },
-              { type: 'image_url', image_url: { url: VISION_PROBE_IMAGE } },
-            ],
-          }],
-          max_tokens: 4,
-        }),
+        headers,
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(30_000),
       })
       if (res.ok) { results.push({ id, vision: true }); return }

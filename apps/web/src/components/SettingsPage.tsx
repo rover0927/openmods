@@ -25,6 +25,7 @@ interface DraftModel {
 interface DraftProvider {
   displayName: string
   baseURL: string
+  format: 'openai' | 'gemini'
   apiKeyInput: string
   apiKeySet: boolean
   models: DraftModel[]
@@ -204,6 +205,7 @@ export function SettingsPage(props: {
       const res = await api.discoverModels(d.baseURL.trim(), {
         route,
         apiKey: d.apiKeyInput.trim() || undefined,
+        format: d.format,
       })
       const found = res.models
       setDraft(prev => {
@@ -257,6 +259,7 @@ export function SettingsPage(props: {
       const res = await api.probeVision(d.baseURL.trim(), ids, {
         route,
         apiKey: d.apiKeyInput.trim() || undefined,
+        format: d.format,
       })
       const byId = new Map(res.results.map(r => [r.id, r]))
       setDraft(prev => ({
@@ -296,6 +299,7 @@ export function SettingsPage(props: {
           d[route] = {
             displayName: p.displayName,
             baseURL: p.baseURL,
+            format: p.format === 'gemini' ? 'gemini' : 'openai',
             apiKeyInput: '',
             apiKeySet: p.apiKey.set,
             models: p.models.map(m => {
@@ -384,7 +388,7 @@ export function SettingsPage(props: {
     }
     setDraft(prev => ({
       ...prev,
-      [route]: { displayName: route, baseURL: 'https://', apiKeyInput: '', apiKeySet: false, models: [{ id: 'model-1', name: '模型 1', contextWindow: 131072 }] },
+      [route]: { displayName: route, baseURL: 'https://', format: 'openai', apiKeyInput: '', apiKeySet: false, models: [{ id: 'model-1', name: '模型 1', contextWindow: 131072 }] },
     }))
     setRouteOrder(prev => [...prev, route])
     setNewRoute('')
@@ -408,6 +412,7 @@ export function SettingsPage(props: {
         providers[route] = {
           displayName: d.displayName || route,
           baseURL: d.baseURL,
+          format: d.format,
           models: d.models.filter(m => m.id.trim()),
         }
       }
@@ -814,7 +819,7 @@ export function SettingsPage(props: {
     <div className="settings-section">
       <div className="settings-section-head">
         <h2>模型</h2>
-        <p>供应商与模型目录；API key 单独加密存储，改动下一轮对话生效。</p>
+        <p>供应商可选择 OpenAI 兼容或 Gemini Interactions 格式；API key 单独加密存储，改动下一轮对话生效。</p>
       </div>
 
       {routeOrder.map(route => {
@@ -832,8 +837,31 @@ export function SettingsPage(props: {
                 <input value={d.displayName} onChange={e => patchProvider(route, { displayName: e.target.value })} />
               </label>
               <label className="field">
+                接口格式
+                <Seg
+                  value={d.format}
+                  options={[
+                    { value: 'openai', label: 'OpenAI 兼容' },
+                    { value: 'gemini', label: 'Gemini' },
+                  ]}
+                  onChange={(v: 'openai' | 'gemini') => patchProvider(route, {
+                    format: v,
+                    ...(v === 'gemini' && (!d.baseURL.trim() || d.baseURL.trim() === 'https://')
+                      ? { baseURL: 'https://generativelanguage.googleapis.com' }
+                      : {}),
+                  })}
+                />
+              </label>
+              <label className="field">
                 Base URL
-                <input value={d.baseURL} onChange={e => patchProvider(route, { baseURL: e.target.value })} placeholder="https://api.deepseek.com" />
+                <input
+                  value={d.baseURL}
+                  onChange={e => patchProvider(route, { baseURL: e.target.value })}
+                  placeholder={d.format === 'gemini' ? 'https://generativelanguage.googleapis.com' : 'https://api.deepseek.com'}
+                  title={d.format === 'gemini'
+                    ? 'Gemini：可填根域名、/v1beta 或完整的 /v1beta/interactions'
+                    : 'OpenAI 兼容：填到 /v1（不要带 /chat/completions）'}
+                />
               </label>
               <label className="field">
                 API key
