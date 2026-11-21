@@ -63,6 +63,8 @@
 
 ## <img src="apps/web/public/mc/item/compass.png" width="16" alt=""> 快速开始
 
+**Windows（PowerShell）**
+
 ```powershell
 git clone https://github.com/rover0927/openmods.git
 cd openmods
@@ -88,7 +90,35 @@ npm start                     # 生产：自动构建前端 → 单进程 http:/
 # npm run dev                 # 调试：tsx watch + vite 热更新（:8787 + :5173）
 ```
 
-> Git Bash / macOS / Linux 下把 `curl.exe` 换成 `curl`、`New-Item -ItemType Directory -Force` 换成 `mkdir -p`、`Copy-Item` 换成 `cp` 即可。
+**Linux（bash）**
+
+```bash
+git clone https://github.com/rover0927/openmods.git
+cd openmods
+npm install
+npm run build:bbcanvas   # 从 ../blockbench 构建无头画布（仓库已带产物，跳过亦可）
+
+# 必做：下载离线构建包（约 224MB，Gradle 8.8 + ForgeGradle 缓存）
+curl -L -o openmods-vendor.zip https://github.com/rover0927/openmods/releases/latest/download/openmods-vendor.zip
+mkdir -p plugins/mcdev/vendor
+tar -xf openmods-vendor.zip -C plugins/mcdev/vendor
+# 解压后顶层应直接是 gradle-8.8/ 与 fg-maven/
+
+# 可选：测试客户端离线包（约 141MB）
+curl -L -o openmods-test-client.zip https://github.com/rover0927/openmods/releases/latest/download/openmods-test-client.zip
+mkdir -p data/mc-test-client
+tar -xf openmods-test-client.zip -C data/mc-test-client
+# 解压后顶层应直接是 .minecraft/
+
+cp .env.example .env   # 按需修改；默认 MOCK=0（真实 LLM）
+npm start              # 生产：自动构建前端 → 单进程 http://127.0.0.1:8787
+# npm run dev          # 调试：tsx watch + vite 热更新（:8787 + :5173）
+```
+
+> **Linux 说明**
+> - 需要 Node ≥20、JDK 17、Git、curl、tar；前端与后端命令和 Windows 一致。
+> - Java 后台进程浮窗通过 `ps` 枚举当前用户的 Gradle / Minecraft 进程，结束操作为 `SIGTERM`；macOS 暂不支持该浮窗。
+> - 「打开默认目录 / 系统目录选择框」仍为 Windows 专用，Linux 下请在终端打开对应路径。
 
 > [!IMPORTANT]
 > **构建包是必做步骤**：`openmods-vendor.zip` 必须解压到 `plugins/mcdev/vendor/`（得到 `plugins/mcdev/vendor/gradle-8.8/` 与 `plugins/mcdev/vendor/fg-maven/`）。也可以在启动后到 设置 → 环境 的 Gradle 卡片点「GitHub 官方 / Release API」一键下载，效果相同。
@@ -121,12 +151,12 @@ npm start                     # 生产：自动构建前端 → 单进程 http:/
 | Java | `JAVA_HOME`、`PATH`、`.jdks`、`.gradle/jdks`、常见安装目录 | 1.20.1 需要 JDK 17；非 17 会标注「不适用于 1.20.1」 |
 | Gradle 缓存 | `plugins/mcdev/vendor/`、错位目录、`MC_ROOT/.gradle-home`、`GRADLE_USER_HOME`、`~/.gradle` | 命中 vendor 时构建不再联网下载 Gradle 8.8 |
 | Git | `git --version` | 设置 → 更新 使用这个 Git；缺失时给出可读提示 |
-| 测试客户端 | `data/mc-test-client/.minecraft`、`testClientDir`、`%APPDATA%/.minecraft`、`~/.minecraft` | 检查 `versions/`、`libraries/` 是否完整；缺包时下载离线包或选择已有目录 |
+| 测试客户端 | `data/mc-test-client/.minecraft`、`testClientDir`、`%APPDATA%/.minecraft`（Windows）、`~/.minecraft`（Linux） | 检查 `versions/`、`libraries/` 是否完整；缺包时下载离线包或选择已有目录 |
 
 - 保存后立即作用于 `mc_gradle`、测试客户端与自更新，不需要重启。
 - Gradle 卡片底部可以直接「在线下载构建包」：拉取 Releases 的 `openmods-vendor.zip` 并解压到 `plugins/mcdev/vendor/`，下载中显示进度、实时速度、剩余时间，可随时取消；先解压到临时目录再替换，取消或失败不会破坏已有 vendor。
 - 测试客户端卡片底部同样可以「在线下载测试客户端」：拉取 `openmods-test-client.zip` 并解压到 `data/mc-test-client/.minecraft`。
-- 下载源二选一：**GitHub 官方**（直连 github.com）、**Release API**（经 api.github.com 取 asset 直链）。按钮下方还有「到 Releases 手动下载」链接与「打开默认目录」按钮（目录不存在时先创建，再用资源管理器打开）。
+- 下载源二选一：**GitHub 官方**（直连 github.com）、**Release API**（经 api.github.com 取 asset 直链）。按钮下方还有「到 Releases 手动下载」链接与「打开默认目录」按钮（目录不存在时先创建；Windows 用资源管理器打开，Linux 下该按钮暂未支持，请在终端打开）。
 - 如果 `gradle-8.8/`、`fg-maven/` 被解压到 `plugins/mcdev/` 而不是 `plugins/mcdev/vendor/`，向导会显示警告并提供「整理到 vendor/」。
 - 随时可到 设置 → 环境 重新检测、选择 JDK/缓存或填写 Git 路径。
 
@@ -143,7 +173,7 @@ npm start                     # 生产：自动构建前端 → 单进程 http:/
 解压约定（**别再套一层目录**）：
 
 - `openmods-vendor.zip` 解压后是 `gradle-8.8/`、`fg-maven/` 两个目录，直接放进 `plugins/mcdev/vendor/`。
-- `openmods-test-client.zip` 解压后顶层就是 `.minecraft/`，直接放进 `data/mc-test-client/`（即 `data/mc-test-client/.minecraft/versions/…`）；用资源管理器解压时注意别变成 `data/mc-test-client/openmods-test-client/.minecraft/`。
+- `openmods-test-client.zip` 解压后顶层就是 `.minecraft/`，直接放进 `data/mc-test-client/`（即 `data/mc-test-client/.minecraft/versions/…`）；用文件管理器解压时注意别变成 `data/mc-test-client/openmods-test-client/.minecraft/`。
 
 > 如果这两个目录出现在 `plugins/mcdev/` 而不是 `plugins/mcdev/vendor/`，不用重新下载：设置 → 环境 → 「整理到 vendor/」会自动移动。
 
@@ -647,7 +677,7 @@ GET    /api/fs/raw?path=                 图片原始字节
 GET    /api/fs/browse?path=              目录浏览（只列子目录，选择工作目录用）
 POST   /api/fs/pick-dir                  系统目录选择框
 POST   /api/fs/open-dir                  打开默认下载目录 {kind: vendor|test-client}（不存在时先创建）
-POST   /api/explorer                     在系统资源管理器中打开
+POST   /api/explorer                     在系统文件管理器中打开（Windows）
 GET    /api/web/probe?url=               目标页嵌入性探测
 GET    /api/web/proxy?url=               同源代理渲染（注入 <base>、去 CSP meta、<8MB）
 POST   /api/sessions                     建会话（body: projectId? / cwd?）
