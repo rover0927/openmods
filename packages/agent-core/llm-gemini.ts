@@ -100,7 +100,11 @@ export function toGeminiInput(messages: ChatMessage[]): { system?: string; input
     }
     if (msg.role === 'user') {
       const parts = contentParts(msg.content)
-      if (parts.length) input.push({ type: 'user_input', content: parts })
+      if (!parts.length) continue
+      // Interactions API 的 REST 文档把图片作为顶层 Content 平铺在 input 里；
+      // 包进 user_input.content 时纯文本可用，但图片会让上游一直不回包（2026-11 实测）。
+      if (parts.some(p => p.type === 'image')) input.push(...parts)
+      else input.push({ type: 'user_input', content: parts })
       continue
     }
     if (msg.role === 'assistant') {
