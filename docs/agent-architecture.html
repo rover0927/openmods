@@ -1,0 +1,1753 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>openmods · Agent 架构可视化</title>
+<style>
+  :root{
+    --paper:#f6f3ec;
+    --surface:#fffdf8;
+    --surface-2:#f0ece2;
+    --ink:#17171a;
+    --ink-2:#3d3c38;
+    --muted:#6f6b61;
+    --faint:#a09a8d;
+    --line:#e4dfd2;
+    --line-2:#d5cfc0;
+    --r-lg:22px;
+    --r:14px;
+    --shadow:0 1px 2px rgba(23,23,26,.04), 0 10px 30px -22px rgba(23,23,26,.38);
+    --shadow-hover:0 2px 5px rgba(23,23,26,.06), 0 20px 44px -26px rgba(23,23,26,.48);
+    --mono:ui-monospace,"Cascadia Mono","SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+    --sans:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  html,body{margin:0;padding:0}
+  body{
+    background:
+      radial-gradient(1200px 600px at 12% -10%, #fffdf8, transparent 60%),
+      radial-gradient(900px 500px at 92% 0%, #f2ede1, transparent 55%),
+      var(--paper);
+    color:var(--ink);
+    font-family:var(--sans);
+    font-size:15px;
+    line-height:1.75;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--ink);color:var(--surface)}
+  a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line-2);transition:border-color .18s}
+  a:hover{border-color:var(--ink)}
+  code{font-family:var(--mono)}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 26px}
+
+  /* ---------- header ---------- */
+  header.top{padding:52px 0 30px}
+  .brand{display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap}
+  .cube{
+    width:38px;height:38px;flex:0 0 auto;margin-top:4px;
+    border-radius:12px;background:var(--ink);position:relative;
+  }
+  .cube::after{
+    content:"";position:absolute;inset:0;margin:auto;width:12px;height:12px;
+    border-radius:50%;background:var(--paper);
+  }
+  h1{margin:0;font-size:30px;line-height:1.25;letter-spacing:-.02em;font-weight:650}
+  h1 .thin{color:var(--muted);font-weight:400}
+  .sub{margin:10px 0 0;color:var(--muted);font-size:14px;max-width:78ch}
+  .badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
+  .badge{
+    font-family:var(--mono);font-size:11px;color:var(--muted);
+    background:var(--surface);border:1px solid var(--line);
+    border-radius:999px;padding:5px 11px;white-space:nowrap;
+    transition:transform .18s,box-shadow .18s,border-color .18s;
+  }
+  .badge:hover{transform:translateY(-1px);border-color:var(--line-2);box-shadow:var(--shadow)}
+  .badge b{color:var(--ink);font-weight:600}
+
+  /* ---------- nav ---------- */
+  nav.tabs{
+    position:sticky;top:0;z-index:30;
+    padding:10px 0;
+    background:linear-gradient(rgba(246,243,236,.97),rgba(246,243,236,.84));
+    border-bottom:1px solid var(--line);
+    backdrop-filter:blur(10px);
+  }
+  .tabs-inner{
+    max-width:1120px;margin:0 auto;padding:0 26px;
+    display:flex;gap:6px;overflow-x:auto;
+    scrollbar-width:none;
+  }
+  .tabs-inner::-webkit-scrollbar{display:none}
+  .tab{
+    appearance:none;cursor:pointer;flex:0 0 auto;
+    font-family:var(--mono);font-size:12px;font-weight:500;
+    color:var(--muted);background:transparent;
+    border:1px solid transparent;border-radius:999px;
+    padding:8px 13px;white-space:nowrap;
+    transition:color .18s,background .18s,border-color .18s,transform .18s,box-shadow .18s;
+  }
+  .tab:hover{color:var(--ink);background:var(--surface);border-color:var(--line)}
+  .tab:active{transform:scale(.98)}
+  .tab:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  .tab[aria-selected="true"]{
+    color:var(--surface);background:var(--ink);border-color:var(--ink);
+    box-shadow:0 8px 18px -12px rgba(23,23,26,.7);
+  }
+  .tab .idx{color:var(--faint);margin-right:6px}
+  .tab[aria-selected="true"] .idx{color:rgba(255,253,248,.6)}
+
+  /* ---------- panels ---------- */
+  main{padding-top:38px}
+  .panel{display:none}
+  .panel.active{display:block;animation:rise .26s cubic-bezier(.2,.7,.3,1)}
+  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto}
+    .panel.active{animation:none}
+    *{transition:none!important}
+  }
+
+  .panel-head{margin-bottom:26px}
+  .kicker{
+    display:inline-flex;align-items:center;gap:8px;
+    font-family:var(--mono);font-size:10.5px;letter-spacing:2.2px;
+    color:var(--faint);text-transform:uppercase;
+  }
+  .kicker::before{content:"";width:18px;height:1px;background:var(--line-2)}
+  .panel-head h2{
+    margin:10px 0;font-size:25px;line-height:1.3;
+    font-weight:650;letter-spacing:-.015em;
+  }
+  .lede{margin:0;color:var(--ink-2);max-width:78ch;font-size:14.5px}
+  .paths{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+  .path{
+    font-family:var(--mono);font-size:11px;color:var(--muted);
+    background:var(--surface);border:1px solid var(--line);
+    border-radius:999px;padding:4px 10px;
+    transition:transform .18s,border-color .18s,box-shadow .18s;
+  }
+  .path:hover{transform:translateY(-1px);border-color:var(--line-2);box-shadow:var(--shadow)}
+
+  /* ---------- map ---------- */
+  .map-box{
+    border:1px solid var(--line);background:var(--surface);
+    border-radius:var(--r-lg);box-shadow:var(--shadow);
+    overflow-x:auto;padding:16px 16px 12px;
+    margin:0 0 28px;
+  }
+  .map-box svg{display:block;width:100%;min-width:920px;height:auto}
+  .map-cap{
+    font-family:var(--mono);font-size:10.5px;color:var(--faint);
+    padding:0 4px 12px;display:flex;gap:16px;flex-wrap:wrap;letter-spacing:.3px;
+  }
+  .legend{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:10px;height:10px;display:inline-block;border:1px solid var(--line-2);border-radius:50%;background:var(--surface)}
+  .dot.g{border-color:var(--ink);background:var(--ink)}
+  .dot.y{border-style:dashed;border-color:var(--muted)}
+  .dot.r{border-style:dotted;border-color:var(--muted)}
+  .dot.n{border-color:var(--line-2)}
+
+  svg text{font-family:var(--mono)}
+  svg .node rect{
+    fill:var(--surface);stroke:#d9d3c4;stroke-width:1.2;
+    rx:11px;ry:11px;
+    transition:fill .2s,stroke .2s,stroke-width .2s;
+  }
+  svg .node.hot rect{stroke:#2a2a2a;stroke-width:1.6}
+  svg .node.warn rect{stroke:#a9a294;stroke-width:1.2;stroke-dasharray:5 3}
+  svg .node.bad rect{stroke:#a9a294;stroke-width:1.2;stroke-dasharray:2 3}
+  svg .node.root rect{fill:#f4efe3;stroke:var(--ink);stroke-width:1.6}
+  svg .node .t{fill:#17171a;font-size:13px;font-weight:600}
+  svg .node .s{fill:#857f72;font-size:11.5px}
+  svg .node .l{fill:#3d3c38;font-size:11.5px}
+  svg .node{cursor:pointer}
+  svg .node:hover rect{fill:#fdf6e6;stroke:#17171a;stroke-width:1.8}
+  svg .node:hover .t{fill:#000}
+  svg .node.pinned rect{fill:#fdf6e6;stroke:#17171a;stroke-width:1.8}
+  svg .node.pinned .t{fill:#000}
+  svg .e{stroke:#c9c2b2;stroke-width:1.2;fill:none;transition:stroke .2s}
+  svg .e.hot{stroke:#2a2a2a}
+  svg .e.bad{stroke:#a9a294;stroke-dasharray:3 3}
+  svg .band{fill:none;stroke:#e4dfd2;stroke-width:1.2;stroke-dasharray:5 4}
+  svg .band-label{fill:#a09a8d;font-size:11px;letter-spacing:1px}
+
+  /* ---------- notes ---------- */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:30px}
+  @media (max-width:860px){.grid{grid-template-columns:1fr}}
+  .card{
+    background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--r);padding:18px 20px 16px;
+    transition:transform .2s,box-shadow .2s,border-color .2s;
+  }
+  .card:hover{transform:translateY(-3px);box-shadow:var(--shadow-hover);border-color:var(--line-2)}
+  .card h3{
+    margin:0 0 8px;font-size:13px;letter-spacing:.2px;
+    color:var(--ink);display:flex;align-items:center;gap:9px;font-weight:650;
+  }
+  .card h3::before{
+    content:"";width:7px;height:7px;border-radius:50%;background:var(--ink);flex:0 0 auto;
+  }
+  .card.gold h3{color:var(--ink)}
+  .card.gold h3::before{background:transparent;border:1px solid var(--ink)}
+  .card p{margin:0 0 7px;font-size:13.8px;color:var(--ink-2)}
+  .card p:last-child{margin-bottom:0}
+  .card ul{margin:0;padding-left:19px}
+  .card li{margin:4px 0;font-size:13.8px;color:var(--ink-2)}
+  .card li b{color:var(--ink);font-weight:600}
+  .kbd{
+    font-family:var(--mono);font-size:11.8px;color:var(--ink);
+    background:var(--surface-2);border-radius:6px;padding:1px 5px;
+  }
+
+  /* ---------- code ---------- */
+  .code{
+    border:1px solid var(--line);background:var(--surface);
+    border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow);
+    margin:0 0 24px;
+    transition:box-shadow .2s,border-color .2s;
+  }
+  .code:hover{box-shadow:var(--shadow-hover);border-color:var(--line-2)}
+  .code-head{
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:9px 14px;border-bottom:1px solid var(--line);
+    background:var(--surface-2);
+    font-family:var(--mono);font-size:11px;color:var(--muted);
+  }
+  .code-head .lang{
+    color:var(--ink);background:var(--surface);border:1px solid var(--line-2);
+    border-radius:6px;padding:0 6px;font-weight:600;font-size:10px;
+    letter-spacing:.5px;text-transform:uppercase;
+  }
+  .code-head .fn{color:var(--ink-2)}
+  .code-head{cursor:pointer;user-select:none}
+  .code-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
+  .code-head .chev{
+    width:7px;height:7px;flex:0 0 auto;
+    border-right:1.5px solid var(--muted);border-bottom:1.5px solid var(--muted);
+    transform:rotate(-45deg);margin-right:1px;
+    transition:transform .2s,border-color .2s;
+  }
+  .code-head:hover .chev{border-color:var(--ink)}
+  .code.open .code-head .chev{transform:rotate(45deg)}
+  .code.collapsed pre{display:none}
+  .code.collapsed .code-head{border-bottom:0}
+  .code-head .copy{
+    margin-left:auto;appearance:none;cursor:pointer;
+    font-family:var(--mono);font-size:10.5px;color:var(--muted);
+    background:var(--surface);border:1px solid var(--line);
+    border-radius:999px;padding:3px 10px;
+    transition:color .18s,border-color .18s,background .18s,transform .18s;
+  }
+  .code-head .copy:hover{color:var(--ink);border-color:var(--ink-2)}
+  .code-head .copy:active{transform:scale(.96)}
+  .code-head .copy.ok{color:var(--surface);background:var(--ink);border-color:var(--ink)}
+  .code-head .copy:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  .code pre{
+    margin:0;padding:18px 20px;overflow:auto;max-height:520px;
+    font-family:var(--mono);font-size:12.3px;line-height:1.7;
+    color:#262626;tab-size:2;background:transparent;
+  }
+  .code pre::-webkit-scrollbar{height:8px;width:8px}
+  .code pre::-webkit-scrollbar-thumb{background:#ddd7c8;border-radius:999px}
+  .code pre::-webkit-scrollbar-track{background:transparent}
+  .cmt{color:#a09a8d;font-style:italic}
+  .str{color:#5f5b50}
+  .kw{color:#111;font-weight:600}
+  .fnc{color:#2c2c2c}
+  .num{color:#6f6a5e}
+
+  /* ---------- ordered chain ---------- */
+  .chain{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 26px}
+  .chain .step{
+    font-family:var(--mono);font-size:11.5px;color:var(--ink-2);
+    border:1px solid var(--line);background:var(--surface);
+    border-radius:999px;padding:5px 11px;
+    transition:border-color .18s,transform .18s,box-shadow .18s;
+  }
+  .chain .step:hover{border-color:var(--ink-2);transform:translateY(-1px);box-shadow:var(--shadow)}
+  .chain .step b{color:var(--ink);margin-right:5px;font-weight:600}
+  .chain .arrowsep{align-self:center;color:var(--faint);font-family:var(--mono);font-size:11px}
+
+  /* ---------- footer ---------- */
+  footer{
+    border-top:1px solid var(--line);margin-top:46px;padding:16px 0 52px;
+    font-family:var(--mono);font-size:11px;color:var(--muted);
+    display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  }
+  .hint{font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:4px}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#b6b0a2"/>
+    </marker>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#151515"/>
+    </marker>
+  </defs>
+</svg>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="cube" aria-hidden="true"></div>
+      <div>
+        <h1>openmods <span class="thin">/ Agent 架构可视化</span></h1>
+        <p class="sub">一次用户请求如何进入 server、被投影成上下文、跑完 Agent Loop，再把子代理的结果收回主会话。</p>
+        <div class="badges">
+          <span class="badge"><b>9</b> 个板块</span>
+          <span class="badge"><b>单文件</b> 离线可开</span>
+          <span class="badge"><b>无</b> CDN / 外链 / 外部字体</span>
+          <span class="badge">参考 <b>apps/server</b> · <b>packages/agent-core</b> · <b>plugins</b></span>
+        </div>
+      </div>
+    </div>
+  </header>
+</div>
+
+<nav class="tabs" aria-label="架构板块">
+  <div class="tabs-inner" role="tablist">
+    <button class="tab" role="tab" data-target="p-overview" aria-selected="true" aria-controls="p-overview" tabindex="0"><span class="idx">01</span>总览</button>
+    <button class="tab" role="tab" data-target="p-server" aria-selected="false" aria-controls="p-server" tabindex="-1"><span class="idx">02</span>Server</button>
+    <button class="tab" role="tab" data-target="p-context" aria-selected="false" aria-controls="p-context" tabindex="-1"><span class="idx">03</span>上下文注入</button>
+    <button class="tab" role="tab" data-target="p-prompt" aria-selected="false" aria-controls="p-prompt" tabindex="-1"><span class="idx">04</span>系统提示词</button>
+    <button class="tab" role="tab" data-target="p-skills" aria-selected="false" aria-controls="p-skills" tabindex="-1"><span class="idx">05</span>技能与工具</button>
+    <button class="tab" role="tab" data-target="p-loop" aria-selected="false" aria-controls="p-loop" tabindex="-1"><span class="idx">06</span>Agent Loop</button>
+    <button class="tab" role="tab" data-target="p-finish" aria-selected="false" aria-controls="p-finish" tabindex="-1"><span class="idx">07</span>收尾解析</button>
+    <button class="tab" role="tab" data-target="p-dispatch" aria-selected="false" aria-controls="p-dispatch" tabindex="-1"><span class="idx">08</span>子代理派发</button>
+    <button class="tab" role="tab" data-target="p-settle" aria-selected="false" aria-controls="p-settle" tabindex="-1"><span class="idx">09</span>子代理结算</button>
+  </div>
+</nav>
+
+<main class="wrap">
+
+<!-- ================= 01 总览 ================= -->
+<section class="panel active" id="p-overview" role="tabpanel" aria-label="总览">
+  <div class="panel-head">
+    <div class="kicker">01 / Overview</div>
+    <h2>一次用户请求的完整链路</h2>
+    <p class="lede">从浏览器发一条消息，到模型流式回复、工具执行、子代理结算，全部围绕一个核心：<b>会话日志是事实源，上下文是每步实时投影出来的</b>。server 只负责门控与广播，真正的循环在 agent-core。</p>
+    <div class="paths">
+      <span class="path">apps/server/src/index.ts</span>
+      <span class="path">packages/agent-core/runtime.ts</span>
+      <span class="path">packages/agent-core/session-log.ts</span>
+      <span class="path">packages/agent-core/surface.ts</span>
+    </div>
+  </div>
+
+  <div class="map-box">
+    <div class="map-cap">
+      <span class="legend"><i class="dot g"></i>主链路</span>
+      <span class="legend"><i class="dot y"></i>分支 / 事件</span>
+      <span class="legend"><i class="dot n"></i>说明</span>
+      <span>箭头 = 调用或事件方向</span>
+    </div>
+    <svg viewBox="0 0 1120 540" role="img" aria-label="一次请求的端到端数据流">
+      <g class="node root"><rect x="24" y="222" width="200" height="80"/></g>
+      <text class="t" x="40" y="252">一次用户请求</text>
+      <text class="s" x="40" y="274">HTTP → SSE</text>
+
+      <path class="e hot" d="M224 262 C256 262 256 51 288 51" marker-end="url(#ah)"/>
+      <path class="e hot" d="M224 262 C256 262 256 153 288 153" marker-end="url(#ah)"/>
+      <path class="e hot" d="M224 262 C256 262 256 255 288 255" marker-end="url(#ah)"/>
+      <path class="e hot" d="M224 262 C256 262 256 357 288 357" marker-end="url(#ah)"/>
+      <path class="e" d="M224 262 C256 262 256 459 288 459" marker-end="url(#a)"/>
+
+      <g class="node hot"><rect x="288" y="22" width="230" height="58"/></g>
+      <text class="t" x="300" y="45">① 入口 /chat</text>
+      <text class="s" x="300" y="64">waiting / busy / 归档门控</text>
+
+      <g class="node hot"><rect x="288" y="124" width="230" height="58"/></g>
+      <text class="t" x="300" y="147">② 回合外壳</text>
+      <text class="s" x="300" y="166">runSessionTurn + SSE 帧缓冲</text>
+
+      <g class="node hot"><rect x="288" y="226" width="230" height="58"/></g>
+      <text class="t" x="300" y="249">③ 每步循环</text>
+      <text class="s" x="300" y="268">Agent Loop（最多 maxSteps）</text>
+
+      <g class="node hot"><rect x="288" y="328" width="230" height="58"/></g>
+      <text class="t" x="300" y="351">④ 收尾分派</text>
+      <text class="s" x="300" y="370">afterRootTurn</text>
+
+      <g class="node warn"><rect x="288" y="430" width="230" height="58"/></g>
+      <text class="t" x="300" y="453">⑤ 旁路：子代理</text>
+      <text class="s" x="300" y="472">独立会话 + 独立画布</text>
+
+      <path class="e" d="M518 51 L586 51" marker-end="url(#a)"/>
+      <path class="e" d="M518 153 L586 153" marker-end="url(#a)"/>
+      <path class="e" d="M518 255 L586 255" marker-end="url(#a)"/>
+      <path class="e" d="M518 357 L586 357" marker-end="url(#a)"/>
+      <path class="e" d="M518 459 L586 459" marker-end="url(#a)"/>
+
+      <g class="node"><rect x="586" y="28" width="500" height="46"/></g>
+      <text class="l" x="600" y="47">POST /api/sessions/:id/chat：等待子代理 / 忙 / 已归档</text>
+      <text class="l" x="600" y="64">一律 409，通过后交给 runSessionTurn。</text>
+
+      <g class="node"><rect x="586" y="130" width="500" height="46"/></g>
+      <text class="l" x="600" y="149">busy=true → sse.beginTurn() → runtime.runTurn()</text>
+      <text class="l" x="600" y="166">追加 user/message，广播 turn/start。</text>
+
+      <g class="node hot"><rect x="586" y="232" width="500" height="46"/></g>
+      <text class="l" x="600" y="251">selectTools → buildSystemPrompt + buildLlmMessages</text>
+      <text class="l" x="600" y="268">→ llm.chat → 执行工具 → 日志回填 → 下一步。</text>
+
+      <g class="node"><rect x="586" y="334" width="500" height="46"/></g>
+      <text class="l" x="600" y="353">reason = natural / step-limit / aborted，落 turn/end；</text>
+      <text class="l" x="600" y="370">主会话 done + stats，再决定是否继续等 / 汇总 / 续跑。</text>
+
+      <g class="node warn"><rect x="586" y="436" width="500" height="46"/></g>
+      <text class="l" x="600" y="455">spawn_modeling_subagent → 子会话后台跑 → settleChild</text>
+      <text class="l" x="600" y="472">→ 全部落地后自动开一轮汇总（详见 08 / 09）。</text>
+    </svg>
+  </div>
+
+  <div class="grid">
+    <article class="card">
+      <h3>入口只做门控</h3>
+      <p>同一个会话不允许两轮并发：<b>waiting（等子代理）优先于 busy</b>，因为派发发生在回合内，两个条件会同时成立，只有 waiting 能给出准确原因。归档会话直接 409。</p>
+    </article>
+    <article class="card">
+      <h3>日志才是事实源</h3>
+      <p>runtime 只往 <span class="kbd">SessionLog</span> 追加事件并 emit；SSE 由 server 统一写。刷新页面时靠 <span class="kbd">Last-Event-ID</span> 补发，语义与实时流一致。</p>
+    </article>
+    <article class="card">
+      <h3>每步重算上下文</h3>
+      <p>系统提示、工具表、surface 都是每一步现算。计划模式、待办、技能白名单在回合中途变化，下一步立即生效。</p>
+    </article>
+    <article class="card gold">
+      <h3>收尾不是结束</h3>
+      <p>主会话回合结束后还要走 <span class="kbd">afterRootTurn</span>：有移交就续跑，有子代理就等待，有结算就开汇总回合。真正空闲才给前端 waiting=[]。</p>
+    </article>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">apps/server/src/index.ts · runSessionTurn()</span></div>
+<pre><code><span class="cmt">// 一轮对话的外壳：挂 busy、开帧缓冲、跑 runtime、落盘并广播</span>
+<span class="kw">const</span> aborter = <span class="kw">new</span> <span class="fnc">AbortController</span>()
+s.busy = <span class="kw">true</span>
+s.abortController = aborter
+bus.<span class="fnc">emit</span>(<span class="str">'session/turn'</span>, { sessionId: s.id })
+s.sse.<span class="fnc">beginTurn</span>()          <span class="cmt">// 本回合的 SSE 帧先缓冲，收尾统一结束</span>
+
+<span class="kw">try</span> {
+  result = <span class="kw">await</span> s.runtime.<span class="fnc">runTurn</span>(opts, aborter.signal)   <span class="cmt">// ← 进入 Agent Loop</span>
+} <span class="kw">catch</span> (e) { failure = e }
+
+s.busy = <span class="kw">false</span>
+s.sse.<span class="fnc">send</span>(<span class="str">'stats'</span>, <span class="fnc">statsFrame</span>(s))
+s.sse.<span class="fnc">send</span>(<span class="str">'done'</span>, { text: result?.text ?? <span class="str">''</span>, aborted: result?.aborted ?? <span class="kw">false</span> })
+s.sse.<span class="fnc">endTurn</span>()
+
+<span class="cmt">// 子代理：写 status 后结算给父会话；主会话：决定继续等 / 汇总 / 续跑</span>
+<span class="kw">if</span> (isSubagent) <span class="kw">return</span> <span class="fnc">settleChild</span>(parent, s)
+<span class="fnc">afterRootTurn</span>(s, result)
+</code></pre>
+  </div>
+</section>
+
+<!-- ================= 02 Server ================= -->
+<section class="panel" id="p-server" role="tabpanel" aria-label="Server">
+  <div class="panel-head">
+    <div class="kicker">02 / Server</div>
+    <h2>有状态的那一层</h2>
+    <p class="lede">server 持有会话表、JSONL 日志、SSE 写端与插件注册表。它不实现推理，只负责把运行时需要的依赖装配好，并把运行时产生的事件分发给浏览器。</p>
+    <div class="paths">
+      <span class="path">apps/server/src/index.ts</span>
+      <span class="path">apps/server/src/profiles.ts</span>
+      <span class="path">apps/server/src/skills.ts</span>
+    </div>
+  </div>
+
+  <div class="map-box">
+    <div class="map-cap"><span class="legend"><i class="dot g"></i>启动期装配</span><span class="legend"><i class="dot y"></i>请求期</span></div>
+    <svg viewBox="0 0 1120 540" role="img" aria-label="Server 结构">
+      <g class="node root"><rect x="24" y="222" width="200" height="80"/></g>
+      <text class="t" x="40" y="252">apps/server</text>
+      <text class="s" x="40" y="274">Fastify + 运行时</text>
+
+      <path class="e hot" d="M224 262 C256 262 256 51 288 51" marker-end="url(#ah)"/>
+      <path class="e hot" d="M224 262 C256 262 256 153 288 153" marker-end="url(#ah)"/>
+      <path class="e" d="M224 262 C256 262 256 255 288 255" marker-end="url(#a)"/>
+      <path class="e" d="M224 262 C256 262 256 357 288 357" marker-end="url(#a)"/>
+      <path class="e" d="M224 262 C256 262 256 459 288 459" marker-end="url(#a)"/>
+
+      <g class="node hot"><rect x="288" y="22" width="230" height="58"/></g>
+      <text class="t" x="300" y="45">Fastify 路由</text>
+      <text class="s" x="300" y="64">chat / stream / subagents</text>
+
+      <g class="node hot"><rect x="288" y="124" width="230" height="58"/></g>
+      <text class="t" x="300" y="147">createSession</text>
+      <text class="s" x="300" y="166">日志 + SSE + runtime</text>
+
+      <g class="node"><rect x="288" y="226" width="230" height="58"/></g>
+      <text class="t" x="300" y="249">注册表</text>
+      <text class="s" x="300" y="268">tools / skills / sections</text>
+
+      <g class="node"><rect x="288" y="328" width="230" height="58"/></g>
+      <text class="t" x="300" y="351">插件发现</text>
+      <text class="s" x="300" y="370">features 先于 apply</text>
+
+      <g class="node"><rect x="288" y="430" width="230" height="58"/></g>
+      <text class="t" x="300" y="453">模型适配</text>
+      <text class="s" x="300" y="472">providerRoute / llmModel</text>
+
+      <path class="e" d="M518 51 L586 51" marker-end="url(#a)"/>
+      <path class="e" d="M518 153 L586 153" marker-end="url(#a)"/>
+      <path class="e" d="M518 255 L586 255" marker-end="url(#a)"/>
+      <path class="e" d="M518 357 L586 357" marker-end="url(#a)"/>
+      <path class="e" d="M518 459 L586 459" marker-end="url(#a)"/>
+
+      <g class="node"><rect x="586" y="28" width="500" height="46"/></g>
+      <text class="l" x="600" y="47">POST /chat 启动回合；GET /stream 是唯一 SSE 通道；</text>
+      <text class="l" x="600" y="64">GET /subagents 列直属子会话与实时状态。</text>
+
+      <g class="node hot"><rect x="586" y="130" width="500" height="46"/></g>
+      <text class="l" x="600" y="149">SessionLog（JSONL）+ SseWriter + createSessionRuntime；</text>
+      <text class="l" x="600" y="166">meta 优先恢复 cwd / canvasId / profile / planMode / todos。</text>
+
+      <g class="node"><rect x="586" y="232" width="500" height="46"/></g>
+      <text class="l" x="600" y="251">tools / skillProviders / systemSections / beforeStepHooks /</text>
+      <text class="l" x="600" y="268">overflowHooks 都是普通数组，插件与内置代码往里 push。</text>
+
+      <g class="node"><rect x="586" y="334" width="500" height="46"/></g>
+      <text class="l" x="600" y="353">discoverPlugins 只 import、不 apply，先收集 features；</text>
+      <text class="l" x="600" y="370">解析开关后再 apply，mcmod / modeling 角色由此出现。</text>
+
+      <g class="node"><rect x="586" y="436" width="500" height="46"/></g>
+      <text class="l" x="600" y="455">model 是 "route/llmModel" 复合串，每次请求按 route</text>
+      <text class="l" x="600" y="472">取 baseURL 与 key，再交给 httpLlmFor。</text>
+    </svg>
+  </div>
+
+  <div class="grid">
+    <article class="card">
+      <h3>createSession 同时服务新建与恢复</h3>
+      <p>先占位日志、再读 meta，这样“新建后刷新/重启”仍然是同一个会话。cwd 的优先级是：meta → 显式参数 → 父会话 → 新工作区。</p>
+    </article>
+    <article class="card">
+      <h3>画布归属有兼容分支</h3>
+      <p>新子代理用自己的 id 作画布；只有“老会话没有 canvasId”时才沿父链回溯。新数据不会被旧兼容逻辑改写。</p>
+    </article>
+    <article class="card gold">
+      <h3>插件顺序是硬约束</h3>
+      <p>功能声明必须先于开关解析。先解析再发现，会让插件自带的开关永远无效，<span class="kbd">requires</span> 也就永远关不掉。</p>
+    </article>
+    <article class="card">
+      <h3>SSE 一个端点包打天下</h3>
+      <p>open 帧带会话树，断线按 seq 补发；画布快照与增量都走同一条连接，子代理的独立画布也实时可见。</p>
+    </article>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">apps/server/src/index.ts · createSession()</span></div>
+<pre><code><span class="kw">const</span> log = <span class="kw">new</span> <span class="fnc">SessionLog</span>(sessionStore.<span class="fnc">logPath</span>(id))
+<span class="kw">const</span> sse = <span class="kw">new</span> <span class="fnc">SseWriter</span>()
+
+<span class="kw">const</span> runtime = <span class="fnc">createSessionRuntime</span>({
+  sessionId: id, log, llm, env,
+  resolveModel: (modelId) =&gt; settingsStore.<span class="fnc">modelDirectory</span>()[modelId],
+  resolveImage: (ref) =&gt; attachments.<span class="fnc">dataUrl</span>(ref),        <span class="cmt">// 请求投影期才取字节</span>
+  resolveFile: (ref) =&gt; { <span class="kw">const</span> p = attachments.<span class="fnc">filePath</span>(ref); <span class="kw">return</span> p ? { path: p } : <span class="kw">undefined</span> },
+  canvas, cwd,
+  planMode: () =&gt; coop.planMode,
+  approval: {
+    policy: () =&gt; coop.permission,
+    request: (req) =&gt; interactionHub.approval.<span class="fnc">request</span>({ ...req, sessionId: id }),
+  },
+  emit: (topic, data) =&gt; { sse.<span class="fnc">send</span>(topic, data); bus.<span class="fnc">emit</span>(topic, data) },
+}, { tools, skillProviders, systemSections, profiles: profileRegistry.records, beforeStepHooks, overflowHooks })
+</code></pre>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">apps/server/src/index.ts · 三个对外端点</span></div>
+<pre><code><span class="cmt">// 唯一事件流：open 帧 + Last-Event-ID 补发 + 画布快照 + 订阅</span>
+app.<span class="fnc">get</span>(<span class="str">'/api/sessions/:id/stream'</span>, <span class="kw">async</span> (req, reply) =&gt; { <span class="cmt">/* … */</span> })
+
+<span class="cmt">// 启动回合：waiting → 409 / busy → 409 / 归档 → 409，然后 runSessionTurn</span>
+app.<span class="fnc">post</span>(<span class="str">'/api/sessions/:id/chat'</span>, <span class="kw">async</span> (req, reply) =&gt; { <span class="cmt">/* … */</span> })
+
+<span class="cmt">// 子代理目录：直接子会话 + 实时状态（汇总回合的数据源）</span>
+app.<span class="fnc">get</span>(<span class="str">'/api/sessions/:id/subagents'</span>, <span class="kw">async</span> (req, reply) =&gt; {
+  <span class="kw">const</span> s = <span class="kw">await</span> <span class="fnc">ensureSession</span>(req.params.id)
+  <span class="kw">return</span> { subagents: <span class="fnc">subagentRows</span>(s.id) }
+})
+</code></pre>
+  </div>
+</section>
+
+<!-- ================= 03 上下文注入 ================= -->
+<section class="panel" id="p-context" role="tabpanel" aria-label="上下文注入">
+  <div class="panel-head">
+    <div class="kicker">03 / Context</div>
+    <h2>日志 → surface → LLM messages</h2>
+    <p class="lede">会话不是内存里不断增长的 messages 数组，而是 append-only 的 JSONL 事件流。每一步请求前，都从日志重新折叠出这一轮要发给模型的上下文。</p>
+    <div class="paths">
+      <span class="path">packages/agent-core/session-log.ts</span>
+      <span class="path">packages/agent-core/surface.ts</span>
+    </div>
+  </div>
+
+  <div class="map-box">
+    <div class="map-cap"><span class="legend"><i class="dot g"></i>投影主链</span><span class="legend"><i class="dot y"></i>压缩</span></div>
+    <svg viewBox="0 0 1120 540" role="img" aria-label="上下文注入链路">
+      <g class="node root"><rect x="24" y="222" width="200" height="80"/></g>
+      <text class="t" x="40" y="252">会话日志</text>
+      <text class="s" x="40" y="274">append-only JSONL</text>
+
+      <path class="e hot" d="M224 262 C256 262 256 51 288 51" marker-end="url(#ah)"/>
+      <path class="e hot" d="M224 262 C256 262 256 153 288 153" marker-end="url(#ah)"/>
+      <path class="e" d="M224 262 C256 262 256 255 288 255" marker-end="url(#a)"/>
+      <path class="e hot" d="M224 262 C256 262 256 357 288 357" marker-end="url(#ah)"/>
+      <path class="e" d="M224 262 C256 262 256 459 288 459" marker-end="url(#a)"/>
+
+      <g class="node"><rect x="288" y="22" width="230" height="58"/></g>
+      <text class="t" x="300" y="45">事件类型</text>
+      <text class="s" x="300" y="64">四类进入 surface</text>
+
+      <g class="node hot"><rect x="288" y="124" width="230" height="58"/></g>
+      <text class="t" x="300" y="147">buildSurface()</text>
+      <text class="s" x="300" y="166">折叠为 SurfaceItem</text>
+
+      <g class="node warn"><rect x="288" y="226" width="230" height="58"/></g>
+      <text class="t" x="300" y="249">compaction</text>
+      <text class="s" x="300" y="268">shadowed + summary</text>
+
+      <g class="node hot"><rect x="288" y="328" width="230" height="58"/></g>
+      <text class="t" x="300" y="351">buildLlmMessages()</text>
+      <text class="s" x="300" y="370">wire 格式组装</text>
+
+      <g class="node"><rect x="288" y="430" width="230" height="58"/></g>
+      <text class="t" x="300" y="453">附件解析</text>
+      <text class="s" x="300" y="472">引用 → 字节 / 路径</text>
+
+      <path class="e" d="M518 51 L586 51" marker-end="url(#a)"/>
+      <path class="e" d="M518 153 L586 153" marker-end="url(#a)"/>
+      <path class="e" d="M518 255 L586 255" marker-end="url(#a)"/>
+      <path class="e" d="M518 357 L586 357" marker-end="url(#a)"/>
+      <path class="e" d="M518 459 L586 459" marker-end="url(#a)"/>
+
+      <g class="node"><rect x="586" y="28" width="500" height="46"/></g>
+      <text class="l" x="600" y="47">user/message、assistant/message、tool/result、compaction/summary；</text>
+      <text class="l" x="600" y="64">reasoning 只落日志展示，不会进入下一步上下文。</text>
+
+      <g class="node hot"><rect x="586" y="130" width="500" height="46"/></g>
+      <text class="l" x="600" y="149">user → kind:user（带 attachments）；assistant → kind:assistant</text>
+      <text class="l" x="600" y="166">（带 toolCalls）；tool/result → kind:tool（toolCallId 对齐）。</text>
+
+      <g class="node warn"><rect x="586" y="232" width="500" height="46"/></g>
+      <text class="l" x="600" y="251">fromSeq..toSeq 的条目只标记 shadowed=true，不删除；</text>
+      <text class="l" x="600" y="268">再插入一条 kind:summary 的 &lt;compacted-summary&gt; 条目。</text>
+
+      <g class="node hot"><rect x="586" y="334" width="500" height="46"/></g>
+      <text class="l" x="600" y="353">先过滤 shadowed 并跑注册的 transforms，然后：</text>
+      <text class="l" x="600" y="370">system 置顶 + user / assistant(tool_calls) / tool / summary。</text>
+
+      <g class="node"><rect x="586" y="436" width="500" height="46"/></g>
+      <text class="l" x="600" y="455">日志只存 attachmentId；resolveImage 在请求期换 data URL，</text>
+      <text class="l" x="600" y="472">普通文件只给落盘路径，由模型按需 read / bash。</text>
+    </svg>
+  </div>
+
+  <div class="grid">
+    <article class="card">
+      <h3>两层投影，职责分开</h3>
+      <p><b>buildSurface</b> 处理语义：哪条消息被压缩覆盖、哪些附件这轮不发；<b>buildLlmMessages</b> 处理协议：tool_calls、tool_call_id、image_url 这些 provider 字段。</p>
+    </article>
+    <article class="card gold">
+      <h3>压缩是影子化</h3>
+      <p>旧消息不删，只被标记 shadowed；摘要作为一条新条目插在末尾。日志仍然可完整回放，模型只看到压缩后的视图。</p>
+    </article>
+    <article class="card">
+      <h3>思考过程不进上下文</h3>
+      <p><span class="kbd">assistant/message.reasoning</span> 会落盘（单步截断 64k）用于回放，但 buildSurface 不读取它，避免多轮推理无限膨胀。</p>
+    </article>
+    <article class="card">
+      <h3>请求期才碰字节</h3>
+      <p>图片和文件在日志里都只是引用。这样日志可以安全落盘、可 diff，模型也能按需读取文件而不是把字节塞进上下文。</p>
+    </article>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">packages/agent-core/session-log.ts · buildSurface()</span></div>
+<pre><code><span class="kw">switch</span> (ev.t) {
+  <span class="kw">case</span> <span class="str">'user/message'</span>:
+    surface.<span class="fnc">push</span>({ seq: ev.seq, kind: <span class="str">'user'</span>, content: ev.text, attachments: ev.attachments })
+    <span class="kw">break</span>
+  <span class="kw">case</span> <span class="str">'assistant/message'</span>:
+    surface.<span class="fnc">push</span>({ seq: ev.seq, kind: <span class="str">'assistant'</span>, content: ev.text ?? <span class="str">''</span>, toolCalls: ev.toolCalls })
+    <span class="kw">break</span>
+  <span class="kw">case</span> <span class="str">'tool/result'</span>:
+    surface.<span class="fnc">push</span>({ seq: ev.seq, kind: <span class="str">'tool'</span>, content: ev.forModel, toolCallId: ev.callId })
+    <span class="kw">break</span>
+  <span class="kw">case</span> <span class="str">'compaction/summary'</span>: {
+    <span class="cmt">// 影子化区间 + 插入摘要节点（唯一允许的 surface 变更）</span>
+    <span class="kw">for</span> (<span class="kw">const</span> item <span class="kw">of</span> surface)
+      <span class="kw">if</span> (item.seq &gt;= ev.fromSeq &amp;&amp; item.seq &lt;= ev.toSeq &amp;&amp; !item.shadowed) item.shadowed = <span class="kw">true</span>
+    surface.<span class="fnc">push</span>({
+      seq: ev.seq, kind: <span class="str">'summary'</span>, shadowed: <span class="kw">false</span>,
+      content: <span class="str">`&lt;compacted-summary&gt;\n${ev.summaryText}\n&lt;/compacted-summary&gt;`</span>,
+    })
+    <span class="kw">break</span>
+  }
+}
+</code></pre>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">packages/agent-core/surface.ts · buildLlmMessages()</span></div>
+<pre><code><span class="kw">let</span> items = surfaceItems.<span class="fnc">filter</span>(i =&gt; !i.shadowed)      <span class="cmt">// 被摘要覆盖的区间不再发给模型</span>
+<span class="kw">for</span> (<span class="kw">const</span> t <span class="kw">of</span> transforms) items = <span class="fnc">t</span>(items)             <span class="cmt">// 如工具结果裁剪</span>
+
+<span class="kw">const</span> messages: ChatMessage[] = [{ role: <span class="str">'system'</span>, content: systemPrompt }]
+<span class="kw">for</span> (<span class="kw">const</span> item <span class="kw">of</span> items) {
+  <span class="kw">if</span> (item.kind === <span class="str">'user'</span>) {
+    messages.<span class="fnc">push</span>({ role: <span class="str">'user'</span>, content: item.content ?? <span class="str">''</span> })
+  } <span class="kw">else if</span> (item.kind === <span class="str">'assistant'</span>) {
+    messages.<span class="fnc">push</span>({
+      role: <span class="str">'assistant'</span>, content: item.content ?? <span class="str">''</span>,
+      ...(item.toolCalls?.length ? {
+        tool_calls: item.toolCalls.<span class="fnc">map</span>(c =&gt; ({
+          id: c.id, type: <span class="str">'function'</span>, function: { name: c.name, arguments: c.args },
+        })),
+      } : {}),
+    })
+  } <span class="kw">else if</span> (item.kind === <span class="str">'tool'</span>) {
+    messages.<span class="fnc">push</span>({ role: <span class="str">'tool'</span>, tool_call_id: item.toolCallId, content: item.content })
+  } <span class="kw">else if</span> (item.kind === <span class="str">'summary'</span>) {
+    messages.<span class="fnc">push</span>({ role: <span class="str">'user'</span>, content: item.content })
+  }
+}
+</code></pre>
+  </div>
+</section>
+
+<!-- ================= 04 系统提示词 ================= -->
+<section class="panel" id="p-prompt" role="tabpanel" aria-label="系统提示词">
+  <div class="panel-head">
+    <div class="kicker">04 / System Prompt</div>
+    <h2>一条字符串，固定拼接顺序</h2>
+    <p class="lede"><span class="kbd">buildSystemPrompt</span> 不是模板文件，而是每步现拼的 <span class="kbd">string[]</span>。顺序本身就是优先级：人格在最前，行为约束在最后。</p>
+    <div class="paths">
+      <span class="path">packages/agent-core/runtime.ts · buildSystemPrompt()</span>
+      <span class="path">apps/server/src/profiles.ts</span>
+      <span class="path">plugins/bb-tools/index.ts</span>
+    </div>
+  </div>
+
+  <div class="map-box">
+    <div class="map-cap"><span class="legend"><i class="dot g"></i>按此顺序 push</span><span class="legend"><i class="dot y"></i>条件段</span></div>
+    <svg viewBox="0 0 1120 540" role="img" aria-label="系统提示词拼接顺序">
+      <g class="node root"><rect x="24" y="222" width="200" height="80"/></g>
+      <text class="t" x="40" y="252">buildSystemPrompt</text>
+      <text class="s" x="40" y="274">lines.join('\n')</text>
+
+      <path class="e hot" d="M224 262 C256 262 256 51 288 51" marker-end="url(#ah)"/>
+      <path class="e hot" d="M224 262 C256 262 256 153 288 153" marker-end="url(#ah)"/>
+      <path class="e" d="M224 262 C256 262 256 255 288 255" marker-end="url(#a)"/>
+      <path class="e" d="M224 262 C256 262 256 357 288 357" marker-end="url(#a)"/>
+      <path class="e" d="M224 262 C256 262 256 459 288 459" marker-end="url(#a)"/>
+
+      <g class="node hot"><rect x="288" y="22" width="230" height="58"/></g>
+      <text class="t" x="300" y="45">① 角色</text>
+      <text class="s" x="300" y="64">[代理角色：name] prompt</text>
+
+      <g class="node hot"><rect x="288" y="124" width="230" height="58"/></g>
+      <text class="t" x="300" y="147">② 现场与边界</text>
+      <text class="s" x="300" y="166">会话现场 / cwd / 授权</text>
+
+      <g class="node"><rect x="288" y="226" width="230" height="58"/></g>
+      <text class="t" x="300" y="249">③ 协作状态</text>
+      <text class="s" x="300" y="268">计划模式 / 当前待办</text>
+
+      <g class="node"><rect x="288" y="328" width="230" height="58"/></g>
+      <text class="t" x="300" y="351">④ 能力清单</text>
+      <text class="s" x="300" y="370">工具 / 技能 / 建模流程</text>
+
+      <g class="node"><rect x="288" y="430" width="230" height="58"/></g>
+      <text class="t" x="300" y="453">⑤ 附加与风格</text>
+      <text class="s" x="300" y="472">sections / 回复风格 / refine</text>
+
+      <path class="e" d="M518 51 L586 51" marker-end="url(#a)"/>
+      <path class="e" d="M518 153 L586 153" marker-end="url(#a)"/>
+      <path class="e" d="M518 255 L586 255" marker-end="url(#a)"/>
+      <path class="e" d="M518 357 L586 357" marker-end="url(#a)"/>
+      <path class="e" d="M518 459 L586 459" marker-end="url(#a)"/>
+
+      <g class="node"><rect x="586" y="28" width="500" height="46"/></g>
+      <text class="l" x="600" y="47">profile.prompt 来自角色注册（lead / coding / mcmod / modeling）；</text>
+      <text class="l" x="600" y="64">没有 profile 时用“AI 建模师”开场，并补一段建模流程。</text>
+
+      <g class="node"><rect x="586" y="130" width="500" height="46"/></g>
+      <text class="l" x="600" y="149">canvas.contextText(sessionId) 给会话现场；cwd 给相对路径根；</text>
+      <text class="l" x="600" y="166">授权段区分 auto 与 ask，避免模型把拒绝当工具故障。</text>
+
+      <g class="node"><rect x="586" y="232" width="500" height="46"/></g>
+      <text class="l" x="600" y="251">计划模式给只读行为指导（写操作已被运行时拦截）；</text>
+      <text class="l" x="600" y="268">待办整表按“进行中 / 已完成 / 待办”渲染。</text>
+
+      <g class="node"><rect x="586" y="334" width="500" height="46"/></g>
+      <text class="l" x="600" y="353">工具段只列 selectTools 之后的名字 + 描述首行；技能段只列</text>
+      <text class="l" x="600" y="370">name + description，正文靠 load_skill 按需加载。</text>
+
+      <g class="node"><rect x="586" y="436" width="500" height="46"/></g>
+      <text class="l" x="600" y="455">systemSections 由插件注册（材质表 / 动画 / 平台信息），</text>
+      <text class="l" x="600" y="472">最后固定回复风格；refine 模式再追加“不要调工具”的约束。</text>
+    </svg>
+  </div>
+
+  <div class="chain" aria-label="拼接顺序">
+    <span class="step"><b>1</b>角色</span><span class="arrowsep">→</span>
+    <span class="step"><b>2</b>当前会话</span><span class="arrowsep">→</span>
+    <span class="step"><b>3</b>工作目录</span><span class="arrowsep">→</span>
+    <span class="step"><b>4</b>授权</span><span class="arrowsep">→</span>
+    <span class="step"><b>5</b>计划模式</span><span class="arrowsep">→</span>
+    <span class="step"><b>6</b>当前待办</span><span class="arrowsep">→</span>
+    <span class="step"><b>7</b># 工具</span><span class="arrowsep">→</span>
+    <span class="step"><b>8</b># 可插拔技能</span><span class="arrowsep">→</span>
+    <span class="step"><b>9</b>建模流程（无角色）</span><span class="arrowsep">→</span>
+    <span class="step"><b>10</b>systemSections</span><span class="arrowsep">→</span>
+    <span class="step"><b>11</b># 回复风格</span><span class="arrowsep">→</span>
+    <span class="step"><b>12</b>refine 约束</span>
+  </div>
+
+  <div class="grid">
+    <article class="card">
+      <h3>角色即人格</h3>
+      <p>lead 负责创意与方案、mcmod 负责实施、modeling 只画布、coding 直接改代码。角色还带 <span class="kbd">toolFilter</span> 与 <span class="kbd">skills</span>，所以提示与工具天然一致。</p>
+    </article>
+    <article class="card">
+      <h3>现场每步现算</h3>
+      <p>会话现场、待办、计划模式都可能在一轮中途变化；每步重拼保证模型看到的是最新状态，而不是回合开始时的快照。</p>
+    </article>
+    <article class="card gold">
+      <h3>工具段是“投影结果”</h3>
+      <p>提示里列的工具来自 <span class="kbd">selectTools</span>，所以计划模式隐藏 <span class="kbd">exit_plan_mode</span> 之外的门控工具也会同步消失，不会出现“提示里有、请求里没有”。</p>
+    </article>
+    <article class="card">
+      <h3>技能只给目录</h3>
+      <p>技能正文可能很长，系统提示只放名字和一行描述，并明确要求“不加载不要假装读过”。这是渐进披露的关键约束。</p>
+    </article>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">packages/agent-core/runtime.ts · buildSystemPrompt()</span></div>
+<pre><code><span class="kw">const</span> profile = profileId ? registries.profiles[profileId] : <span class="kw">undefined</span>
+<span class="kw">const</span> turnTools = <span class="fnc">selectTools</span>(registries.tools, profileId, registries.profiles, session ?? { planMode })
+<span class="kw">const</span> skillList = registries.skillProviders.<span class="fnc">flatMap</span>(p =&gt; p.<span class="fnc">list</span>())
+  .<span class="fnc">filter</span>(s =&gt; !profile?.skills || profile.skills.<span class="fnc">includes</span>(s.name))
+
+<span class="kw">const</span> lines: string[] = []
+<span class="kw">if</span> (profile) lines.<span class="fnc">push</span>(<span class="str">`[代理角色：${profile.name}] ${profile.prompt}`</span>)
+<span class="kw">else</span> lines.<span class="fnc">push</span>(<span class="str">'你是 openmods 的 AI 建模师，工作在网页版 Blockbench 只读画布旁。…'</span>)
+
+<span class="kw">const</span> sessionContext = deps.canvas.<span class="fnc">contextText</span>(deps.sessionId)   <span class="cmt">// 会话现场</span>
+<span class="kw">if</span> (sessionContext) lines.<span class="fnc">push</span>(<span class="str">`[当前会话] ${sessionContext}`</span>)
+<span class="kw">if</span> (deps.cwd) lines.<span class="fnc">push</span>(<span class="str">`[工作目录] ${deps.cwd}`</span>)          <span class="cmt">// 相对路径根</span>
+<span class="kw">if</span> (deps.approval) lines.<span class="fnc">push</span>(<span class="str">'[授权] …'</span>)                     <span class="cmt">// auto / ask</span>
+<span class="kw">if</span> (deps.planMode?.()) lines.<span class="fnc">push</span>(<span class="str">'# 计划模式（只读）…'</span>)
+
+<span class="kw">const</span> todos = deps.todos?.()
+<span class="kw">if</span> (todos?.length) {
+  lines.<span class="fnc">push</span>(<span class="str">'# 当前待办'</span>)
+  <span class="kw">for</span> (<span class="kw">const</span> t <span class="kw">of</span> todos) lines.<span class="fnc">push</span>(<span class="str">`- [${label(t.status)}] ${t.content}`</span>)
+}
+
+lines.<span class="fnc">push</span>(<span class="str">'# 工具'</span>)
+<span class="kw">for</span> (<span class="kw">const</span> t <span class="kw">of</span> turnTools) lines.<span class="fnc">push</span>(<span class="str">`- ${t.name}: ${t.description.split('\n')[0]}`</span>)
+
+<span class="kw">if</span> (skillList.length) {
+  lines.<span class="fnc">push</span>(<span class="str">'# 可插拔技能（按需加载，不加载不要假装读过）'</span>)
+  <span class="kw">for</span> (<span class="kw">const</span> s <span class="kw">of</span> skillList) lines.<span class="fnc">push</span>(<span class="str">`- ${s.name}: ${s.description.split('\n')[0]}`</span>)
+}
+
+<span class="cmt">// 插件附加段：按会话现算（材质表 / 动画说明 / 平台信息）</span>
+<span class="kw">for</span> (<span class="kw">const</span> section <span class="kw">of</span> registries.systemSections) {
+  <span class="kw">const</span> s = <span class="fnc">section</span>({ sessionId: deps.sessionId, session: sectionSession })
+  <span class="kw">if</span> (s) lines.<span class="fnc">push</span>(<span class="str">''</span>, s)
+}
+lines.<span class="fnc">push</span>(<span class="str">'# 回复风格'</span>, <span class="str">'中文；简短；不承诺画布之外的功能。…'</span>)
+<span class="kw">if</span> (mode === <span class="str">'refine'</span>) lines.<span class="fnc">push</span>(<span class="str">'[完善想法模式] …不要调用任何工具…'</span>)
+<span class="kw">return</span> lines.<span class="fnc">join</span>(<span class="str">'\n'</span>)
+</code></pre>
+  </div>
+</section>
+
+<!-- ================= 05 技能与工具 ================= -->
+<section class="panel" id="p-skills" role="tabpanel" aria-label="技能与工具">
+  <div class="panel-head">
+    <div class="kicker">05 / Skills &amp; Tools</div>
+    <h2>技能是提示词包，工具是函数表</h2>
+    <p class="lede">技能来自文件系统（<span class="kbd">skills/&lt;name&gt;/SKILL.md</span>），工具来自插件注册的数组。两者在请求体里汇合：技能只出现在系统提示，工具同时出现在提示和 <span class="kbd">llm.chat({ tools })</span>。</p>
+    <div class="paths">
+      <span class="path">apps/server/src/skills.ts</span>
+      <span class="path">apps/server/src/index.ts · load_skill</span>
+      <span class="path">packages/agent-core/runtime.ts · selectTools</span>
+    </div>
+  </div>
+
+  <div class="map-box">
+    <div class="map-cap"><span class="legend"><i class="dot g"></i>注入链路</span><span class="legend"><i class="dot y"></i>按需加载</span></div>
+    <svg viewBox="0 0 1120 540" role="img" aria-label="技能与工具注入">
+      <g class="node root"><rect x="24" y="222" width="200" height="80"/></g>
+      <text class="t" x="40" y="252">技能 + 工具</text>
+      <text class="s" x="40" y="274">发现 → 门控 → 注入</text>
+
+      <path class="e hot" d="M224 262 C256 262 256 51 288 51" marker-end="url(#ah)"/>
+      <path class="e" d="M224 262 C256 262 256 153 288 153" marker-end="url(#a)"/>
+      <path class="e" d="M224 262 C256 262 256 255 288 255" marker-end="url(#a)"/>
+      <path class="e hot" d="M224 262 C256 262 256 357 288 357" marker-end="url(#ah)"/>
+      <path class="e hot" d="M224 262 C256 262 256 459 288 459" marker-end="url(#ah)"/>
+
+      <g class="node hot"><rect x="288" y="22" width="230" height="58"/></g>
+      <text class="t" x="300" y="45">SKILL.md 扫描</text>
+      <text class="s" x="300" y="64">DirSkillProvider</text>
+
+      <g class="node"><rect x="288" y="124" width="230" height="58"/></g>
+      <text class="t" x="300" y="147">技能门控</text>
+      <text class="s" x="300" y="166">功能开关 + 角色白名单</text>
+
+      <g class="node warn"><rect x="288" y="226" width="230" height="58"/></g>
+      <text class="t" x="300" y="249">load_skill</text>
+      <text class="s" x="300" y="268">正文 + references</text>
+
+      <g class="node hot"><rect x="288" y="328" width="230" height="58"/></g>
+      <text class="t" x="300" y="351">selectTools()</text>
+      <text class="s" x="300" y="370">toolFilter / exclude / gate</text>
+
+      <g class="node hot"><rect x="288" y="430" width="230" height="58"/></g>
+      <text class="t" x="300" y="453">toOpenAiTools()</text>
+      <text class="s" x="300" y="472">序列化进请求体</text>
+
+      <path class="e" d="M518 51 L586 51" marker-end="url(#a)"/>
+      <path class="e" d="M518 153 L586 153" marker-end="url(#a)"/>
+      <path class="e" d="M518 255 L586 255" marker-end="url(#a)"/>
+      <path class="e" d="M518 357 L586 357" marker-end="url(#a)"/>
+      <path class="e" d="M518 459 L586 459" marker-end="url(#a)"/>
+
+      <g class="node"><rect x="586" y="28" width="500" height="46"/></g>
+      <text class="l" x="600" y="47">每次 list/load 都重新扫描；front matter 取 name / description，</text>
+      <text class="l" x="600" y="64">缺省用目录名。改 SKILL.md 不需要重启。</text>
+
+      <g class="node"><rect x="586" y="130" width="500" height="46"/></g>
+      <text class="l" x="600" y="149">FilteredSkillProvider 隐藏功能关闭的技能；</text>
+      <text class="l" x="600" y="166">角色只看到 profile.skills 白名单里的技能。</text>
+
+      <g class="node warn"><rect x="586" y="232" width="500" height="46"/></g>
+      <text class="l" x="600" y="251">系统提示只列名字；调用后返回全文，并附技能目录与</text>
+      <text class="l" x="600" y="268">references 清单，可再传 file 精确读取，避免猜路径。</text>
+
+      <g class="node hot"><rect x="586" y="334" width="500" height="46"/></g>
+      <text class="l" x="600" y="353">先按 profile.toolFilter / toolExclude 裁剪，再按</text>
+      <text class="l" x="600" y="370">def.gate(session) 过滤（如 exit_plan_mode 只在计划模式出现）。</text>
+
+      <g class="node hot"><rect x="586" y="436" width="500" height="46"/></g>
+      <text class="l" x="600" y="455">{ type:'function', function:{ name, description, parameters } }</text>
+      <text class="l" x="600" y="472">随 llm.chat({ tools }) 发出；执行仍在本地注册表里查。</text>
+    </svg>
+  </div>
+
+  <div class="grid">
+    <article class="card">
+      <h3>技能是目录，不是数据库</h3>
+      <p>一个技能就是一个目录：<span class="kbd">SKILL.md</span> + 可选的 <span class="kbd">references/</span>。扫描失败或目录不存在时返回空列表，不影响启动。</p>
+    </article>
+    <article class="card">
+      <h3>两道白名单</h3>
+      <p>功能开关决定技能“是否存在”，角色 <span class="kbd">profile.skills</span> 决定“谁能加载”。运行时在 <span class="kbd">load_skill</span> 里还会再校验一次，防止模型越权。</p>
+    </article>
+    <article class="card gold">
+      <h3>渐进披露</h3>
+      <p>把整本技能塞进系统提示会挤占上下文，也可能让模型“假装读过”。openmods 只给目录，正文按需读，且明确要求不加载就不要引用。</p>
+    </article>
+    <article class="card">
+      <h3>工具是同一个数组</h3>
+      <p>内置工具和插件工具没有区别：都 push 进 <span class="kbd">tools</span>，都按角色裁剪。所以“关掉画布”等于画布工具和 modeling 角色一起消失。</p>
+    </article>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">apps/server/src/skills.ts · DirSkillProvider.scan()</span></div>
+<pre><code><span class="kw">private</span> <span class="fnc">scan</span>() {
+  <span class="kw">if</span> (!<span class="fnc">existsSync</span>(<span class="kw">this</span>.skillsDir)) <span class="kw">return</span> []
+  <span class="kw">const</span> out = []
+  <span class="kw">for</span> (<span class="kw">const</span> d <span class="kw">of</span> <span class="fnc">readdirSync</span>(<span class="kw">this</span>.skillsDir, { withFileTypes: <span class="kw">true</span> })) {
+    <span class="kw">if</span> (!d.<span class="fnc">isDirectory</span>() || d.name.<span class="fnc">startsWith</span>(<span class="str">'.'</span>)) <span class="kw">continue</span>
+    <span class="kw">const</span> file = <span class="fnc">join</span>(<span class="kw">this</span>.skillsDir, d.name, <span class="str">'SKILL.md'</span>)
+    <span class="kw">if</span> (!<span class="fnc">existsSync</span>(file)) <span class="kw">continue</span>
+    <span class="kw">const</span> raw = <span class="fnc">readFileSync</span>(file, <span class="str">'utf8'</span>)
+    <span class="kw">const</span> fm = <span class="str">/^---\r?\n([\s\S]*?)\r?\n---/</span>.<span class="fnc">exec</span>(raw)
+    <span class="kw">const</span> name = fm?.[<span class="num">1</span>].<span class="fnc">match</span>(<span class="str">/^name:\s*(.+)$/m</span>)?.[<span class="num">1</span>]?.<span class="fnc">trim</span>() ?? d.name
+    <span class="kw">const</span> description = fm?.[<span class="num">1</span>].<span class="fnc">match</span>(<span class="str">/^description:\s*(.+)$/m</span>)?.[<span class="num">1</span>]?.<span class="fnc">trim</span>() ?? <span class="str">''</span>
+    out.<span class="fnc">push</span>({ name, dir: <span class="fnc">join</span>(<span class="kw">this</span>.skillsDir, d.name), description })
+  }
+  <span class="kw">return</span> out
+}
+</code></pre>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">apps/server/src/index.ts · load_skill / runtime.ts · selectTools</span></div>
+<pre><code><span class="cmt">// 角色白名单在运行时再校验一次</span>
+<span class="kw">const</span> entry = sessions.<span class="fnc">get</span>(exec.sessionId)
+<span class="kw">const</span> allowed = entry ? <span class="fnc">effectiveSkills</span>(entry.profile) : <span class="kw">undefined</span>
+<span class="kw">if</span> (allowed &amp;&amp; !allowed.<span class="fnc">includes</span>(name)) {
+  <span class="kw">return</span> { forModel: <span class="str">`技能 "${name}" 未分配给当前角色（${entry?.profile}）`</span>, isError: <span class="kw">true</span> }
+}
+<span class="kw">const</span> content = <span class="kw">await</span> provider.<span class="fnc">load</span>(name)
+<span class="kw">return</span> { forModel: content + <span class="str">`\n\n---\n技能目录：${dir}\n参考文件：${refs.join('、')}`</span> }
+
+<span class="cmt">// —— 工具裁剪 ——</span>
+<span class="kw">function</span> <span class="fnc">filterToolsForProfile</span>(tools, profileId, profiles) {
+  <span class="kw">const</span> profile = profileId ? profiles[profileId] : <span class="kw">undefined</span>
+  <span class="kw">let</span> scoped = tools
+  <span class="kw">if</span> (profile?.toolFilter) scoped = scoped.<span class="fnc">filter</span>(t =&gt; profile.toolFilter.<span class="fnc">includes</span>(t.name))
+  <span class="kw">if</span> (profile?.toolExclude) scoped = scoped.<span class="fnc">filter</span>(t =&gt; !profile.toolExclude.<span class="fnc">includes</span>(t.name))
+  <span class="kw">return</span> scoped
+}
+<span class="kw">function</span> <span class="fnc">selectTools</span>(tools, profileId, profiles, session) {
+  <span class="kw">return</span> <span class="fnc">filterToolsForProfile</span>(tools, profileId, profiles)
+    .<span class="fnc">filter</span>(t =&gt; !t.gate || <span class="fnc">t.gate</span>(session))     <span class="cmt">// 动态门控</span>
+}
+<span class="kw">function</span> <span class="fnc">toOpenAiTools</span>(defs) {
+  <span class="kw">return</span> defs.<span class="fnc">map</span>(d =&gt; ({
+    type: <span class="str">'function'</span>,
+    function: { name: d.name, description: d.description, parameters: d.parameters },
+  }))
+}
+</code></pre>
+  </div>
+</section>
+
+<!-- ================= 06 Agent Loop ================= -->
+<section class="panel" id="p-loop" role="tabpanel" aria-label="Agent Loop">
+  <div class="panel-head">
+    <div class="kicker">06 / Agent Loop</div>
+    <h2>一步 = 一次 LLM 请求</h2>
+    <p class="lede"><span class="kbd">runTurn</span> 是一个有预算的 for 循环。模型每步要么给出工具调用（继续），要么给出最终正文（收尾）；运行时负责把工具结果写回日志，让下一步看到。</p>
+    <div class="paths">
+      <span class="path">packages/agent-core/runtime.ts · runTurn()</span>
+    </div>
+  </div>
+
+  <div class="map-box">
+    <div class="map-cap"><span class="legend"><i class="dot g"></i>每步路径</span><span class="legend"><i class="dot y"></i>退出条件</span></div>
+    <svg viewBox="0 0 1120 540" role="img" aria-label="Agent Loop 状态机">
+      <g class="node root"><rect x="24" y="222" width="200" height="80"/></g>
+      <text class="t" x="40" y="252">runTurn()</text>
+      <text class="s" x="40" y="274">for step = 1..maxSteps</text>
+
+      <path class="e hot" d="M224 262 C256 262 256 51 288 51" marker-end="url(#ah)"/>
+      <path class="e hot" d="M224 262 C256 262 256 153 288 153" marker-end="url(#ah)"/>
+      <path class="e hot" d="M224 262 C256 262 256 255 288 255" marker-end="url(#ah)"/>
+      <path class="e hot" d="M224 262 C256 262 256 357 288 357" marker-end="url(#ah)"/>
+      <path class="e" d="M224 262 C256 262 256 459 288 459" marker-end="url(#a)"/>
+
+      <g class="node"><rect x="288" y="22" width="230" height="58"/></g>
+      <text class="t" x="300" y="45">预算与身份</text>
+      <text class="s" x="300" y="66">maxSteps / profile / turnId</text>
+
+      <g class="node hot"><rect x="288" y="124" width="230" height="58"/></g>
+      <text class="t" x="300" y="147">每步准备</text>
+      <text class="s" x="300" y="166">hooks → step/start → 拼上下文</text>
+
+      <g class="node hot"><rect x="288" y="226" width="230" height="58"/></g>
+      <text class="t" x="300" y="249">llm.chat()</text>
+      <text class="s" x="300" y="268">流式 text / reasoning</text>
+
+      <g class="node hot"><rect x="288" y="328" width="230" height="58"/></g>
+      <text class="t" x="300" y="351">工具执行</text>
+      <text class="s" x="300" y="370">授权 / 计划拦截 / execute</text>
+
+      <g class="node warn"><rect x="288" y="430" width="230" height="58"/></g>
+      <text class="t" x="300" y="453">继续 or 退出</text>
+      <text class="s" x="300" y="472">toolCalls ? continue : break</text>
+
+      <path class="e" d="M518 51 L586 51" marker-end="url(#a)"/>
+      <path class="e" d="M518 153 L586 153" marker-end="url(#a)"/>
+      <path class="e" d="M518 255 L586 255" marker-end="url(#a)"/>
+      <path class="e" d="M518 357 L586 357" marker-end="url(#a)"/>
+      <path class="e" d="M518 459 L586 459" marker-end="url(#a)"/>
+
+      <g class="node"><rect x="586" y="28" width="500" height="46"/></g>
+      <text class="l" x="600" y="47">maxSteps = clamp(opts.maxSteps ?? 40, 1, 200)；</text>
+      <text class="l" x="600" y="64">profile 缺省 lead，未知 id 也回落 lead；turnId = t&lt;turn.seq&gt;。</text>
+
+      <g class="node hot"><rect x="586" y="130" width="500" height="46"/></g>
+      <text class="l" x="600" y="149">beforeStepHooks（压缩等机制挂载）→ step/start →</text>
+      <text class="l" x="600" y="166">selectTools → buildSystemPrompt → buildLlmMessages。</text>
+
+      <g class="node hot"><rect x="586" y="232" width="500" height="46"/></g>
+      <text class="l" x="600" y="251">onTextDelta / onReasoningDelta 直接 emit；</text>
+      <text class="l" x="600" y="268">usage 落 llm/usage，assistant/message 只落最终整段。</text>
+
+      <g class="node hot"><rect x="586" y="334" width="500" height="46"/></g>
+      <text class="l" x="600" y="353">逐个 tool/call：未知工具 → 错误结果；计划模式写操作 →</text>
+      <text class="l" x="600" y="370">拦截；授权 → 询问；最后 execute，结果截断 100k 落 tool/result。</text>
+
+      <g class="node warn"><rect x="586" y="436" width="500" height="46"/></g>
+      <text class="l" x="600" y="455">有 toolCalls → 下一步；没有 → finalText 并 break；</text>
+      <text class="l" x="600" y="472">跑满预算 → hitStepLimit，reason 变 step-limit。</text>
+    </svg>
+  </div>
+
+  <div class="grid">
+    <article class="card">
+      <h3>每步都重建请求</h3>
+      <p>工具表、系统提示、surface 全部重算。压缩钩子也在步首执行，所以“这一步的上下文”永远是当前会话状态的函数。</p>
+    </article>
+    <article class="card">
+      <h3>流式只影响展示</h3>
+      <p>delta 边到边推给前端，但落盘的是完整 <span class="kbd">assistant/message</span>。断线重连时回放的是整段，不是碎片。</p>
+    </article>
+    <article class="card gold">
+      <h3>工具串行，闸门统一</h3>
+      <p>授权、计划模式、未知工具都在 runtime 判定，插件只写 <span class="kbd">execute</span>。这样每个插件不用重复实现安全策略。</p>
+    </article>
+    <article class="card">
+      <h3>超限只重试一次</h3>
+      <p>上下文溢出会触发 overflowHooks 做最大化收缩，然后 <b>不推进 stepNo</b> 重试；只给一次机会，避免死循环。</p>
+    </article>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">packages/agent-core/runtime.ts · runTurn() 主循环</span></div>
+<pre><code><span class="kw">for</span> (stepNo = <span class="num">1</span>; stepNo &lt;= maxSteps; stepNo++) {
+  <span class="kw">if</span> (signal.aborted) { aborted = <span class="kw">true</span>; <span class="kw">break</span> }
+  <span class="kw">const</span> stepId = <span class="str">`${turnId}s${stepNo}`</span>
+
+  <span class="cmt">// 每步前：压缩钩子（省 token 机制挂载点）</span>
+  <span class="kw">for</span> (<span class="kw">const</span> hook <span class="kw">of</span> registries.beforeStepHooks) <span class="kw">await</span> <span class="fnc">hook</span>({ session: rt, abort })
+
+  deps.log.<span class="fnc">append</span>(<span class="str">'step/start'</span>, { turnId, stepId })
+  rt.<span class="fnc">emit</span>(<span class="str">'step/start'</span>, { turnId, stepId })
+
+  <span class="kw">const</span> turnTools = <span class="fnc">selectTools</span>(registries.tools, profileId, registries.profiles, rt)
+  <span class="kw">const</span> messages = <span class="fnc">buildLlmMessages</span>(
+    <span class="fnc">buildSystemPrompt</span>(registries, deps, opts.mode, profileId, rt),
+    rt.<span class="fnc">getSurfaceMessages</span>(),
+    deps.resolveImage, deps.resolveFile,
+  )
+
+  <span class="kw">const</span> res = <span class="kw">await</span> deps.llm.<span class="fnc">chat</span>({
+    messages,
+    tools: <span class="fnc">toOpenAiTools</span>(turnTools),
+    model: rt.<span class="fnc">getModelLlmId</span>(),
+    signal,
+    onTextDelta: (delta) =&gt; rt.<span class="fnc">emit</span>(<span class="str">'assistant/delta'</span>, { turnId, stepId, delta }),
+    onReasoningDelta: (delta) =&gt; rt.<span class="fnc">emit</span>(<span class="str">'assistant/reasoning'</span>, { turnId, stepId, delta }),
+  })
+
+  deps.log.<span class="fnc">append</span>(<span class="str">'assistant/message'</span>, { turnId, stepId, text: res.text, toolCalls: res.toolCalls })
+
+  <span class="kw">if</span> (res.toolCalls.length) {
+    <span class="kw">for</span> (<span class="kw">const</span> call <span class="kw">of</span> res.toolCalls) {
+      deps.log.<span class="fnc">append</span>(<span class="str">'tool/call'</span>, { turnId, stepId, callId: call.id, name: call.name, args: call.args })
+      <span class="kw">const</span> def = registries.tools.<span class="fnc">find</span>(d =&gt; d.name === call.name)
+      <span class="cmt">// …未知工具 / 计划模式拦截 / guardApproval / def.execute(args, exec)…</span>
+      deps.log.<span class="fnc">append</span>(<span class="str">'tool/result'</span>, { turnId, stepId, callId: call.id, name: call.name, forModel: result.forModel })
+    }
+    <span class="kw">continue</span>                       <span class="cmt">// 带着工具结果进入下一步</span>
+  }
+
+  finalText = res.text                <span class="cmt">// 无工具调用 → 本轮结束</span>
+  <span class="kw">break</span>
+}
+</code></pre>
+  </div>
+</section>
+
+<!-- ================= 07 收尾解析 ================= -->
+<section class="panel" id="p-finish" role="tabpanel" aria-label="收尾解析">
+  <div class="panel-head">
+    <div class="kicker">07 / Finish</div>
+    <h2>一轮到底怎么算结束</h2>
+    <p class="lede">收尾不是“模型说完了”，而是运行时给出一个明确的 <span class="kbd">reason</span>：natural / step-limit / aborted。server 再根据这个 reason 决定要不要自动续跑、等待或汇总。</p>
+    <div class="paths">
+      <span class="path">packages/agent-core/runtime.ts · runTurn() 尾部</span>
+      <span class="path">apps/server/src/index.ts · afterRootTurn()</span>
+    </div>
+  </div>
+
+  <div class="map-box">
+    <div class="map-cap"><span class="legend"><i class="dot g"></i>正常收尾</span><span class="legend"><i class="dot y"></i>异常 / 截断</span><span class="legend"><i class="dot r"></i>中止</span></div>
+    <svg viewBox="0 0 1120 540" role="img" aria-label="收尾解析">
+      <g class="node root"><rect x="24" y="222" width="200" height="80"/></g>
+      <text class="t" x="40" y="252">一轮如何结束</text>
+      <text class="s" x="40" y="274">reason 三分支</text>
+
+      <path class="e hot" d="M224 262 C256 262 256 51 288 51" marker-end="url(#ah)"/>
+      <path class="e" d="M224 262 C256 262 256 153 288 153" marker-end="url(#a)"/>
+      <path class="e bad" d="M224 262 C256 262 256 255 288 255" marker-end="url(#a)"/>
+      <path class="e hot" d="M224 262 C256 262 256 357 288 357" marker-end="url(#ah)"/>
+      <path class="e" d="M224 262 C256 262 256 459 288 459" marker-end="url(#a)"/>
+
+      <g class="node hot"><rect x="288" y="22" width="230" height="58"/></g>
+      <text class="t" x="300" y="45">natural</text>
+      <text class="s" x="300" y="64">无 toolCalls</text>
+
+      <g class="node"><rect x="288" y="124" width="230" height="58"/></g>
+      <text class="t" x="300" y="147">空回复兜底</text>
+      <text class="s" x="300" y="166">retryNudge → fallback</text>
+
+      <g class="node bad"><rect x="288" y="226" width="230" height="58"/></g>
+      <text class="t" x="300" y="249">aborted</text>
+      <text class="s" x="300" y="268">用户停止优先</text>
+
+      <g class="node warn"><rect x="288" y="328" width="230" height="58"/></g>
+      <text class="t" x="300" y="351">step-limit</text>
+      <text class="s" x="300" y="370">预算耗尽仍在调工具</text>
+
+      <g class="node hot"><rect x="288" y="430" width="230" height="58"/></g>
+      <text class="t" x="300" y="453">turn/end</text>
+      <text class="s" x="300" y="472">落盘 + emit</text>
+
+      <path class="e" d="M518 51 L586 51" marker-end="url(#a)"/>
+      <path class="e" d="M518 153 L586 153" marker-end="url(#a)"/>
+      <path class="e" d="M518 255 L586 255" marker-end="url(#a)"/>
+      <path class="e" d="M518 357 L586 357" marker-end="url(#a)"/>
+      <path class="e" d="M518 459 L586 459" marker-end="url(#a)"/>
+
+      <g class="node"><rect x="586" y="28" width="500" height="46"/></g>
+      <text class="l" x="600" y="47">finalText = res.text；正文为空时：有思考且还有步数就</text>
+      <text class="l" x="600" y="64">带一次性 retryNudge 重试，否则用 emptyReplyFallback。</text>
+
+      <g class="node"><rect x="586" y="130" width="500" height="46"/></g>
+      <text class="l" x="600" y="149">retryNudge 只随下一次请求发出，不落日志；</text>
+      <text class="l" x="600" y="166">重试仍为空才输出可见兜底文本，避免空气泡。</text>
+
+      <g class="node"><rect x="586" y="232" width="500" height="46"/></g>
+      <text class="l" x="600" y="251">步首、流式后、工具后都会检查 aborted；</text>
+      <text class="l" x="600" y="268">中止不写 usage，不把半截回复当结果。</text>
+
+      <g class="node"><rect x="586" y="334" width="500" height="46"/></g>
+      <text class="l" x="600" y="353">for 走完且未自然收尾 → hitStepLimit；补一句</text>
+      <text class="l" x="600" y="370">“已达到单轮 N 步上限，回复继续我接着做”。</text>
+
+      <g class="node hot"><rect x="586" y="436" width="500" height="46"/></g>
+      <text class="l" x="600" y="455">finally 里统一 append + emit turn/end { text, aborted, reason }；</text>
+      <text class="l" x="600" y="472">server 再按子代理 / 主会话分别收尾。</text>
+    </svg>
+  </div>
+
+  <div class="grid">
+    <article class="card">
+      <h3>三种 reason，三种后续</h3>
+      <ul>
+        <li><b>natural</b>：正常汇报，主会话可进入空闲或继续等子代理。</li>
+        <li><b>step-limit</b>：mcmod 角色会自动续跑，最多 2 次。</li>
+        <li><b>aborted</b>：直接结束，不自动续跑。</li>
+      </ul>
+    </article>
+    <article class="card gold">
+      <h3>空回复不是错误</h3>
+      <p>模型只输出思考、正文为空时，运行时先给一次“请给出可见回复”的临时提示；仍为空就写兜底文本。用户永远不会看到空气泡。</p>
+    </article>
+    <article class="card">
+      <h3>turn/end 是唯一收口</h3>
+      <p>无论正常、截断还是异常，都在 finally 里落 <span class="kbd">turn/end</span>。日志回放与前端状态都靠这一条事件对齐。</p>
+    </article>
+    <article class="card">
+      <h3>server 侧还有一层</h3>
+      <p>子代理先写 status 再 <span class="kbd">settleChild</span>；主会话走 <span class="kbd">afterRootTurn</span>：移交续跑 → 等待子代理 → 汇总 → 自动续跑 → 真正空闲。</p>
+    </article>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">packages/agent-core/runtime.ts · 收尾与 turn/end</span></div>
+<pre><code><span class="cmt">// 无工具调用 → 本轮结束</span>
+finalText = res.text
+<span class="kw">if</span> (!<span class="fnc">String</span>(res.text ?? <span class="str">''</span>).<span class="fnc">trim</span>()) {
+  <span class="kw">const</span> reasoning = <span class="fnc">String</span>(res.reasoning ?? <span class="str">''</span>).<span class="fnc">trim</span>()
+  <span class="kw">if</span> (!emptyReplyRetried &amp;&amp; reasoning &amp;&amp; stepNo &lt; maxSteps) {
+    emptyReplyRetried = <span class="kw">true</span>
+    retryNudge = <span class="str">'上一回合没有产生任何可见回复。请直接给出面向用户的回答…'</span>
+    <span class="kw">continue</span>                         <span class="cmt">// 一次性提示，不落日志</span>
+  }
+  finalText = <span class="fnc">emptyReplyFallback</span>(reasoning)
+}
+deps.log.<span class="fnc">append</span>(<span class="str">'step/end'</span>, { turnId, stepId })
+rt.<span class="fnc">emit</span>(<span class="str">'step/end'</span>, { turnId, stepId })
+<span class="kw">break</span>
+
+<span class="cmt">// for 循环走完（stepNo 超出上限）且不是用户中止 → 步数上限截断</span>
+<span class="kw">if</span> (stepNo &gt; maxSteps &amp;&amp; !aborted &amp;&amp; !haltPlanTurn) hitStepLimit = <span class="kw">true</span>
+
+<span class="kw">finally</span> {
+  <span class="kw">if</span> (hitStepLimit &amp;&amp; !finalText)
+    finalText = <span class="str">`已达到单轮 ${maxSteps} 步上限，任务还没做完。回复「继续」我接着做。`</span>
+  reason = hitStepLimit ? <span class="str">'step-limit'</span> : aborted ? <span class="str">'aborted'</span> : <span class="str">'natural'</span>
+  deps.log.<span class="fnc">append</span>(<span class="str">'turn/end'</span>, { turnId, text: finalText, aborted, reason })
+  rt.<span class="fnc">emit</span>(<span class="str">'turn/end'</span>, { turnId, text: finalText, aborted, reason })
+}
+<span class="kw">return</span> { text: finalText, aborted, reason }
+</code></pre>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">apps/server/src/index.ts · afterRootTurn()</span></div>
+<pre><code><span class="kw">function</span> <span class="fnc">afterRootTurn</span>(s, result) {
+  <span class="cmt">// ① lead → mcmod 移交：用本回合用户需求自动续跑，不需要用户重发</span>
+  <span class="kw">const</span> handoff = s.pendingHandoff
+  <span class="kw">if</span> (handoff) {
+    s.pendingHandoff = <span class="kw">undefined</span>
+    <span class="kw">return void</span> <span class="fnc">runSessionTurn</span>(s, { text: handoff.text, profile: <span class="str">'mcmod'</span> })
+  }
+  <span class="cmt">// ② 还有子代理在跑：锁住输入，等结算</span>
+  <span class="kw">const</span> waiting = <span class="fnc">waitingRows</span>(s)
+  <span class="kw">if</span> (waiting.length &gt; 0) {
+    s.sse.<span class="fnc">send</span>(<span class="str">'session/waiting'</span>, { sessionId: s.id, waiting })
+    <span class="kw">return</span>
+  }
+  <span class="cmt">// ③ 结算已到：开汇总回合</span>
+  <span class="kw">if</span> (s.settlements.length &gt; 0) <span class="kw">return void</span> <span class="fnc">maybeAutoContinue</span>(s)
+  <span class="cmt">// ④ mcmod 步数用尽：自动续跑（上限 2 次）</span>
+  <span class="kw">if</span> (<span class="fnc">maybeAutoContinueAfterStepLimit</span>(s, result)) <span class="kw">return</span>
+  <span class="cmt">// ⑤ 真正空闲</span>
+  s.sse.<span class="fnc">send</span>(<span class="str">'session/waiting'</span>, { sessionId: s.id, waiting: [] })
+}
+</code></pre>
+  </div>
+</section>
+
+<!-- ================= 08 子代理派发 ================= -->
+<section class="panel" id="p-dispatch" role="tabpanel" aria-label="子代理派发">
+  <div class="panel-head">
+    <div class="kicker">08 / Dispatch</div>
+    <h2>派发 = 一个会建会话的工具调用</h2>
+    <p class="lede">主代理（lead）不亲自建模：它调用 <span class="kbd">spawn_modeling_subagent</span>，server 立刻创建一个子会话并后台启动回合。子代理有自己的日志、上下文与独立画布，但继承父会话的工作目录与模型。</p>
+    <div class="paths">
+      <span class="path">apps/server/src/index.ts · spawn_modeling_subagent</span>
+      <span class="path">apps/server/src/index.ts · startSubagent()</span>
+      <span class="path">plugins/bb-tools/index.ts · modeling 角色</span>
+    </div>
+  </div>
+
+  <div class="map-box">
+    <div class="map-cap"><span class="legend"><i class="dot g"></i>派发主链</span><span class="legend"><i class="dot y"></i>父会话状态</span></div>
+    <svg viewBox="0 0 1120 540" role="img" aria-label="子代理派发">
+      <g class="node root"><rect x="24" y="222" width="200" height="80"/></g>
+      <text class="t" x="40" y="252">spawn_modeling_subagent</text>
+      <text class="s" x="40" y="276">lead 的普通工具调用</text>
+
+      <path class="e hot" d="M224 262 C256 262 256 51 288 51" marker-end="url(#ah)"/>
+      <path class="e" d="M224 262 C256 262 256 153 288 153" marker-end="url(#a)"/>
+      <path class="e hot" d="M224 262 C256 262 256 255 288 255" marker-end="url(#ah)"/>
+      <path class="e" d="M224 262 C256 262 256 357 288 357" marker-end="url(#a)"/>
+      <path class="e hot" d="M224 262 C256 262 256 459 288 459" marker-end="url(#ah)"/>
+
+      <g class="node"><rect x="288" y="22" width="230" height="58"/></g>
+      <text class="t" x="300" y="45">前置校验</text>
+      <text class="s" x="300" y="66">深度 / 归档 / 并发 / 角色</text>
+
+      <g class="node hot"><rect x="288" y="124" width="230" height="58"/></g>
+      <text class="t" x="300" y="147">createSession</text>
+      <text class="s" x="300" y="166">parentId + 继承 cwd</text>
+
+      <g class="node warn"><rect x="288" y="226" width="230" height="58"/></g>
+      <text class="t" x="300" y="249">登记等待</text>
+      <text class="s" x="300" y="268">parent.waiting.add</text>
+
+      <g class="node"><rect x="288" y="328" width="230" height="58"/></g>
+      <text class="t" x="300" y="351">SSE 广播</text>
+      <text class="s" x="300" y="370">subagent/updated + waiting</text>
+
+      <g class="node hot"><rect x="288" y="430" width="230" height="58"/></g>
+      <text class="t" x="300" y="453">后台回合</text>
+      <text class="s" x="300" y="472">runSessionTurn(child)</text>
+
+      <path class="e" d="M518 51 L586 51" marker-end="url(#a)"/>
+      <path class="e" d="M518 153 L586 153" marker-end="url(#a)"/>
+      <path class="e" d="M518 255 L586 255" marker-end="url(#a)"/>
+      <path class="e" d="M518 357 L586 357" marker-end="url(#a)"/>
+      <path class="e" d="M518 459 L586 459" marker-end="url(#a)"/>
+
+      <g class="node"><rect x="586" y="28" width="500" height="46"/></g>
+      <text class="l" x="600" y="47">子代理不能再派子代理（深度上限 1）；归档会话、</text>
+      <text class="l" x="600" y="64">角色不存在、并发超限都会直接抛错。</text>
+
+      <g class="node hot"><rect x="586" y="130" width="500" height="46"/></g>
+      <text class="l" x="600" y="149">cwd 继承父会话；canvasId 缺省用自己的 id → 独立画布；</text>
+      <text class="l" x="600" y="166">modelId 继承父会话当前模型。</text>
+
+      <g class="node warn"><rect x="586" y="232" width="500" height="46"/></g>
+      <text class="l" x="600" y="251">waiting 是“这次派发还没回来”的唯一事实源，</text>
+      <text class="l" x="600" y="268">也是 /chat 返回 409 session-waiting 的依据。</text>
+
+      <g class="node"><rect x="586" y="334" width="500" height="46"/></g>
+      <text class="l" x="600" y="353">subagent/updated 让面板出现新条目；session/waiting</text>
+      <text class="l" x="600" y="370">让输入框进入等待态，用户不能插话。</text>
+
+      <g class="node hot"><rect x="586" y="436" width="500" height="46"/></g>
+      <text class="l" x="600" y="455">不占用父会话 busy；失败兜底也会写 status 并 settleChild，</text>
+      <text class="l" x="600" y="472">避免父会话永久卡在等待态。</text>
+    </svg>
+  </div>
+
+  <div class="grid">
+    <article class="card">
+      <h3>为什么用工具而不是特判</h3>
+      <p>派发就是一个普通工具调用：模型决定何时派、派几个、任务怎么写。server 只负责校验与建会话，不需要在提示里写死流程。</p>
+    </article>
+    <article class="card">
+      <h3>共享工作区，不共享画布</h3>
+      <p>所有子代理与父会话共享 cwd，所以读同一份工程；但每个子代理用自己的 canvasId，互不覆盖，右侧页签可切换查看。</p>
+    </article>
+    <article class="card gold">
+      <h3>父会话被“锁”住</h3>
+      <p>派发后主代理应立即收尾。waiting 非空时 /chat 直接 409，用户无法插话；这是为了避免两轮同时改同一份工作区。</p>
+    </article>
+    <article class="card">
+      <h3>子代理是无人值守的</h3>
+      <p>modeling 角色排除了 spawn / 终端 / 提问 / 计划等工具，收尾固定写“验收点”，因为它等不到任何人回答弹窗。</p>
+    </article>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">apps/server/src/index.ts · startSubagent()</span></div>
+<pre><code><span class="kw">function</span> <span class="fnc">startSubagent</span>(parent, input) {
+  <span class="kw">if</span> (parent.mode === <span class="str">'subagent'</span>) <span class="kw">throw new</span> <span class="fnc">Error</span>(<span class="str">'子代理不能再派发子代理（深度上限 1）'</span>)
+  <span class="kw">if</span> (<span class="fnc">isArchivedLineage</span>(parent.id)) <span class="kw">throw new</span> <span class="fnc">Error</span>(<span class="str">'会话已归档，不能再派发子代理'</span>)
+  <span class="kw">if</span> (!profileRegistry.<span class="fnc">has</span>(<span class="str">'modeling'</span>)) <span class="kw">throw new</span> <span class="fnc">Error</span>(<span class="str">'建模功能已关闭'</span>)
+  <span class="kw">if</span> (<span class="fnc">liveSubagentCount</span>(parent.id) &gt;= <span class="fnc">maxActiveSubagents</span>()) <span class="kw">throw new</span> <span class="fnc">Error</span>(<span class="str">'并发子代理已达上限'</span>)
+
+  <span class="kw">const</span> id = <span class="fnc">randomUUID</span>().<span class="fnc">slice</span>(<span class="num">0</span>, <span class="num">8</span>)
+  <span class="kw">const</span> child = <span class="fnc">createSession</span>(id, {
+    parentId: parent.id,
+    cwd: parent.cwd,                 <span class="cmt">// 工作目录继承；画布不继承（用自己的 id）</span>
+    agentName: name,
+    description: input.description,
+    modelId: parent.runtime.currentModelId,
+  })
+  child.status = <span class="str">'running'</span>
+
+  <span class="cmt">// 派发即登记：waiting 是“还没回来”的唯一事实源</span>
+  parent.waiting.<span class="fnc">add</span>(child.id)
+  parent.sse.<span class="fnc">send</span>(<span class="str">'subagent/updated'</span>, { childId: child.id, name, status: <span class="str">'running'</span> })
+  parent.sse.<span class="fnc">send</span>(<span class="str">'session/waiting'</span>, { sessionId: parent.id, waiting: <span class="fnc">waitingRows</span>(parent) })
+
+  <span class="kw">void</span> <span class="fnc">runSessionTurn</span>(child, { text: input.prompt, profile: <span class="str">'modeling'</span> })
+    .<span class="fnc">catch</span>(e =&gt; {
+      <span class="cmt">// 兜底：回合在结算前炸掉也要解锁，否则主会话永远卡在等待态</span>
+      <span class="kw">if</span> (parent.waiting.<span class="fnc">has</span>(child.id)) {
+        child.status = <span class="str">'error'</span>
+        child.lastError = e?.message ?? <span class="fnc">String</span>(e)
+        <span class="fnc">settleChild</span>(parent, child)
+      }
+    })
+  <span class="kw">return</span> child
+}
+</code></pre>
+  </div>
+</section>
+
+<!-- ================= 09 子代理结算 ================= -->
+<section class="panel" id="p-settle" role="tabpanel" aria-label="子代理结算">
+  <div class="panel-head">
+    <div class="kicker">09 / Settlement</div>
+    <h2>结果怎么交回发起者</h2>
+    <p class="lede">子代理跑完后，server 把它从父会话的 <span class="kbd">waiting</span> 里移除，写进结算收件箱；当最后一只落地时，自动以一条 <b>user 消息</b>的形式唤醒父会话开一轮汇总。</p>
+    <div class="paths">
+      <span class="path">apps/server/src/index.ts · settleChild()</span>
+      <span class="path">apps/server/src/index.ts · maybeAutoContinue()</span>
+      <span class="path">apps/server/src/index.ts · formatSettlementPrompt()</span>
+      <span class="path">packages/agent-core/runtime.ts · runTurn(opts.source)</span>
+    </div>
+  </div>
+
+  <div class="map-box">
+    <div class="map-cap"><span class="legend"><i class="dot g"></i>结算主链</span><span class="legend"><i class="dot y"></i>分支</span></div>
+    <svg viewBox="0 0 1120 540" role="img" aria-label="子代理结算">
+      <g class="node root"><rect x="24" y="222" width="200" height="80"/></g>
+      <text class="t" x="40" y="252">settleChild()</text>
+      <text class="s" x="40" y="276">把结果交回父会话</text>
+
+      <path class="e hot" d="M224 262 C256 262 256 51 288 51" marker-end="url(#ah)"/>
+      <path class="e" d="M224 262 C256 262 256 153 288 153" marker-end="url(#a)"/>
+      <path class="e hot" d="M224 262 C256 262 256 255 288 255" marker-end="url(#ah)"/>
+      <path class="e" d="M224 262 C256 262 256 357 288 357" marker-end="url(#a)"/>
+      <path class="e hot" d="M224 262 C256 262 256 459 288 459" marker-end="url(#ah)"/>
+
+      <g class="node"><rect x="288" y="22" width="230" height="58"/></g>
+      <text class="t" x="300" y="45">子代理收尾</text>
+      <text class="s" x="300" y="64">status + lastText</text>
+
+      <g class="node hot"><rect x="288" y="124" width="230" height="58"/></g>
+      <text class="t" x="300" y="147">结算三件事</text>
+      <text class="s" x="300" y="166">通知 / 出队 / 收件箱</text>
+
+      <g class="node warn"><rect x="288" y="226" width="230" height="58"/></g>
+      <text class="t" x="300" y="249">收件箱分支</text>
+      <text class="s" x="300" y="268">autoWake ? 汇总 : 通知</text>
+
+      <g class="node"><rect x="288" y="328" width="230" height="58"/></g>
+      <text class="t" x="300" y="351">最后一只</text>
+      <text class="s" x="300" y="370">waiting.size === 0</text>
+
+      <g class="node hot"><rect x="288" y="430" width="230" height="58"/></g>
+      <text class="t" x="300" y="453">汇总回合</text>
+      <text class="s" x="300" y="472">source: subagent-settled</text>
+
+      <path class="e" d="M518 51 L586 51" marker-end="url(#a)"/>
+      <path class="e" d="M518 153 L586 153" marker-end="url(#a)"/>
+      <path class="e" d="M518 255 L586 255" marker-end="url(#a)"/>
+      <path class="e" d="M518 357 L586 357" marker-end="url(#a)"/>
+      <path class="e" d="M518 459 L586 459" marker-end="url(#a)"/>
+
+      <g class="node"><rect x="586" y="28" width="500" height="46"/></g>
+      <text class="l" x="600" y="47">runSessionTurn 末尾：aborted → stopped，异常 → error，</text>
+      <text class="l" x="600" y="64">否则 done；同时记 lastText / durationMs / outputTokens。</text>
+
+      <g class="node hot"><rect x="586" y="130" width="500" height="46"/></g>
+      <text class="l" x="600" y="149">notifySubagentUpdate → waiting.delete → 组 SettledChild</text>
+      <text class="l" x="600" y="166">（status / stopReason / closingText / summary）。</text>
+
+      <g class="node warn"><rect x="586" y="232" width="500" height="46"/></g>
+      <text class="l" x="600" y="251">autoWake 开：进 settlements，等最后一只；关：只落</text>
+      <text class="l" x="600" y="268">subagent/notice 通知行，不唤醒主会话。</text>
+
+      <g class="node"><rect x="586" y="334" width="500" height="46"/></g>
+      <text class="l" x="600" y="353">父会话忙就先留在收件箱，由回合末尾 afterRootTurn</text>
+      <text class="l" x="600" y="370">再触发；归档会话直接丢弃，不再唤醒。</text>
+
+      <g class="node hot"><rect x="586" y="436" width="500" height="46"/></g>
+      <text class="l" x="600" y="455">formatSettlementPrompt → runTurn(maxSteps=12)；</text>
+      <text class="l" x="600" y="472">日志里是带 source 的 user/message，UI 渲染成通知行。</text>
+    </svg>
+  </div>
+
+  <div class="grid">
+    <article class="card">
+      <h3>结算只做三件事</h3>
+      <p>通知面板、从 waiting 出队、把结果放进收件箱。它不直接调用模型，也不拼提示——真正的唤醒交给 <span class="kbd">maybeAutoContinue</span>。</p>
+    </article>
+    <article class="card">
+      <h3>为什么等“最后一只”</h3>
+      <p>批量派发时逐个唤醒会产生多次半成品汇总。等 waiting 清空再开一轮，主代理能一次拿到全部汇报，也避免回合互相打断。</p>
+    </article>
+    <article class="card gold">
+      <h3>模型侧就是普通 user 消息</h3>
+      <p>结算消息在日志里带 <span class="kbd">source.kind='subagent-settled'</span>，但 buildSurface 把它当普通 user 消息投影。区别只在 UI 渲染与溯源，不增加模型侧协议。</p>
+    </article>
+    <article class="card">
+      <h3>汇总回合有独立预算</h3>
+      <p><span class="kbd">SETTLEMENT_MAX_STEPS = 12</span>：只做汇报与验收，不能把执行回合的 40 步额度烧在核对上。提示里也明确要求不要批量修补、导出或重跑。</p>
+    </article>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">apps/server/src/index.ts · settleChild()</span></div>
+<pre><code><span class="kw">function</span> <span class="fnc">settleChild</span>(parent, child) {
+  <span class="fnc">notifySubagentUpdate</span>(child)
+  <span class="kw">const</span> owed = parent.waiting.<span class="fnc">delete</span>(child.id)      <span class="cmt">// 是否属于本批派发</span>
+  <span class="kw">const</span> status = child.status
+  <span class="kw">const</span> closingText = child.lastText || <span class="str">''</span>
+  <span class="kw">const</span> settled = {
+    childId: child.id,
+    name: child.agentName ?? child.id,
+    description: child.description,
+    status,
+    stopReason: <span class="fnc">stopReasonOf</span>(status),
+    closingText,
+    summary: <span class="fnc">summarize</span>(closingText || child.lastError || <span class="str">''</span>, <span class="num">160</span>),
+  }
+
+  <span class="cmt">// 关闭自动唤醒：批量派发也只落通知行，主会话不会自己开新一轮</span>
+  <span class="kw">const</span> autoWake = settingsStore.<span class="fnc">getPrefs</span>().autoWake
+  <span class="kw">if</span> (!owed || !autoWake) {
+    <span class="kw">const</span> notice = { kind: <span class="str">'subagent-settled'</span>, form: <span class="str">'notice'</span>, ...settled }
+    parent.log.<span class="fnc">append</span>(<span class="str">'subagent/notice'</span>, notice)
+    parent.sse.<span class="fnc">send</span>(<span class="str">'subagent/notice'</span>, { sessionId: parent.id, ...notice })
+    <span class="kw">if</span> (owed) parent.sse.<span class="fnc">send</span>(<span class="str">'session/waiting'</span>, { sessionId: parent.id, waiting: <span class="fnc">waitingRows</span>(parent) })
+    <span class="kw">return</span>
+  }
+
+  parent.settlements.<span class="fnc">push</span>(settled)                       <span class="cmt">// 结算收件箱</span>
+  parent.sse.<span class="fnc">send</span>(<span class="str">'session/waiting'</span>, { sessionId: parent.id, waiting: <span class="fnc">waitingRows</span>(parent) })
+  <span class="kw">if</span> (parent.waiting.size === <span class="num">0</span>) <span class="kw">void</span> <span class="fnc">maybeAutoContinue</span>(parent)
+}
+</code></pre>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">apps/server/src/index.ts · maybeAutoContinue()</span></div>
+<pre><code><span class="kw">const</span> SETTLEMENT_MAX_STEPS = <span class="num">12</span>   <span class="cmt">// 汇总回合独立预算</span>
+
+<span class="kw">async function</span> <span class="fnc">maybeAutoContinue</span>(parent) {
+  <span class="kw">if</span> (parent.busy || parent.autoTurn) <span class="kw">return</span>
+  <span class="kw">if</span> (parent.waiting.size &gt; <span class="num">0</span> || !parent.settlements.length) <span class="kw">return</span>
+  <span class="kw">if</span> (<span class="fnc">isArchivedLineage</span>(parent.id)) { parent.settlements = []; <span class="kw">return</span> }
+
+  <span class="kw">const</span> batch = parent.settlements.<span class="fnc">splice</span>(<span class="num">0</span>)
+  parent.autoTurn = <span class="kw">true</span>
+  <span class="kw">try</span> {
+    <span class="kw">await</span> <span class="fnc">runSessionTurn</span>(parent, {
+      text: <span class="fnc">formatSettlementPrompt</span>(batch, parent.profile),
+      profile: parent.profile,                 <span class="cmt">// 必须与会话当前角色一致</span>
+      maxSteps: SETTLEMENT_MAX_STEPS,
+      source: {                                <span class="cmt">// 钉在 user/message 上的归属</span>
+        kind: <span class="str">'subagent-settled'</span>, form: <span class="str">'notice'</span>,
+        settled: batch.<span class="fnc">map</span>(b =&gt; ({ childId: b.childId, name: b.name, status: b.status, summary: b.summary })),
+      },
+    })
+  } <span class="kw">finally</span> {
+    parent.autoTurn = <span class="kw">false</span>
+    <span class="cmt">// 汇总期间又到一批：复查一次，避免被静默吞掉</span>
+    <span class="kw">if</span> (!parent.busy &amp;&amp; parent.waiting.size === <span class="num">0</span> &amp;&amp; parent.settlements.length &gt; <span class="num">0</span>)
+      <span class="kw">void</span> <span class="fnc">maybeAutoContinue</span>(parent)
+  }
+}
+</code></pre>
+  </div>
+
+  <div class="code">
+    <div class="code-head"><span class="lang">ts</span><span class="fn">packages/agent-core/runtime.ts · 结算消息如何进入会话</span></div>
+<pre><code><span class="cmt">// 归属随事件落盘：UI 才能区分“运行时投递的结算”和“用户手打的消息”</span>
+<span class="kw">const</span> messageSource = opts.source ? { source: opts.source } : {}
+deps.log.<span class="fnc">append</span>(<span class="str">'user/message'</span>, {
+  turnId, text: userFinalText, attachments: opts.attachments, imagesOmitted, ...messageSource,
+})
+rt.<span class="fnc">emit</span>(<span class="str">'user/message'</span>, {
+  turnId, text: userFinalText, attachments: opts.attachments ?? [], imagesOmitted, profile: profileId, ...messageSource,
+})
+
+<span class="cmt">// buildSurface 不读 source：结算消息在模型侧就是一条普通 user 消息</span>
+<span class="kw">case</span> <span class="str">'user/message'</span>:
+  surface.<span class="fnc">push</span>({ seq: ev.seq, kind: <span class="str">'user'</span>, content: ev.text })
+</code></pre>
+  </div>
+</section>
+
+</main>
+
+<div class="wrap">
+  <footer>
+    <span>openmods · Agent 架构可视化 · 只读文档，不参与运行时</span>
+    <span>参考源码：apps/server/src · packages/agent-core · plugins</span>
+  </footer>
+  <div class="hint">提示：键盘 ← → 切换板块；点击代码块标题栏展开 / 收起，右侧按钮复制代码。</div>
+</div>
+
+<script>
+(function () {
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  var panels = Array.prototype.slice.call(document.querySelectorAll('.panel'));
+
+  function show(id, focusTab) {
+    panels.forEach(function (p) { p.classList.toggle('active', p.id === id); });
+    tabs.forEach(function (t) {
+      var on = t.getAttribute('data-target') === id;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      if (on && focusTab) t.focus();
+    });
+  }
+
+  tabs.forEach(function (tab, i) {
+    tab.addEventListener('click', function () {
+      show(tab.getAttribute('data-target'), false);
+      window.scrollTo(0, 0);
+    });
+    tab.addEventListener('keydown', function (e) {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      e.preventDefault();
+      var next = (i + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+      show(tabs[next].getAttribute('data-target'), true);
+      window.scrollTo(0, 0);
+    });
+  });
+
+  // 导图节点：补上圆角属性（兼容不支持 CSS rx 的浏览器），点击可钉住高亮
+  Array.prototype.slice.call(document.querySelectorAll('.map-box svg .node')).forEach(function (node) {
+    var rect = node.querySelector('rect');
+    if (rect) { rect.setAttribute('rx', '10'); rect.setAttribute('ry', '10'); }
+    node.addEventListener('click', function () {
+      var svg = node.ownerSVGElement;
+      Array.prototype.slice.call(svg.querySelectorAll('.node.pinned')).forEach(function (other) {
+        if (other !== node) other.classList.remove('pinned');
+      });
+      node.classList.toggle('pinned');
+    });
+  });
+
+  // 代码块可折叠：默认收起，点标题栏或按 Enter / 空格展开
+  Array.prototype.slice.call(document.querySelectorAll('.code')).forEach(function (box) {
+    var head = box.querySelector('.code-head');
+    if (!head) return;
+    var chev = document.createElement('span');
+    chev.className = 'chev';
+    chev.setAttribute('aria-hidden', 'true');
+    head.insertBefore(chev, head.firstChild);
+    box.classList.add('collapsed');           // 默认收起
+    head.setAttribute('role', 'button');
+    head.setAttribute('tabindex', '0');
+    head.setAttribute('aria-expanded', 'false');
+    var toggle = function () {
+      var collapsed = box.classList.toggle('collapsed');
+      box.classList.toggle('open', !collapsed);
+      head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    };
+    head.addEventListener('click', function (e) {
+      if (e.target.closest('.copy')) return;   // 复制按钮不触发折叠
+      toggle();
+    });
+    head.addEventListener('keydown', function (e) {
+      if (e.target.closest('.copy')) return;
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      toggle();
+    });
+  });
+
+  // 代码块一键复制：按钮注入到标题栏右侧
+  Array.prototype.slice.call(document.querySelectorAll('.code')).forEach(function (box) {
+    var head = box.querySelector('.code-head');
+    var pre = box.querySelector('pre');
+    if (!head || !pre) return;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'copy';
+    btn.textContent = '复制';
+    btn.setAttribute('aria-label', '复制代码');
+    btn.addEventListener('click', function () {
+      var text = pre.innerText;
+      var done = function () {
+        btn.textContent = '已复制';
+        btn.classList.add('ok');
+        window.setTimeout(function () {
+          btn.textContent = '复制';
+          btn.classList.remove('ok');
+        }, 1400);
+      };
+      var fallback = function () {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-1000px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch (e) { /* 复制失败不阻断阅读 */ }
+        document.body.removeChild(ta);
+        done();
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, fallback);
+      } else {
+        fallback();
+      }
+    });
+    head.appendChild(btn);
+  });
+
+  show('p-overview', false);
+})();
+</script>
+</body>
+</html>
