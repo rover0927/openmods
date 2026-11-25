@@ -107,6 +107,20 @@ export interface PrefsConfig {
   testMdkDir: string
   /** 功能开关：canvas / mc / library（改动需重启，服务启动时按它决定加载哪些插件） */
   features: Record<string, boolean>
+  /** 上下文压缩：按阈值自动压缩（关闭后不再主动压缩，超限时保留一次兜底） */
+  compactionEnabled: boolean
+  /** 压缩方式：summary = 调模型生成检查点摘要；drop = 直接丢弃超出部分，不调模型 */
+  compactionStrategy: 'summary' | 'drop'
+  /** 摘要所用模型 id；空 = 跟随当前会话模型 */
+  compactionModelId: string
+  /** 触发阈值：上下文占模型窗口的比例（0.05–0.95） */
+  compactionThresholdRatio: number
+  /** 压缩后保留的尾部比例（0.01–0.9） */
+  compactionRetainRatio: number
+  /** 工具结果投影裁剪阈值（字符）；0 = 不裁剪 */
+  compactionResultChars: number
+  /** 历史工具调用参数投影裁剪阈值（字符）；0 = 不裁剪 */
+  compactionArgChars: number
 }
 
 export const DEFAULT_PREFS: PrefsConfig = {
@@ -123,6 +137,13 @@ export const DEFAULT_PREFS: PrefsConfig = {
   testClientMode: 'auto',
   testMdkDir: '',
   features: {},
+  compactionEnabled: true,
+  compactionStrategy: 'summary',
+  compactionModelId: '',
+  compactionThresholdRatio: 0.8,
+  compactionRetainRatio: 0.16,
+  compactionResultChars: 8192,
+  compactionArgChars: 16384,
 }
 
 /**
@@ -174,6 +195,15 @@ export function normalizePrefs(raw: any): PrefsConfig {
     const n = Number(v)
     return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : fallback
   }
+  // 比例是小数（0.8 = 80%），不能走上面的整数夹取
+  const frac = (v: any, lo: number, hi: number, fallback: number) => {
+    const n = Number(v)
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback
+  }
+  const cap = (v: any, hi: number, fallback: number) => {
+    if (Number(v) === 0) return 0                    // 0 = 关闭裁剪
+    return num(v, 1024, hi, fallback)
+  }
   return {
     fontSize: num(p.fontSize, 12, 18, DEFAULT_PREFS.fontSize),
     theme: (MC_THEMES as readonly string[]).includes(p.theme) ? p.theme as McTheme : DEFAULT_PREFS.theme,
@@ -187,6 +217,13 @@ export function normalizePrefs(raw: any): PrefsConfig {
     testClientDir: typeof p.testClientDir === 'string' ? p.testClientDir.trim().slice(0, 500) : DEFAULT_PREFS.testClientDir,
     testClientMode: p.testClientMode === 'mdk' || p.testClientMode === 'production' ? p.testClientMode : DEFAULT_PREFS.testClientMode,
     testMdkDir: typeof p.testMdkDir === 'string' ? p.testMdkDir.trim().slice(0, 500) : DEFAULT_PREFS.testMdkDir,
+    compactionEnabled: typeof p.compactionEnabled === 'boolean' ? p.compactionEnabled : DEFAULT_PREFS.compactionEnabled,
+    compactionStrategy: p.compactionStrategy === 'drop' ? 'drop' : DEFAULT_PREFS.compactionStrategy,
+    compactionModelId: typeof p.compactionModelId === 'string' ? p.compactionModelId.trim().slice(0, 160) : DEFAULT_PREFS.compactionModelId,
+    compactionThresholdRatio: frac(p.compactionThresholdRatio, 0.05, 0.95, DEFAULT_PREFS.compactionThresholdRatio),
+    compactionRetainRatio: frac(p.compactionRetainRatio, 0.01, 0.9, DEFAULT_PREFS.compactionRetainRatio),
+    compactionResultChars: cap(p.compactionResultChars, 200000, DEFAULT_PREFS.compactionResultChars),
+    compactionArgChars: cap(p.compactionArgChars, 1048576, DEFAULT_PREFS.compactionArgChars),
     features: (() => {
       const raw = p.features && typeof p.features === 'object' ? p.features : {}
       const out: Record<string, boolean> = {}

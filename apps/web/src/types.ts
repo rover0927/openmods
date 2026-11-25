@@ -427,6 +427,20 @@ export interface PrefsDto {
   testMdkDir: string
   /** 功能开关（canvas / mc / library …）；改动需重启生效 */
   features: Record<string, boolean>
+  /** 上下文压缩：按阈值自动压缩（关闭后只保留超限兜底） */
+  compactionEnabled: boolean
+  /** 压缩方式：summary = 模型摘要；drop = 直接丢弃超出部分 */
+  compactionStrategy: 'summary' | 'drop'
+  /** 摘要模型 id；空 = 跟随当前会话模型 */
+  compactionModelId: string
+  /** 触发阈值：上下文占模型窗口的比例 */
+  compactionThresholdRatio: number
+  /** 压缩后保留的尾部比例 */
+  compactionRetainRatio: number
+  /** 工具结果投影裁剪阈值（字符）；0 = 关闭 */
+  compactionResultChars: number
+  /** 历史工具参数投影裁剪阈值（字符）；0 = 关闭 */
+  compactionArgChars: number
 }
 
 export interface SettingsDto {

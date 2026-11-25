@@ -902,6 +902,25 @@ select.think-chip option { background: var(--bg-layer-2); color: var(--label-pri
 }
 .mod-output-input:focus { border-color: var(--accent); }
 .mod-output-input::placeholder { color: var(--label-caption); }
+
+/* 设置 → 上下文：数字输入（阈值 / 裁剪上限） */
+.setting-num-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.setting-num {
+  width: 96px; height: 32px; padding: 0 10px;
+  background: var(--bg-layer-2); color: var(--label-primary);
+  border: 1px solid var(--border-l1); border-radius: var(--radius-sm);
+  font-size: 13px; outline: none; text-align: right;
+}
+.setting-num:focus { border-color: var(--accent); }
+.setting-num-suffix { font-size: 12px; color: var(--label-tertiary); min-width: 28px; }
+.setting-select {
+  width: 300px; max-width: 100%; height: 32px; padding: 0 8px;
+  background: var(--bg-layer-2); color: var(--label-primary);
+  border: 1px solid var(--border-l1); border-radius: var(--radius-sm);
+  font-size: 13px; outline: none;
+}
+.setting-select:focus { border-color: var(--accent); }
+.setting-select:disabled { opacity: .5; cursor: not-allowed; }
 .dock-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .dock-pane { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 

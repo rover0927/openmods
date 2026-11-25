@@ -6,7 +6,7 @@
 import type {
   Plugin, SessionRuntimeLike, SurfaceItemLike,
 } from '@openmods/plugin-kit'
-import { estimateMessage, type ChatMessage } from '@openmods/agent-core'
+import { buildLlmMessages, estimateMessage, type ChatMessage } from '@openmods/agent-core'
 
 interface Config {
   thresholdRatio: number
@@ -16,6 +16,10 @@ interface Config {
   prunerThresholdChars: number
   prunerHeadChars: number
   prunerTailChars: number
+  /** 历史 assistant 工具调用参数超过该字符数时投影为占位 JSON（原始参数保留在会话日志） */
+  toolArgThresholdChars: number
+  /** 占位 JSON 中保留的参数开头字符数，供模型辨认是哪次调用 */
+  toolArgPreviewChars: number
   /** 触发压缩的最小影子 token 数（太小不值得一次摘要调用） */
   minShadowedTokens: number
   /** 一轮内最多连续压缩几次（dsh compactionRetries：压一次可能仍超阈值） */
@@ -66,10 +70,6 @@ function itemToMessage(item: SurfaceItemLike): ChatMessage {
   return { role: 'user', content: item.content ?? '' }
 }
 
-function estimateItem(item: SurfaceItemLike): number {
-  return estimateMessage(itemToMessage(item))
-}
-
 const plugin: Plugin = {
   name: 'compaction',
   config: {
@@ -80,6 +80,8 @@ const plugin: Plugin = {
     prunerThresholdChars: 8192,
     prunerHeadChars: 4096,
     prunerTailChars: 1024,
+    toolArgThresholdChars: 16384,
+    toolArgPreviewChars: 1200,
     minShadowedTokens: 1200,
     compactionRetries: 2,
   },
@@ -94,9 +96,11 @@ const plugin: Plugin = {
       headroomTokens: num(ctx.env.COMPACTION_HEADROOM_TOKENS, config.headroomTokens),
       retainRatio: Math.min(1, num(ctx.env.COMPACTION_RETAIN_RATIO, config.retainRatio)),
       reservedCompletionTokens: config.reservedCompletionTokens,
-      prunerThresholdChars: config.prunerThresholdChars,
+      prunerThresholdChars: num(ctx.env.COMPACTION_RESULT_CHARS, config.prunerThresholdChars),
       prunerHeadChars: config.prunerHeadChars,
       prunerTailChars: config.prunerTailChars,
+      toolArgThresholdChars: num(ctx.env.COMPACTION_ARG_THRESHOLD_CHARS, config.toolArgThresholdChars),
+      toolArgPreviewChars: config.toolArgPreviewChars,
       minShadowedTokens: num(ctx.env.COMPACTION_MIN_SHADOWED, config.minShadowedTokens),
       compactionRetries: Math.max(0, Math.floor(num(ctx.env.COMPACTION_RETRIES, config.compactionRetries))),
       modelPolicies: config.modelPolicies,
@@ -111,16 +115,65 @@ const plugin: Plugin = {
       }
     }
 
+    /**
+     * 设置页「上下文」页签的策略：每次投影/压缩前现读，保存后下一步请求生效。
+     * 环境变量仍然优先（离线演示用 COMPACTION_THRESHOLD_RATIO 等强制触发）。
+     */
+    const prefs = () => ctx.prefs.get() as Record<string, any>
+    const resultLimit = () => {
+      if (ctx.env.COMPACTION_RESULT_CHARS !== undefined) return cfg.prunerThresholdChars
+      const v = Number(prefs().compactionResultChars)
+      return Number.isFinite(v) ? v : cfg.prunerThresholdChars
+    }
+    const argLimit = () => {
+      if (ctx.env.COMPACTION_ARG_THRESHOLD_CHARS !== undefined) return cfg.toolArgThresholdChars
+      const v = Number(prefs().compactionArgChars)
+      return Number.isFinite(v) ? v : cfg.toolArgThresholdChars
+    }
+
     // —— 免费前置裁剪（tool-result-pruner）：发往模型前生效，原文保留在日志 ——
-    ctx.hooks.registerSurfaceTransform(items => items.map(item => {
-      if (item.kind !== 'tool' || typeof item.content !== 'string') return item
-      if (item.content.length <= cfg.prunerThresholdChars) return item
-      const middle = item.content.length - cfg.prunerHeadChars - cfg.prunerTailChars
+    const pruneToolResult = (item: SurfaceItemLike): SurfaceItemLike => {
+      const limit = resultLimit()
+      if (!limit || item.kind !== 'tool' || typeof item.content !== 'string') return item
+      if (item.content.length <= limit) return item
+      const head = Math.min(cfg.prunerHeadChars, Math.floor(limit * 0.6))
+      const tail = Math.min(cfg.prunerTailChars, Math.max(0, limit - head - 32))
+      const middle = item.content.length - head - tail
+      const tailText = tail > 0 ? item.content.slice(-tail) : ''
       return {
         ...item,
-        content: `${item.content.slice(0, cfg.prunerHeadChars)}\n[...中间 ${middle} 字符已被裁剪以节省上下文；原文保留在会话日志中...]\n${item.content.slice(-cfg.prunerTailChars)}`,
+        content: `${item.content.slice(0, head)}\n[...中间 ${middle} 字符已被裁剪以节省上下文；原文保留在会话日志中...]\n${tailText}`,
       }
-    }))
+    }
+
+    // —— 超长工具参数：模型偶尔会生成巨大的 args（例如一次写入整个工程文件）。
+    // 这些参数存在于历史里，每次请求都会重发；投影成合法 JSON 占位符，避免上下文被一次调用撑爆。
+    const pruneToolArgs = (item: SurfaceItemLike): SurfaceItemLike => {
+      const limit = argLimit()
+      if (!limit || item.kind !== 'assistant' || !item.toolCalls?.length) return item
+      let changed = false
+      const toolCalls = item.toolCalls.map(call => {
+        if (typeof call.args !== 'string' || call.args.length <= limit) return call
+        changed = true
+        return {
+          ...call,
+          args: JSON.stringify({
+            _truncated: true,
+            _originalChars: call.args.length,
+            _note: '历史工具参数过长，已从上下文裁剪；完整参数保留在会话日志中。',
+            preview: call.args.slice(0, Math.min(cfg.toolArgPreviewChars, limit)),
+          }),
+        }
+      })
+      return changed ? { ...item, toolCalls } : item
+    }
+
+    const projectItem = (item: SurfaceItemLike): SurfaceItemLike => pruneToolArgs(pruneToolResult(item))
+    ctx.hooks.registerSurfaceTransform(items => items.map(projectItem))
+
+    /** retain / shadowed 都按“实际会发出去的投影”估算，否则巨型参数会把保留预算一次吃光 */
+    const estimateProjectedItem = (item: SurfaceItemLike): number =>
+      estimateMessage(itemToMessage(projectItem(item)))
 
     // —— 按块划分（保证 assistant 工具调用与其结果永不拆散，dsh tool-pairing 语义） ——
     function toBlocks(live: SurfaceItemLike[]): { start: number; end: number }[] {
@@ -147,13 +200,21 @@ const plugin: Plugin = {
       const contextTokens = session.estimateContextTokens()
       const window = session.getModelContextWindow()
       const policy = policyFor(session.currentModelId)
+      // 用户策略优先于 modelPolicies；环境变量优先于一切（演示/排障用）
+      const pref = prefs()
+      const thresholdRatio = ctx.env.COMPACTION_THRESHOLD_RATIO !== undefined
+        ? cfg.thresholdRatio
+        : Math.min(0.95, Math.max(0.05, Number(pref.compactionThresholdRatio) || policy.thresholdRatio))
+      const retainRatio = ctx.env.COMPACTION_RETAIN_RATIO !== undefined
+        ? cfg.retainRatio
+        : Math.min(0.9, Math.max(0.01, Number(pref.compactionRetainRatio) || policy.retainRatio))
       const budget = Math.max(1024, window - cfg.reservedCompletionTokens)
       const threshold = Math.min(
-        Math.floor(window * policy.thresholdRatio),
+        Math.floor(window * thresholdRatio),
         Math.max(0, budget - cfg.headroomTokens),
       )
-      const retainTokens = Math.floor(budget * policy.retainRatio)
-      console.log(`[compaction:debug] reason=${reason} model=${session.currentModelId} window=${window} ctx=${contextTokens} threshold=${threshold} retain=${retainTokens} live=${live.length} ratio=${policy.thresholdRatio} retainRatio=${policy.retainRatio}`)
+      const retainTokens = Math.floor(budget * retainRatio)
+      console.log(`[compaction:debug] reason=${reason} model=${session.currentModelId} window=${window} ctx=${contextTokens} threshold=${threshold} retain=${retainTokens} live=${live.length} ratio=${thresholdRatio} retainRatio=${retainRatio}`)
 
       if (reason === 'pressure' && contextTokens < threshold) return false
       if (live.length < 3) return false
@@ -164,7 +225,7 @@ const plugin: Plugin = {
       let cutBlock = blocks.length
       while (cutBlock > 0 && retainSum < retainTokens) {
         const b = blocks[cutBlock - 1]
-        for (let i = b.start; i < b.end; i++) retainSum += estimateItem(live[i])
+        for (let i = b.start; i < b.end; i++) retainSum += estimateProjectedItem(live[i])
         cutBlock--
       }
       if (reason === 'overflow') {
@@ -174,28 +235,47 @@ const plugin: Plugin = {
 
       const rangeStart = blocks[cutBlock]?.start ?? live.length
       const range = live.slice(0, rangeStart)
-      const shadowedTokens = range.reduce((s, i) => s + estimateItem(i), 0)
+      const shadowedTokens = range.reduce((s, i) => s + estimateProjectedItem(i), 0)
       if (range.length === 0 || shadowedTokens < cfg.minShadowedTokens) return false
 
       const compactionId = `c${Date.now().toString(36)}`
       const started = Date.now()
       session.appendEvent('compaction/start', { compactionId, reason, contextTokens, threshold })
 
-      // 摘要调用：重放 system + 影子消息 + 检查点指令（缓存友好的前缀复用）
-      let summaryText: string
+      // 压缩方式：summary 调模型生成检查点；drop 直接把超出的旧块影子化，不调用任何模型。
+      const strategy = prefs().compactionStrategy === 'drop' ? 'drop' : 'summary'
+      const configuredModel = String(prefs().compactionModelId ?? '').trim()
+      const summaryModelId = configuredModel || session.currentModelId
+      let usedModelId = summaryModelId
+      let summaryText = ''
       let summaryTokens = 0
-      try {
-        const messages = [
-          { role: 'system', content: session.getSystemPrompt() },
-          ...range.map(itemToMessage),
-          { role: 'user', content: COMPACTION_INSTRUCTION },
-        ]
-        const res = await ctx.llm.complete({ messages, modelId: session.currentModelId })
-        summaryText = res.text || '（摘要为空）'
-        summaryTokens = res.usage.outputTokens
-      } catch (err: any) {
-        session.appendEvent('compaction/end', { compactionId, wallMs: Date.now() - started, error: err.message })
-        throw new Error(`COMPACTION_SUMMARY_FAILED: ${err.message}`)
+      if (strategy === 'drop') {
+        summaryText = '（已按“直接丢弃”策略省略最早的一批对话；完整内容保留在会话日志中。）'
+        summaryTokens = estimateMessage({ role: 'user', content: summaryText })
+      } else {
+        // 摘要调用：与主请求走同一条投影（含工具结果/参数裁剪），
+        // 否则会把已经被裁掉的长内容再完整读一遍。
+        try {
+          const messages = [
+            ...buildLlmMessages(session.getSystemPrompt(), range as any),
+            { role: 'user', content: COMPACTION_INSTRUCTION },
+          ]
+          let res
+          try {
+            res = await ctx.llm.complete({ messages, modelId: summaryModelId })
+          } catch (err: any) {
+            if (summaryModelId === session.currentModelId) throw err
+            // 配置的摘要模型失效（被删除/改名）时回退当前模型，别让压缩卡死
+            console.warn(`[compaction] 摘要模型 ${summaryModelId} 不可用（${err?.message ?? err}），回退当前模型`)
+            res = await ctx.llm.complete({ messages, modelId: session.currentModelId })
+            usedModelId = session.currentModelId
+          }
+          summaryText = res.text || '（摘要为空）'
+          summaryTokens = res.usage.outputTokens
+        } catch (err: any) {
+          session.appendEvent('compaction/end', { compactionId, wallMs: Date.now() - started, error: err.message })
+          throw new Error(`COMPACTION_SUMMARY_FAILED: ${err.message}`)
+        }
       }
 
       const fromSeq = range[0].seq
@@ -203,6 +283,7 @@ const plugin: Plugin = {
       session.appendEvent('compaction/summary', {
         compactionId, fromSeq, toSeq, summaryText,
         shadowedTokens, summaryTokens, reason,
+        strategy, summaryModelId: strategy === 'summary' ? usedModelId : undefined,
       })
       session.appendEvent('compaction/end', { compactionId, wallMs: Date.now() - started })
       session.emit('compaction/done', {
@@ -213,6 +294,8 @@ const plugin: Plugin = {
     }
 
     ctx.hooks.beforeStep(async ({ session }) => {
+      // 设置页可关闭主动压缩；请求真的超限时仍走 onOverflow 兜底，避免直接报错
+      if (prefs().compactionEnabled === false) return
       // 一次压缩可能仍高于阈值（超大工具结果/稀疏可切分点），按 compactionRetries 连续压
       for (let attempt = 0; attempt <= cfg.compactionRetries; attempt++) {
         const compacted = await compactIfNeeded(session, 'pressure')

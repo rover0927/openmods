@@ -12,6 +12,7 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: McIconName }[] = [
   { id: 'models', label: '模型', icon: 'model' },
   { id: 'agents', label: '代理与技能', icon: 'agents' },
   { id: 'subagent', label: '子代理', icon: 'subagents' },
+  { id: 'context', label: '上下文', icon: 'stats' },
   { id: 'automation', label: '自动化', icon: 'automation' },
   { id: 'update', label: '更新', icon: 'update' },
   { id: 'about', label: '关于', icon: 'about' },

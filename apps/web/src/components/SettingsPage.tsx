@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api.js'
-import type { FeaturesDto, PrefsDto, WakeEntry, UpdateStatusDto } from '../types.js'
+import type { FeaturesDto, ModelInfoDto, PrefsDto, WakeEntry, UpdateStatusDto } from '../types.js'
 import { AgentsSkillsPane } from './AgentSkillsPane.js'
 import { AboutContent } from './AboutDialog.js'
 import { EnvSetupPanel } from './EnvSetupDialog.js'
 
-export type SettingsSectionId = 'general' | 'features' | 'environment' | 'models' | 'agents' | 'subagent' | 'automation' | 'about' | 'update'
+export type SettingsSectionId = 'general' | 'features' | 'environment' | 'models' | 'agents' | 'subagent' | 'context' | 'automation' | 'about' | 'update'
 
 interface DraftModel {
   id: string
@@ -47,6 +47,13 @@ const DEFAULT_PREFS: PrefsDto = {
   testClientMode: 'auto',
   testMdkDir: '',
   features: {},
+  compactionEnabled: true,
+  compactionStrategy: 'summary',
+  compactionModelId: '',
+  compactionThresholdRatio: 0.8,
+  compactionRetainRatio: 0.16,
+  compactionResultChars: 8192,
+  compactionArgChars: 16384,
 }
 
 /** 可选 MC 主题：swatch 用对应方块贴图平铺，底部压一条强调色 */
@@ -122,6 +129,41 @@ function Stepper(props: { value: number; min: number; max: number; onChange: (v:
   )
 }
 
+/** 数字输入：失焦或回车提交；percent 时按百分比显示（0.8 → 80%） */
+function NumField(props: {
+  value: number
+  min: number
+  max: number
+  percent?: boolean
+  suffix?: string
+  onChange: (v: number) => void
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const shown = draft ?? (props.percent ? String(Math.round(props.value * 100)) : String(props.value))
+  const commit = () => {
+    if (draft === null) return
+    const raw = Number(draft)
+    setDraft(null)
+    if (!Number.isFinite(raw)) return
+    const next = props.percent ? raw / 100 : raw
+    const clamped = Math.min(props.max, Math.max(props.min, next))
+    if (clamped !== props.value) props.onChange(clamped)
+  }
+  return (
+    <span className="setting-num-wrap">
+      <input
+        className="setting-num"
+        inputMode="decimal"
+        value={shown}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+      />
+      <span className="setting-num-suffix">{props.suffix ?? (props.percent ? '%' : '')}</span>
+    </span>
+  )
+}
+
 function fmtClock(ts: number): string {
   const d = new Date(ts)
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -185,6 +227,17 @@ export function SettingsPage(props: {
   useEffect(() => {
     if (props.section === 'features') void loadFeatures()
   }, [props.section]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** 上下文页：摘要模型候选（空 = 跟随当前会话模型） */
+  const [models, setModels] = useState<ModelInfoDto[]>([])
+  useEffect(() => {
+    if (props.section !== 'context') return
+    let alive = true
+    api.models()
+      .then(r => { if (alive) setModels(r.models) })
+      .catch(() => { /* 读不到模型目录时保留「当前模型」一项 */ })
+    return () => { alive = false }
+  }, [props.section])
 
   const setFeature = async (id: string, on: boolean) => {
     setFeatBusy(id)
@@ -697,6 +750,105 @@ export function SettingsPage(props: {
             hint="运行中的子代理以加载动画列在当前对话底部；关闭后只在右侧「子代理」标签页查看"
           >
             <Switch on={prefs.inlineSubagents} onChange={v => void patchPrefs({ inlineSubagents: v })} />
+          </Row>
+        </div>
+      </div>
+    )
+  }
+
+  // ---- 上下文压缩 ----
+  if (props.section === 'context') {
+    return (
+      <div className="settings-section">
+        <div className="settings-section-head">
+          <h2>上下文压缩</h2>
+          <p>对话接近模型窗口时，可以生成检查点摘要，或直接把超出的旧内容丢弃；这里的策略在下一步请求前生效。</p>
+        </div>
+
+        <div className="setting-group">
+          <div className="setting-group-title">策略</div>
+          <Row label="按阈值自动处理" hint="关闭后不再主动处理；请求真的超限时仍会做一次兜底">
+            <Switch
+              on={prefs.compactionEnabled !== false}
+              onChange={v => void patchPrefs({ compactionEnabled: v })}
+            />
+          </Row>
+          <Row label="处理方式" hint="「摘要」会调用模型生成检查点；「直接丢弃」不调模型，只保留最近的上下文">
+            <Seg
+              value={(prefs.compactionStrategy ?? 'summary') as 'summary' | 'drop'}
+              options={[
+                { value: 'summary', label: '摘要' },
+                { value: 'drop', label: '直接丢弃' },
+              ]}
+              onChange={v => void patchPrefs({ compactionStrategy: v })}
+            />
+          </Row>
+          <Row
+            label="摘要模型"
+            hint={prefs.compactionStrategy === 'drop'
+              ? '当前为「直接丢弃」方式，不调用模型'
+              : '留空 = 跟随当前会话模型；压缩时用这个模型生成检查点'}
+          >
+            <select
+              className="setting-select"
+              value={prefs.compactionModelId ?? ''}
+              disabled={prefs.compactionStrategy === 'drop'}
+              onChange={e => void patchPrefs({ compactionModelId: e.target.value })}
+            >
+              <option value="">当前模型（默认）</option>
+              {prefs.compactionModelId && !models.some(m => m.id === prefs.compactionModelId) && (
+                <option value={prefs.compactionModelId}>{prefs.compactionModelId}（已不可用）</option>
+              )}
+              {models.map(m => (
+                <option key={m.id} value={m.id} disabled={m.disabled}>
+                  {m.displayName || m.id}{m.providerName ? ` · ${m.providerName}` : ''}
+                </option>
+              ))}
+            </select>
+          </Row>
+        </div>
+
+        <div className="setting-group">
+          <div className="setting-group-title">触发与保留</div>
+          <Row label="触发阈值" hint="上下文占用达到模型窗口的该比例时开始处理">
+            <NumField
+              value={prefs.compactionThresholdRatio ?? 0.8}
+              min={0.05}
+              max={0.95}
+              percent
+              onChange={v => void patchPrefs({ compactionThresholdRatio: v })}
+            />
+          </Row>
+          <Row label="保留尾部比例" hint="按块保留最近多少上下文；调大保留更多细节，但压缩收益会变小">
+            <NumField
+              value={prefs.compactionRetainRatio ?? 0.16}
+              min={0.01}
+              max={0.9}
+              percent
+              onChange={v => void patchPrefs({ compactionRetainRatio: v })}
+            />
+          </Row>
+        </div>
+
+        <div className="setting-group">
+          <div className="setting-group-title">投影裁剪（不改日志）</div>
+          <Row label="工具结果上限" hint="单条工具输出超过该字符数时只保留头尾；0 = 关闭裁剪">
+            <NumField
+              value={prefs.compactionResultChars ?? 8192}
+              min={0}
+              max={200000}
+              suffix="字符"
+              onChange={v => void patchPrefs({ compactionResultChars: v })}
+            />
+          </Row>
+          <Row label="工具参数上限" hint="历史工具调用参数超过该字符数时替换为占位预览；0 = 关闭裁剪">
+            <NumField
+              value={prefs.compactionArgChars ?? 16384}
+              min={0}
+              max={1048576}
+              suffix="字符"
+              onChange={v => void patchPrefs({ compactionArgChars: v })}
+            />
           </Row>
         </div>
       </div>
