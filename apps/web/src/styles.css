@@ -526,10 +526,26 @@ a.msg-file:hover { border-color: var(--border-l4); color: var(--label-primary); 
   max-height: 220px; overflow-y: auto;
 }
 .process-steps.full { max-height: none; overflow-y: visible; }
-.step { color: var(--label-tertiary); font-size: 12px; line-height: 20px; }
+.step {
+  display: flex; align-items: baseline; gap: 6px;
+  color: var(--label-tertiary); font-size: 12px; line-height: 20px;
+}
 .step.ok { color: var(--label-tertiary); }
 .step.running { color: var(--accent); animation: pulse 1.2s infinite; }
 .step.err { color: var(--danger); }
+/* 工具调用的一行摘要：关键对象（文件/命令/任务）跟在工具名后面，过长省略 */
+.step-state { flex: none; width: 12px; text-align: center; }
+.step-name { flex: none; }
+.step-detail {
+  min-width: 0; flex: 0 1 auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--label-caption);
+}
+.step.err .step-detail { color: inherit; opacity: 0.85; }
+.step-error-text {
+  color: var(--danger); font-size: 12px; line-height: 20px;
+  white-space: pre-wrap; word-break: break-word;
+}
 
 /* ======================= composer ======================= */
 .input-card {

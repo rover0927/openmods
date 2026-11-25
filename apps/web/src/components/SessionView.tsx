@@ -602,10 +602,12 @@ export function TurnCard({ turn, onOpenSubagent }: { turn: TurnEntry; onOpenSuba
             <div className={`process-steps ${openStepsFull ? 'full' : ''}`}>
               {turn.steps.map(s => (
                 <div key={s.callId} className={`step ${s.done ? (s.isError ? 'err' : 'ok') : 'running'}`}>
-                  {s.done ? (s.isError ? '✕' : '✓') : '◌'} {stepLabel(s.name)}
+                  <span className="step-state">{s.done ? (s.isError ? '✕' : '✓') : '◌'}</span>
+                  <span className="step-name">{stepLabel(s.name)}</span>
+                  {s.detail && <span className="step-detail" title={s.detail}>{s.detail}</span>}
                 </div>
               ))}
-              {turn.error && <div className="step err">✕ {turn.error}</div>}
+              {turn.error && <div className="step-error-text">✕ {turn.error}</div>}
             </div>
           )}
         </div>

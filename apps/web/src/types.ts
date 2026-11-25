@@ -24,6 +24,8 @@ export interface StepItem {
   args?: any
   done: boolean
   isError?: boolean
+  /** 一行动作摘要（工具 + 关键对象），用于在“制作过程”里说明这一步做了什么 */
+  detail?: string
 }
 
 /** 一张可渲染的参考图（src 是 /api/attachments/<id> 或迁移前的 data URL） */
@@ -516,6 +518,59 @@ export const STEP_LABELS: Record<string, string> = {
 
 export function stepLabel(name: string): string {
   return STEP_LABELS[name] ?? name
+}
+
+/**
+ * 从工具参数里提取一行“它做了什么”。
+ * 只取文件名 / 路径 / 任务名这类关键字段，不把 write 的正文、bash 的完整输出等
+ * 大段内容带进界面；未知工具也只尝试常见标识字段。
+ */
+export function toolDetail(name: string, args: any): string {
+  const a = args && typeof args === 'object' ? args : {}
+  const str = (...keys: string[]): string => {
+    for (const k of keys) {
+      const v = a[k]
+      if (typeof v === 'string' && v.trim()) return v
+    }
+    return ''
+  }
+  const oneLine = (v: unknown, max = 120): string => {
+    if (v === undefined || v === null || v === '') return ''
+    const text = typeof v === 'string' ? v : JSON.stringify(v)
+    const flat = String(text ?? '').replace(/\s+/g, ' ').trim()
+    return flat.length > max ? `${flat.slice(0, max)}…` : flat
+  }
+  switch (name) {
+    case 'bash': return oneLine(str('description') || '执行命令')
+    case 'read':
+    case 'write':
+    case 'edit': return oneLine(str('file_path', 'path'))
+    case 'list_dir': return oneLine(str('path') || '.')
+    case 'glob':
+    case 'grep': {
+      const pattern = str('pattern')
+      const path = str('path')
+      return oneLine(path ? `${pattern} @ ${path}` : pattern)
+    }
+    case 'todo_write': {
+      const list = Array.isArray(a.todos) ? a.todos : []
+      if (!list.length) return '待办清单'
+      const active = list.find((t: any) => t?.status === 'in_progress') ?? list.find((t: any) => t?.status === 'pending')
+      return oneLine(`${list.length} 项${active?.content ? ` · ${active.content}` : ''}`)
+    }
+    case 'ask_user_question': {
+      const qs = Array.isArray(a.questions) ? a.questions : []
+      return oneLine(qs[0]?.question ?? a.question ?? '')
+    }
+    case 'spawn_modeling_subagent': return oneLine(str('description', 'name') || '派发子代理')
+    case 'exit_plan_mode': return a.plan ? '提交计划' : ''
+    case 'load_skill': return oneLine(str('name', 'skill'))
+    case 'mc_gradle': return oneLine(str('task'))
+    case 'create_model': return oneLine(str('name'))
+    case 'set_animation':
+    case 'remove_animation': return oneLine(str('name'))
+    default: return oneLine(str('name', 'id', 'file_path', 'path', 'command', 'description', 'task'))
+  }
 }
 
 /** 可选代理角色（dsh agentPreset 的简化版） */

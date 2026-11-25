@@ -5,7 +5,7 @@ import type {
   SessionSummaryDto, StatsDto, SubagentNoticeDto, SubagentWaitDto, TerminalDto, TodoItemDto, TurnEntry, WakeEntry,
   McTestStatusDto,
 } from './types.js'
-import { EMPTY_CONTEXT_STATS } from './types.js'
+import { EMPTY_CONTEXT_STATS, toolDetail } from './types.js'
 import { LeftSidebar } from './components/LeftSidebar.js'
 import { LibraryDrawer } from './components/LibraryDrawer.js'
 import { LogDrawer } from './components/LogDrawer.js'
@@ -122,6 +122,12 @@ function toFiles(parts: any[] | undefined): { id: string; name: string; bytes: n
   return out
 }
 
+/** 工具参数：日志里是 JSON 字符串，SSE 里已经是对象 */
+function toolArgs(raw: any): any {
+  if (typeof raw !== 'string') return raw
+  try { return JSON.parse(raw) } catch { return raw }
+}
+
 /** 日志回放：用户/助手/工具 + 子代理完成通知（通知是紧凑系统行，不是聊天轮次） */
 function replayEvents(events: any[]): TurnEntry[] {
   const out: TurnEntry[] = []
@@ -146,7 +152,17 @@ function replayEvents(events: any[]): TurnEntry[] {
       if (ev.text) cur.assistantText = cur.assistantText ? `${cur.assistantText}\n\n${ev.text}` : ev.text
       if (ev.reasoning) cur.reasoning = cur.reasoning ? `${cur.reasoning}\n\n${ev.reasoning}` : ev.reasoning
     } else if (ev.t === 'tool/call' && out.length && !out[out.length - 1].notice) {
-      out[out.length - 1].steps.push({ callId: ev.callId, name: ev.name, done: true })
+      out[out.length - 1].steps.push({
+        callId: ev.callId, name: ev.name, detail: toolDetail(ev.name, toolArgs(ev.args)), done: true,
+      })
+    } else if (ev.t === 'tool/result' && out.length && !out[out.length - 1].notice) {
+      // 历史回放只补成功/失败状态，不把工具输出带进前端状态
+      const cur = out[out.length - 1]
+      const step = cur.steps.find(s => s.callId === ev.callId)
+      if (step) {
+        step.done = true
+        step.isError = !!ev.isError
+      }
     } else if (ev.t === 'turn/end' && out.length && !out[out.length - 1].notice) {
       // 重开会话也要能看到系统收尾（如「已达单轮步数上限」）：只在模型没有正文时补
       const cur = out[out.length - 1]
@@ -600,7 +616,7 @@ export default function App() {
       case 'tool/call':
         updateLastTurn(t => ({
           ...t,
-          steps: [...t.steps, { callId: f.callId, name: f.name, args: f.args, done: false }],
+          steps: [...t.steps, { callId: f.callId, name: f.name, detail: toolDetail(f.name, f.args), done: false }],
         }))
         break
       case 'tool/result':
