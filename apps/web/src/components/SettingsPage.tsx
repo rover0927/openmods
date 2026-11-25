@@ -669,7 +669,7 @@ export function SettingsPage(props: {
       <div className="settings-section">
         <div className="settings-section-head">
           <h2>子代理</h2>
-          <p>子代理在同一个会话里并行建模、共享当前画布；这里管并发与唤醒。</p>
+          <p>子代理在同一个会话里并行制作、共享当前画布；这里管并发与唤醒。</p>
         </div>
 
         <div className="setting-group">

@@ -194,7 +194,7 @@ export function RightDock(props: {
         </div>
         <div className="dock-head-actions">
           {active === 'canvas' && props.canvasOwner && (
-            <span className="dock-owner" title="每个子代理在自己的独立画布上建模，这里只是查看其中一块">{props.canvasOwner}</span>
+            <span className="dock-owner" title="每个子代理在自己的独立画布上制作，这里只是查看其中一块">{props.canvasOwner}</span>
           )}
           {active === 'canvas' && activeCanvasRef && !activeCanvasRef.active && (
             <button className="dock-act" onClick={props.onActivateCanvas} title="把这块画布设为它所属会话的活跃画布">设为活跃</button>
@@ -373,7 +373,7 @@ export function RightDock(props: {
             {props.subagents.length === 0 && (
               <div className="ds-empty">
                 还没有子代理。<br />
-                让主代理派发建模任务后，这里会出现所有子代理与它们的最终汇报。
+                让主代理派发制作任务后，这里会出现所有子代理与它们的最终汇报。
               </div>
             )}
             {props.subagents.map(s => (

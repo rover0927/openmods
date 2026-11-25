@@ -724,7 +724,7 @@ export default function App() {
         wakeRef.current(`${f.name ?? '子代理'} 已完成`)
         break
       case 'subagent/updated':
-        if (f.status === 'running') wakeRef.current(`${f.name ?? '子代理'} 开始建模`)
+        if (f.status === 'running') wakeRef.current(`${f.name ?? '子代理'} 开始制作`)
         if (rootSessionId) refreshSubagents(rootSessionId)
         break
       // 人机交互：工具在服务端阻塞等答案，弹窗提交后同一轮自动继续
@@ -1850,7 +1850,7 @@ export default function App() {
         pendingAtts={pendingAtts}
         onAddFiles={addPendingFiles}
         onRemoveDockAtt={(i) => setPendingAtts(prev => prev.filter((_, idx) => idx !== i))}
-        modelTagline={currentModel?.desc ?? '建模顶尖特效拉满'}
+        modelTagline={currentModel?.desc ?? 'Mod 制作能力拉满'}
         subagents={subagents}
         activeSessionId={sessionId}
         onOpenSubagent={openSubagent}

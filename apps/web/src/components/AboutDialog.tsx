@@ -11,7 +11,7 @@ export function AboutContent({ onToast }: { onToast: (msg: string) => void }) {
 
   return (
     <>
-      <p className="about-desc">Minecraft AI 建模 / Forge 模组开发工作台。</p>
+      <p className="about-desc">Minecraft Mod 制作 / Forge 模组开发工作台。</p>
       <div className="about-meta">
         版本 0.1.0 · MIT License · 画布基于 Blockbench 5.2.2（GPL-3.0）
       </div>

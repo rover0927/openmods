@@ -705,7 +705,7 @@ export function LibraryDrawer({ open, sessionId, testStatus, onRefreshTestStatus
                   {assets.length === 0 ? (
                     <>
                       还没有素材。把 jar / 模型 / 贴图直接拖进这块区域，或点右上角「上传」；
-                      也可以让建模子代理做出造型后点「从当前画布截取」，几何与贴图会一起归档。<br />
+                      也可以让子代理做出造型后点「从当前画布截取」，几何与贴图会一起归档。<br />
                       以后要改：<b>接着改</b> 就在这个素材上迭代（自动存回），<b>引用新会话</b> 则复制一份出去改。
                     </>
                   ) : (

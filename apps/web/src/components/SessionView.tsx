@@ -31,7 +31,7 @@ function ComposerDock(props: {
   const tps = t && t.modelMs > 0 ? Math.round((t.outputTokens / t.modelMs) * 1000) : null
   const status = waiting > 0
     ? `等待 ${waiting} 个子代理…`
-    : busy ? '建模中…' : !iframeReady ? '画布启动中' : '画布就绪'
+    : busy ? '制作中…' : !iframeReady ? '画布启动中' : '画布就绪'
 
   return (
     <div className="composer-dock">
@@ -185,7 +185,7 @@ export function SessionView(props: {
   const slashCommands = [
     {
       id: 'refine', name: '完善想法', keys: ['refine', 'wanshan'], on: refineMode,
-      hint: '描述想法，AI 先打磨成建模描述再上画布',
+      hint: '描述想法，AI 先打磨成制作方案再上画布',
       run: onToggleRefine,
     },
     {
@@ -261,11 +261,11 @@ export function SessionView(props: {
           {empty && (
             <div className="welcome">
               <span className="chip">{isSubagent ? `子代理 · ${subagentName ?? ''}` : '准备好了'}</span>
-              <h2>{isSubagent ? '子代理的对话' : '开始建模'}</h2>
+              <h2>{isSubagent ? '子代理的对话' : '开始制作 Mod'}</h2>
               <p className="dim">
                 {isSubagent
-                  ? '这个子代理属于当前会话：每个子代理在自己的独立画布上建模，右侧拓展可以切换查看各自的画布。这里是它的对话记录，可以继续给它派活，或回到主会话查看整体。'
-                  : '描述你想要的模型，AI 会派子代理各自在独立画布上并行建模，改动实时出现在右侧画布上。'}
+                  ? '这个子代理属于当前会话：每个子代理在自己的独立画布上制作，右侧拓展可以切换查看各自的画布。这里是它的对话记录，可以继续给它派活，或回到主会话查看整体。'
+                  : '描述你想要的 Mod，AI 会派子代理各自在独立画布上并行制作，改动实时出现在右侧画布上。'}
               </p>
               {!isSubagent && (
                 <button
@@ -314,7 +314,7 @@ export function SessionView(props: {
         )}
         <TodoPanel todos={props.todos} busy={busy} />
         <div className="input-card">
-          {refineMode && <div className="refine-hint">✦ 完善想法模式：描述你的想法，AI 会先打磨成建模描述再上画布</div>}
+          {refineMode && <div className="refine-hint">✦ 完善想法模式：描述你的想法，AI 会先打磨成制作方案再上画布</div>}
           {pendingAtts.length > 0 && (
             <div className="attach-row">
               {pendingAtts.map((a, i) => a.kind === 'image' && a.previewUrl ? (

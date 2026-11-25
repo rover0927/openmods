@@ -365,7 +365,7 @@ export function LeftSidebar(props: {
           {!rail && (
             <span className="sb-name-wrap">
               <span className="sb-name">openmods</span>
-              <span className="sb-sub">MINECRAFT AI WORKBENCH</span>
+              <span className="sb-sub">MINECRAFT MOD WORKBENCH</span>
             </span>
           )}
         </button>

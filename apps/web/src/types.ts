@@ -511,7 +511,7 @@ export const STEP_LABELS: Record<string, string> = {
   set_animation: '添加动画',
   remove_animation: '移除动画',
   list_animations: '查看动画列表',
-  spawn_modeling_subagent: '派发建模子代理',
+  spawn_modeling_subagent: '派发制作子代理',
 }
 
 export function stepLabel(name: string): string {

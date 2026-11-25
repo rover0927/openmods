@@ -33,7 +33,7 @@ export function CanvasPane({ canvas, iframeRef, onIframeReady, onReload, reloadE
         {emptyHint && !canvas.hasModel && (
           <div className="canvas-empty">
             <div className="canvas-empty-title">画布还是空的</div>
-            <div className="canvas-empty-sub">在右边描述你想要的模型，AI 会在这里一步步做出来。</div>
+            <div className="canvas-empty-sub">在右边描述你想要的 Mod，AI 会在这里一步步做出来。</div>
           </div>
         )}
       </div>

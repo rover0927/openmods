@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { SessionSummaryDto, SubagentWaitDto } from '../types.js'
 
 function statusText(status: string): string {
-  return status === 'running' ? '正在建模'
+  return status === 'running' ? '正在制作'
     : status === 'error' ? '出错'
       : status === 'stopped' ? '已中止'
         : status === 'idle' ? '未运行' : '已完成'
