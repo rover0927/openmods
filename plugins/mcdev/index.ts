@@ -123,10 +123,14 @@ function resolveJava17(): { home: string; version: string } | { error: string } 
 const PINNED = { mc: '1.20.1', forge: '47.4.10', fg: '6.0.54', gradle: '8.8', java: 17 }
 
 /**
- * 国内镜像基址：USTC 的 bmclapi 直连（无 302 跳转），比 bmclapi2 那条
- * 302→cernet→ustc 的链稳定得多（那条偶发 404 / 半截文件）。
+ * Forge 构件下载源（按顺序回退）：USTC 的 /bmclapi 已停服（TLS 握手直接被远端断开），
+ * 现改为 Forge 官方源 + BMCLAPI 官方源双路回退，支持 OPENMODS_MIRROR 自定义首位源。
  */
-const MIRROR = (process.env.OPENMODS_MIRROR ?? 'https://unicom.mirrors.ustc.edu.cn/bmclapi').replace(/\/+$/, '')
+const MIRRORS = [
+  ...(process.env.OPENMODS_MIRROR ? [process.env.OPENMODS_MIRROR.replace(/\/+$/, '')] : []),
+  'https://maven.minecraftforge.net',
+  'https://bmclapi2.bangbang93.com/maven',
+]
 
 /**
  * ForgeGradle 有一批构件不走 Gradle 仓库，而是拿编译期常量
@@ -213,19 +217,30 @@ async function seedMavenCache(gradleHome: string): Promise<{ added: number; skip
           continue
         }
       }
-      const res = await fetch(`${MIRROR}/${rel}`, { signal: AbortSignal.timeout(180_000) })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const buf = Buffer.from(await res.arrayBuffer())
-      if (!buf.length) throw new Error('空文件')
-      await writeFile(out, buf)
-      const md5 = await fetch(`${MIRROR}/${rel}.md5`, { signal: AbortSignal.timeout(30_000) })
-        .then(r => (r.ok ? r.text() : '')).catch(() => '')
-      const expect = md5.trim().toLowerCase()
-      if (expect && expect !== createHash('md5').update(buf).digest('hex')) {
-        await rm(out, { force: true })
-        throw new Error('md5 不匹配')
+      let downloaded = false
+      let lastErr = ''
+      for (const mirror of MIRRORS) {
+        try {
+          const res = await fetch(`${mirror}/${rel}`, { signal: AbortSignal.timeout(180_000) })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const buf = Buffer.from(await res.arrayBuffer())
+          if (!buf.length) throw new Error('空文件')
+          await writeFile(out, buf)
+          const md5 = await fetch(`${mirror}/${rel}.md5`, { signal: AbortSignal.timeout(30_000) })
+            .then(r => (r.ok ? r.text() : '')).catch(() => '')
+          const expect = md5.trim().toLowerCase()
+          if (expect && expect !== createHash('md5').update(buf).digest('hex')) {
+            await rm(out, { force: true })
+            throw new Error('md5 不匹配')
+          }
+          if (expect) await writeFile(`${out}.md5`, `${expect}\n`)
+          downloaded = true
+          break
+        } catch (err: any) {
+          lastErr = `${mirror}: ${err?.message ?? err}`
+        }
       }
-      if (expect) await writeFile(`${out}.md5`, `${expect}\n`)
+      if (!downloaded) throw new Error(lastErr || '所有镜像下载失败')
       added++
     } catch (e: any) {
       failed.push(`${rel.split('/').pop()}（${e?.message ?? e}）`)
@@ -554,6 +569,7 @@ async function copyReferenceProject(
     }
   }
   await walkReplace(projectDir)
+  await healBrokenMirrors(projectDir).catch(() => false)
 
   return files
 }
@@ -696,6 +712,58 @@ async function scaffold(opts: {
   return { projectDir, files: files.filter(f => !f.startsWith('src/main/java/com/example')) }
 }
 
+/**
+ * 自动修复已有工程里失效的 USTC /bmclapi 镜像配置：
+ * USTC 的 mirrors.ustc.edu.cn/bmclapi 现已在 TLS 握手阶段直接断开连接（Remote host terminated the handshake），
+ * 旧会话已创建的工程若仍保留该地址或 beforeProject 强行改写，会导致所有依赖解析失败。
+ */
+async function healBrokenMirrors(projectDir: string): Promise<boolean> {
+  let healed = false
+  const settingsPath = join(projectDir, 'settings.gradle')
+  if (existsSync(settingsPath)) {
+    const raw = await readFile(settingsPath, 'utf8').catch(() => '')
+    if (raw.includes('mirrors.ustc.edu.cn/bmclapi')) {
+      const cleanSettings = [
+        'pluginManagement {',
+        '    repositories {',
+        "        maven { name = 'AliyunPlugin'; url = 'https://maven.aliyun.com/repository/gradle-plugin' }",
+        "        maven { name = 'AliyunPublic'; url = 'https://maven.aliyun.com/repository/public' }",
+        "        maven { name = 'MinecraftForge'; url = 'https://maven.minecraftforge.net/' }",
+        "        maven { name = 'BMCLAPI'; url = 'https://bmclapi2.bangbang93.com/maven/' }",
+        '        gradlePluginPortal()',
+        '    }',
+        '}',
+        '',
+        'plugins {',
+        "    id 'org.gradle.toolchains.foojay-resolver-convention' version '0.7.0'",
+        '}',
+        '',
+      ].join('\n')
+      await writeFile(settingsPath, cleanSettings, 'utf8')
+      healed = true
+    }
+  }
+  const buildPath = join(projectDir, 'build.gradle')
+  if (existsSync(buildPath)) {
+    const raw = await readFile(buildPath, 'utf8').catch(() => '')
+    if (raw.includes('mirrors.ustc.edu.cn/bmclapi')) {
+      const next = raw.replace(
+        /maven\s*\{\s*name\s*=\s*'USTCMirror'\s*;\s*url\s*=\s*'https?:\/\/[^']*mirrors\.ustc\.edu\.cn\/bmclapi\/?'\s*\}/g,
+        [
+          "maven { name = 'AliyunPublic'; url = 'https://maven.aliyun.com/repository/public' }",
+          "    maven { name = 'MinecraftForge'; url = 'https://maven.minecraftforge.net/' }",
+          "    maven { name = 'BMCLAPI'; url = 'https://bmclapi2.bangbang93.com/maven/' }",
+        ].join('\n'),
+      )
+      if (next !== raw) {
+        await writeFile(buildPath, next, 'utf8')
+        healed = true
+      }
+    }
+  }
+  return healed
+}
+
 /** 运行 gradlew；background=true 用于 runClient（长驻），立即返回 pid */
 async function runGradle(opts: {
   projectDir: string
@@ -723,10 +791,11 @@ async function runGradle(opts: {
     JAVA_HOME: java.home,
     GRADLE_USER_HOME: gradleHome,
   }
-  // 首次跑之前先把两块最容易挂的缓存摆好：FG 绕开 Gradle 仓库直连官方源的
-  // 构件（无读超时，缺了就无限期卡住）+ wrapper 发行版（gradlew 首跑免下载）。
+  // 启动前先自动修复旧工程残留的失效 USTC /bmclapi 镜像，并补齐离线缓存
+  const healedMirror = await healBrokenMirrors(projectDir).catch(() => false)
   const seed = await seedMavenCache(env.GRADLE_USER_HOME)
   const wrapper = await seedWrapperDist(env.GRADLE_USER_HOME, projectDir)
+  const healNote = healedMirror ? '已自动清理工程内失效的 USTC 镜像配置并切换至阿里云 + Forge 官方源。\n' : ''
   const cacheNote = (seed.added || seed.failed.length)
     ? `缓存补齐（${wrapper === 'seeded' ? 'Gradle 发行版已从项目内 vendor 播种' : wrapper === 'cached' ? 'Gradle 发行版已有缓存' : 'Gradle 发行版无 vendor 包'}）：新增 ${seed.added}、已存在 ${seed.skipped}`
       + (seed.failed.length ? `、失败 ${seed.failed.join('、')}` : '') + '\n'
@@ -734,7 +803,7 @@ async function runGradle(opts: {
       ? 'Gradle 发行版已从项目内 vendor 播种，wrapper 免联网下载。\n'
       : ''
   // 结果里明确写出本次使用的 Java 与 Gradle 缓存，便于确认是否命中离线包
-  const seedNote = `Java：${java.home}（版本 ${java.version}）\nGradle 缓存：${env.GRADLE_USER_HOME}\n${cacheNote}`
+  const seedNote = `Java：${java.home}（版本 ${java.version}）\nGradle 缓存：${env.GRADLE_USER_HOME}\n${healNote}${cacheNote}`
 
   // build 任务：完整 stdout+stderr 落到 data/build-logs（元数据与前端「构建日志」同源）
   const isBuild = task === 'build' && !opts.background
@@ -1692,6 +1761,7 @@ async function startRunClient(projectDir: string): Promise<{ pid: number; logPat
     JAVA_HOME: java.home,
     GRADLE_USER_HOME: resolveGradleHome(),
   }
+  await healBrokenMirrors(projectDir).catch(() => false)
   await seedMavenCache(env.GRADLE_USER_HOME)
   await seedWrapperDist(env.GRADLE_USER_HOME, projectDir)
   const r = await launchClient(projectDir, env)

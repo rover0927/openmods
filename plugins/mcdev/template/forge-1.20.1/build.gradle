@@ -112,9 +112,18 @@ minecraft {
 sourceSets.main.resources { srcDir 'src/generated/resources' }
 
 repositories {
-    // 国内镜像优先：BMCLAPI 代理 maven.minecraftforge.net（Forge / MCP 坐标），阿里云代理 Maven Central
-    maven { name = 'USTCMirror'; url = 'https://unicom.mirrors.ustc.edu.cn/bmclapi/' }
+    // 本地预热缓存优先，其次阿里云 Maven Central 镜像、Forge 官方源与 BMCLAPI 兜底
+    maven {
+        name = 'LocalForgeCache'
+        url = file("${gradle.gradleUserHomeDir}/caches/forge_gradle/maven_downloader")
+        metadataSources {
+            mavenPom()
+            artifact()
+        }
+    }
     maven { name = 'AliyunPublic'; url = 'https://maven.aliyun.com/repository/public' }
+    maven { name = 'MinecraftForge'; url = 'https://maven.minecraftforge.net/' }
+    maven { name = 'BMCLAPI'; url = 'https://bmclapi2.bangbang93.com/maven/' }
     // Put repositories for dependencies here
     // ForgeGradle automatically adds the Forge maven and Maven Central for you
 

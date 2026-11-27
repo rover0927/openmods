@@ -144,26 +144,25 @@ Sound engine started
 再看到自己 mod 的 `HELLO FROM COMMON SETUP` / `HELLO FROM CLIENT SETUP` 就说明 mod 被加载了。
 调试期要关客户端：直接杀 java 进程（`runClient` 会以 `exit value -1` 结束，属正常，不是构建失败）；崩溃看 `run/crash-reports/`。
 
-## 7. 国内镜像（必须配，否则会卡在 Forge maven）
+## 7. 仓库与镜像配置（重要）
 
-`maven.minecraftforge.net` 在国内经常十几秒无响应，甚至只在握手阶段就吊住。**实测可用**的镜像基址：
+> **注意**：`https://unicom.mirrors.ustc.edu.cn/bmclapi/` 与 `https://mirrors.ustc.edu.cn/bmclapi/` 现已在 TLS 握手阶段直接断开连接（报错 `Remote host terminated the handshake`），**严禁在 `build.gradle` 或 `settings.gradle` 中使用 USTC 的 `/bmclapi` 地址，也不要用 `whenObjectAdded` 强行改写 `maven.minecraftforge.net`**。
+
+**实测可用**的仓库顺序（`mc_scaffold` 模板与 `mc_gradle` 已自动配置并会在构建前自动修复旧工程）：
 
 | 用途 | 地址 | 实测 |
 | --- | --- | --- |
-| Forge / MCP maven | `https://unicom.mirrors.ustc.edu.cn/bmclapi/` | 直连 200、无跳转、6MB/s ← **首选** |
-| （备选）Forge / MCP | `https://bmclapi2.bangbang93.com/maven/` | 302→cernet→ustc 链，偶发 404/半截，慢 |
-| Gradle 发行版 | `https://mirrors.cloud.tencent.com/gradle/` | 206/200，稳定 |
-| Mojang libraries | 官方 `https://libraries.minecraft.net/` | 实测 1MB/s，**不用换** |
-| 游戏 resources | 官方 `https://resources.download.minecraft.net/` | 实测 2.3MB/s，633MB 约 4 分钟，**不用换** |
+| Maven Central 依赖（antlr / night-config / asm / guava 等） | `https://maven.aliyun.com/repository/public` | 200 OK，极速稳定 ← **排在最前** |
+| Gradle 插件门户镜像 | `https://maven.aliyun.com/repository/gradle-plugin` | 200 OK，稳定 |
+| Forge / MCP 构件首选 | `https://maven.minecraftforge.net/` | 200 OK，TLS 正常 |
+| Forge / MCP 构件备选 | `https://bmclapi2.bangbang93.com/maven/` | 200 OK，国内备选 |
+| Gradle 发行版 | `plugins/mcdev/vendor/gradle-8.8` 本地离线播种 | 免联网下载 |
+| Mojang libraries / 游戏 resources | 官方 `libraries.minecraft.net` / `resources.download.minecraft.net` | 稳定，**不用换** |
 
-`maven.aliyun.com` / `repo.huaweicloud.com` / `mirrors.cloud.tencent.com/nexus` 都**不代理** Forge 的 `net/minecraftforge/*`（实测 404），别浪费时间。
+ForgeGradle 里有两类下载链路：
 
-ForgeGradle 里有两类下载链路，**必须分别处理**：
-
-1. **走 Gradle 仓库的**（`net.minecraftforge:forge:*`、plugin 解析）
-   → 在 `settings.gradle` 的 `pluginManagement.repositories`、`build.gradle` 的 `repositories` 首位放镜像；并且用
-   `gradle.beforeProject { p -> p.repositories.whenObjectAdded { repo -> …改为镜像 URL } }`
-   在仓库**刚被加进来**时改写 —— ForgeGradle 在配置阶段就开始解析，放到 `projectsEvaluated` 已经太晚。
+1. **走 Gradle 仓库的**（`net.minecraftforge:forge:*`、`lowcodelanguage`、普通 Maven 依赖、plugin 解析）
+   → 在 `settings.gradle` 和 `build.gradle` 中将阿里云 `AliyunPublic` 放在前面承接全部通用 Maven 依赖，后面跟 `https://maven.minecraftforge.net/` 与 `https://bmclapi2.bangbang93.com/maven/` 承接 Forge 专属包。不要加 `whenObjectAdded` 把官方源替换成失效的 USTC 镜像。
 
 2. **不走仓库、拿编译期常量直连的**（`Utils.FORGE_MAVEN` / `MOJANG_MAVEN` 是 `static final String`，会被内联，运行期改不了）
    → 只能把这些文件**预先按原路径摆进缓存** `<GRADLE_USER_HOME>/caches/forge_gradle/maven_downloader/`：

@@ -1,28 +1,13 @@
 pluginManagement {
     repositories {
-        // BMCLAPI 镜像（代理 maven.minecraftforge.net）：官方源在国内对大文件经常只吐几十 KB
-        maven { name = 'USTCMirror'; url = 'https://unicom.mirrors.ustc.edu.cn/bmclapi/' }
         maven { name = 'AliyunPlugin'; url = 'https://maven.aliyun.com/repository/gradle-plugin' }
         maven { name = 'AliyunPublic'; url = 'https://maven.aliyun.com/repository/public' }
-        gradlePluginPortal()
         maven { name = 'MinecraftForge'; url = 'https://maven.minecraftforge.net/' }
+        maven { name = 'BMCLAPI'; url = 'https://bmclapi2.bangbang93.com/maven/' }
+        gradlePluginPortal()
     }
 }
 
 plugins {
     id 'org.gradle.toolchains.foojay-resolver-convention' version '0.7.0'
-}
-
-// ForgeGradle 把 maven.minecraftforge.net 写死成常量，而且它的仓库在 build script 之前就挂上、
-// 配置阶段立刻开始解析（ForgeGradle 的 Apache HttpClient 没有读超时，官方源一卡就是永久）。
-// 所以在仓库"刚被加进来"时就改写 URL，保证官方源根本不会被请求。
-gradle.beforeProject { p ->
-    p.repositories.whenObjectAdded { repo ->
-        if (repo.hasProperty('url') && repo.url != null) {
-            def u = repo.url.toString()
-            if (u.contains('maven.minecraftforge.net')) {
-                repo.url = p.uri('https://unicom.mirrors.ustc.edu.cn/bmclapi/')
-            }
-        }
-    }
 }
