@@ -139,7 +139,7 @@ export function SessionView(props: {
   const currentProfile = profiles.find(p => p.id === agentProfile)
   const profileHint = currentProfile
     ? `${currentProfile.name}：${currentProfile.description || '切换当前会话的代理角色'}`
-    : '代理角色：主代理出创意与方案，MC 模组负责 1.20.1 Forge 实施'
+    : '代理角色：方案代理只出方案，实施由 mcmod / 建模子代理 / coding 执行'
   const [pickerOpen, setPickerOpen] = useState(false)
   const [text, setText] = useState('')
   const [slashIdx, setSlashIdx] = useState(0)
@@ -210,9 +210,9 @@ export function SessionView(props: {
   }
   const submit = () => {
     const t = text.trim()
-    if (!t || busy || waitingLocked || askLocked) return
+    if ((!t && pendingAtts.length === 0) || busy || waitingLocked || askLocked) return
     stickBottomRef.current = true
-    onSend(t, refineMode ? 'refine' : 'build')
+    onSend(t || '（请看附图）', refineMode ? 'refine' : 'build')
     setText('')
   }
 
@@ -307,7 +307,7 @@ export function SessionView(props: {
           <SubagentActivity
             subagents={subagents}
             waiting={waiting}
-            activeId={props.currentModelId}
+            activeId={props.sessionId}
             onOpen={onOpenSubagent}
             onStop={onStopSubagent}
           />
@@ -417,16 +417,25 @@ export function SessionView(props: {
               <McIcon name={permission === 'auto' ? 'permissionAuto' : 'permissionAsk'} size={14} />
               {permission === 'auto' ? '授权·自动' : '授权·询问'}
             </button>
-            <select
-              className="model-chip agent-chip"
-              value={agentProfile}
-              onChange={e => onPickProfile(e.target.value)}
-              title={profileHint}
-            >
-              {(profiles.length ? profiles : [{ id: 'lead', name: '主代理（lead）', description: '出创意与方案；MC 实施自动移交给 mcmod' }]).map(p => (
-                <option key={p.id} value={p.id} title={p.description}>{p.name}</option>
-              ))}
-            </select>
+            {isSubagent ? (
+              <span
+                className="model-chip agent-chip"
+                title="建模子代理固定使用 modeling 角色，在独立画布上工作"
+              >
+                建模子代理（modeling）
+              </span>
+            ) : (
+              <select
+                className="model-chip agent-chip"
+                value={agentProfile}
+                onChange={e => onPickProfile(e.target.value)}
+                title={profileHint}
+              >
+                {(profiles.length ? profiles : [{ id: 'lead', name: '方案代理（lead）', description: '方案制订者：只读调研并输出方案；实施交给 mcmod / 建模子代理 / coding' }]).map(p => (
+                  <option key={p.id} value={p.id} title={p.description}>{p.name}</option>
+                ))}
+              </select>
+            )}
             <button
               className="model-chip"
               onClick={() => setPickerOpen(true)}

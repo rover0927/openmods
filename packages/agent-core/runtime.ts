@@ -147,6 +147,13 @@ interface Registries {
   overflowHooks: ((s: any) => Promise<boolean>)[]
 }
 
+export interface TurnResult {
+  text: string
+  aborted: boolean
+  /** 回合结束原因：正常收尾 / 触达单轮步数上限 / 用户中止 / 运行异常 */
+  reason: 'natural' | 'step-limit' | 'aborted' | 'error'
+}
+
 export interface SessionRuntime extends SessionRuntimeLike {
   deps: RuntimeDeps
   setCurrentModel(id: string): void
@@ -173,7 +180,7 @@ export interface SessionRuntime extends SessionRuntimeLike {
 export interface TurnResult {
   text: string
   aborted: boolean
-  reason: 'natural' | 'step-limit' | 'aborted'
+  reason: 'natural' | 'step-limit' | 'aborted' | 'error'
 }
 
 /**
@@ -187,6 +194,16 @@ const MAX_STEPS = (() => {
 
 function safeJsonParse(s: string): any {
   try { return JSON.parse(s) } catch { return {} }
+}
+
+/** 剥离模型偶发直接吐在正文里的裸 `<tool_call>...</tool_call>` XML 文本（如调用被排除的工具失败时） */
+function stripLeakedToolCallXml(text: string): { cleaned: string; stripped: boolean } {
+  if (!text || !text.includes('<tool_call')) return { cleaned: text, stripped: false }
+  const cleaned = text
+    .replace(/<tool_call\b[^>]*>[\s\S]*?<\/tool_call>/gi, '')
+    .replace(/<tool_call\b[^>]*>[\s\S]*$/gi, '')
+    .trim()
+  return { cleaned, stripped: cleaned !== text.trim() }
 }
 
 /**
@@ -236,7 +253,8 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
     // 图片只按引用计（不给 resolveImage：base64 字节不是上下文里的常驻文本）。
     contextBreakdown: (totalTokens?: number) => {
       const systemTokens = estimateText(buildSystemPrompt(registries, deps, undefined, lastProfileId, rt))
-      const toolsTokens = estimateToolDefs(toOpenAiTools(registries.tools))
+      const activeTools = selectTools(registries.tools, lastProfileId, registries.profiles, rt)
+      const toolsTokens = estimateToolDefs(toOpenAiTools(activeTools))
       const total = totalTokens ?? rt.estimateContextTokens()
       return { systemTokens, toolsTokens, messageTokens: Math.max(0, total - systemTokens - toolsTokens) }
     },
@@ -245,7 +263,8 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
       // 不传 resolveImage：图片在上下文里只是引用（dsh estimateStructuralBlock 同款），
       // 请求期才换字节；否则一张图就会把"上下文占用"算成几十万 token。
       const messages = buildLlmMessages(buildSystemPrompt(registries, deps, undefined, lastProfileId, rt), surface as any)
-      const heuristic = estimateMessages(messages) + estimateToolDefs(toOpenAiTools(registries.tools))
+      const activeTools = selectTools(registries.tools, lastProfileId, registries.profiles, rt)
+      const heuristic = estimateMessages(messages) + estimateToolDefs(toOpenAiTools(activeTools))
       // 上下文占用优先取"模型自己报的数"（复刻 dsh token-meter 的 anchor 语义）：
       // 最近一次 llm/usage 的 promptTokens = 那次请求的真实 prompt 大小，只把它之后新增的
       // surface 用启发式补上；一旦发生过压缩（surface 被影子化），锚点失效回落到全量估算。
@@ -279,8 +298,8 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
 
     async runTurn(opts, signal) {
       currentModelId = opts.modelId ?? currentModelId
-      // 默认走 lead 主代理（对话/委派）；显式 profile 或未知 profile 回落规则见下
-      const requested = opts.profile ?? 'lead'
+      // 显式传入 profile 优先；未传时沿用本会话上一轮 profile，再回落 lead（防止自动结算轮把 mcmod 重置回 lead）
+      const requested = opts.profile ?? lastProfileId ?? 'lead'
       const profileId = registries.profiles[requested] ? requested : (registries.profiles['lead'] ? 'lead' : undefined)
       lastProfileId = profileId
       // 本轮步数预算：结算等短回合可传更小的 maxSteps，不占用执行回合的 40 步额度
@@ -332,6 +351,8 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
       let haltPlanTurn = false
       const planBlockedCalls: string[] = []
       let reason: TurnResult['reason'] = 'natural'
+      let turnError: Error | undefined
+      let stepOpen = false
       let stepNo = 0
 
       try {
@@ -339,12 +360,14 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
           if (signal.aborted) { aborted = true; break }
           const stepId = `${turnId}s${stepNo}`
 
-          // 每步前：压缩钩子（省 token 机制挂载点）
+          // 每步前：压缩钩子（省 token 机制挂载点），透传 signal 支持用户停止
           for (const hook of registries.beforeStepHooks) {
-            await hook({ session: rt, abort: (reason: string) => { throw new Error(`hook-abort: ${reason}`) } })
+            await hook({ session: rt, signal, abort: (reason: string) => { throw new Error(`hook-abort: ${reason}`) } })
           }
+          if (signal.aborted) { aborted = true; break }
 
           deps.log.append('step/start', { turnId, stepId })
+          stepOpen = true
           rt.emit('step/start', { turnId, stepId })
 
           const turnTools = selectTools(registries.tools, profileId, registries.profiles, rt)
@@ -379,9 +402,10 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
               rt.emit('compaction/overflow', { turnId, stepId })
               let handled = false
               for (const hook of registries.overflowHooks) {
-                handled = (await hook({ session: rt, error: err, abort: (r: string) => { throw new Error(r) } })) || handled
+                handled = (await hook({ session: rt, signal, error: err, abort: (r: string) => { throw new Error(r) } })) || handled
               }
               deps.log.append('step/end', { turnId, stepId, error: 'overflow-retry' })
+              stepOpen = false
               if (handled) { stepNo--; continue }
               throw err
             }
@@ -394,10 +418,14 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
           deps.log.append('llm/usage', { turnId, stepId, model: rt.getModelLlmId(), ...res.usage })
           rt.emit('llm/usage', { turnId, stepId, ...res.usage, contextTokens: rt.estimateContextTokens() })
 
+          const { cleaned: cleanedText, stripped: strippedXml } = res.toolCalls.length === 0
+            ? stripLeakedToolCallXml(res.text)
+            : { cleaned: res.text, stripped: false }
+
           // 思考过程落日志（回放时能复现），单步上限 64k 字符防止异常长的推理把 JSONL 撑爆；
           // 注意它只用于展示，buildSurface 不会把它拼进下一轮上下文。
           deps.log.append('assistant/message', {
-            turnId, stepId, text: res.text, toolCalls: res.toolCalls,
+            turnId, stepId, text: cleanedText, toolCalls: res.toolCalls,
             ...(res.reasoning ? { reasoning: res.reasoning.slice(0, 64_000) } : {}),
           })
 
@@ -457,6 +485,7 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
               if (signal.aborted) { aborted = true; break }
             }
             deps.log.append('step/end', { turnId, stepId })
+            stepOpen = false
             rt.emit('step/end', { turnId, stepId })
             if (haltPlanTurn) {
               finalText = `计划模式：本轮连续拦截了写操作（${[...new Set(planBlockedCalls)].join('、')}），已提前结束。请先用 todo_write 整理方案，再通过 exit_plan_mode 提交给用户批准。`
@@ -467,33 +496,74 @@ export function createSessionRuntime(deps: RuntimeDeps, registries: Registries):
           }
 
           // 无工具调用 → 本轮结束
-          finalText = res.text
-          if (!String(res.text ?? '').trim()) {
+          finalText = cleanedText
+          if (!String(cleanedText ?? '').trim()) {
             const reasoning = String(res.reasoning ?? '').trim()
-            // 自然结束但正文为空（模型只产出了思考）：在步数预算内再请求一次（提示不进日志）
-            if (!emptyReplyRetried && reasoning && stepNo < maxSteps) {
+            if (!emptyReplyRetried && (reasoning || strippedXml) && stepNo < maxSteps) {
               emptyReplyRetried = true
               finalText = ''
-              retryNudge = '上一回合没有产生任何可见回复。请直接给出面向用户的回答（或明确说明下一步），不要只输出思考过程。'
+              retryNudge = strippedXml
+                ? '上一回合输出了当前角色不可用的工具调用标签（<tool_call>）。请仅使用当前工具列表中的工具，或直接给出面向用户的中文总结回复。'
+                : '上一回合没有产生任何可见回复。请直接给出面向用户的回答（或明确说明下一步），不要只输出思考过程。'
               deps.log.append('step/end', { turnId, stepId })
+              stepOpen = false
               rt.emit('step/end', { turnId, stepId })
               continue
             }
             finalText = emptyReplyFallback(reasoning)
           }
           deps.log.append('step/end', { turnId, stepId })
+          stepOpen = false
           rt.emit('step/end', { turnId, stepId })
           break
         }
         // for 循环走完（stepNo 超出上限）且不是用户中止 → 判定为步数上限截断
         if (stepNo > maxSteps && !aborted && !haltPlanTurn) hitStepLimit = true
+      } catch (err: any) {
+        if (signal.aborted) {
+          aborted = true
+        } else {
+          turnError = err instanceof Error ? err : new Error(String(err?.message ?? err))
+          if (stepOpen) {
+            const stepId = `${turnId}s${stepNo}`
+            deps.log.append('step/end', { turnId, stepId, error: turnError.message })
+            rt.emit('step/end', { turnId, stepId, error: turnError.message })
+            stepOpen = false
+          }
+          deps.log.append('error', { turnId, message: turnError.message })
+        }
+        if (!signal.aborted) throw err
       } finally {
+        if (stepOpen) {
+          const stepId = `${turnId}s${stepNo}`
+          deps.log.append('step/end', { turnId, stepId, ...(aborted ? { aborted: true } : {}) })
+          rt.emit('step/end', { turnId, stepId })
+          stepOpen = false
+        }
         if (hitStepLimit && !finalText) {
           finalText = `已达到单轮 ${maxSteps} 步上限，任务还没做完。回复「继续」我接着做。`
         }
-        reason = hitStepLimit ? 'step-limit' : aborted ? 'aborted' : 'natural'
-        deps.log.append('turn/end', { turnId, text: finalText, aborted, reason })
-        rt.emit('turn/end', { turnId, text: finalText, aborted, reason })
+        reason = turnError
+          ? 'error'
+          : hitStepLimit
+            ? 'step-limit'
+            : aborted
+              ? 'aborted'
+              : 'natural'
+        deps.log.append('turn/end', {
+          turnId,
+          text: finalText,
+          aborted,
+          reason,
+          ...(turnError ? { error: turnError.message } : {}),
+        })
+        rt.emit('turn/end', {
+          turnId,
+          text: finalText,
+          aborted,
+          reason,
+          ...(turnError ? { error: turnError.message } : {}),
+        })
       }
       return { text: finalText, aborted, reason }
     },

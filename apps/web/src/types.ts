@@ -201,6 +201,8 @@ export interface SessionInfoDto {
   /** 首条消息派生的标题（主区页头） */
   title?: string
   events: any[]
+  /** 服务端当前已发出的最大 SSE 帧序号 */
+  streamSeq?: number
   contextTokens: number
   /** 当前模型的上下文窗口（上下文环分母） */
   modelWindow?: number

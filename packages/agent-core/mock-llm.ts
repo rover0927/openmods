@@ -133,8 +133,8 @@ export function createMockLlm(): LlmAdapter {
       const sharedCanvasNotEmpty = sys.includes('[当前会话] 画布已有')
       const modelExists = hasCreateModel || hasSummary || sharedCanvasNotEmpty
 
-      // —— 主代理（lead）：脚本化"派发子代理"流程，便于离线验证并发子代理 ——
-      if (sys.includes('主代理（lead）')) {
+      // —— 方案代理（lead）：脚本化"派发子代理"流程，便于离线验证并发子代理 ——
+      if (sys.includes('方案代理（lead）')) {
         if (last?.role === 'tool') {
           const toolText = typeof last.content === 'string' ? last.content : ''
           if (toolText.includes('汇报：')) {

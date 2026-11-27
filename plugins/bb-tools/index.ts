@@ -367,16 +367,45 @@ const tools: ToolDef[] = [
   },
   {
     name: 'canvas_export',
-    description: '把**当前活跃画布**的完整工程导出为 Blockbench 项目 JSON 写入会话工作目录：全部分组骨骼与 pivot、每个方块的 from/to/rotation/UV、全部贴图（dataURL）、全部动画关键帧——与用户在画布上看到的 100% 一致。这是把画布模型落地成文件的唯一可靠途径：不要派子代理"抄写"画布（读 193 个方块再吐出来必然截断/失真），不要用原版 item 模型导出（没有骨骼概念，分组/pivot/动画全丢）。导出后用脚本解析这个 JSON 生成模型类/贴图即可。',
+    description: '把画布的完整工程导出为 Blockbench 项目 JSON 写入会话工作目录：全部分组骨骼与 pivot、每个方块的 from/to/rotation/UV、全部贴图（dataURL）、全部动画关键帧——与用户在画布上看到的 100% 一致。可传 canvas 指定子代理名或画布 id；省略时导出当前活跃画布（若当前主画布为空且会话树下有唯一的非空子代理画布，则自动导出该子代理画布）。导出后用脚本解析这个 JSON 生成模型类/贴图即可。',
     parameters: {
       type: 'object',
       properties: {
         file_path: { type: 'string', description: '目标文件（相对会话工作目录），默认 canvas-export/<模型名>.json' },
+        canvas: { type: 'string', description: '可选：要导出的子代理名、画布名或画布 id（如 wolf）；省略则导出当前活跃画布或唯一非空子代理画布' },
       },
     },
     mutates: true,
     async execute(args, exec) {
-      const doc = getDoc(exec)
+      let doc = getDoc(exec)
+      const targetKey = String(args.canvas ?? '').trim()
+      if (targetKey) {
+        const tree = exec.canvas.listTree(exec.sessionId)
+        const hit = tree.find(c =>
+          c.canvasId === targetKey
+          || c.ownerName === targetKey
+          || c.name === targetKey
+          || c.ownerSessionId === targetKey,
+        )
+        if (!hit) {
+          const available = tree.map(c => `${c.ownerName}(${c.canvasId})`).join('、') || '无'
+          return { forModel: `未找到画布 "${targetKey}"。会话树可用画布：${available}`, isError: true }
+        }
+        const foundDoc = exec.canvas.readCanvas(hit.canvasId) as BbDoc | undefined
+        if (foundDoc) doc = foundDoc
+      } else if (!doc.elements.length && !(doc.animations ?? []).length) {
+        const nonEmpty = exec.canvas.listTree(exec.sessionId).filter(c => c.hasModel)
+        if (nonEmpty.length === 1) {
+          const autoDoc = exec.canvas.readCanvas(nonEmpty[0].canvasId) as BbDoc | undefined
+          if (autoDoc) doc = autoDoc
+        } else if (nonEmpty.length > 1) {
+          const available = nonEmpty.map(c => `${c.ownerName}(canvas: "${c.canvasId}", 模型: "${c.name}")`).join('、')
+          return {
+            forModel: `当前活跃画布为空，而会话树下有多块非空子代理画布：${available}。请传 canvas 参数（子代理名或画布 id）指定要导出哪一块。`,
+            isError: true,
+          }
+        }
+      }
       if (!doc.elements.length && !(doc.animations ?? []).length) {
         return { forModel: '当前画布为空，请先 spawn_modeling_subagent 建模并验收', isError: true }
       }
@@ -395,9 +424,9 @@ const tools: ToolDef[] = [
       walk(doc.outliner ?? [])
       const kb = Math.round(Buffer.byteLength(json) / 1024)
       return ok([
-        `已导出当前活跃画布工程 → ${rel}（${kb} KB）`,
+        `已导出画布工程 → ${rel}（${kb} KB）`,
         `内容：${doc.elements.length} 个方块、${groups.length} 个分组骨骼、${doc.textures.length} 张贴图（dataURL 内嵌）、${doc.animations.length} 套动画关键帧。`,
-        `骨骼树（outliner）、每块的 from/to/rotation、贴图引用与 UV、动画 bones 关键帧全部在内，与当前活跃画布所见一致。直接解析此文件生成模型/贴图，不要再派子代理读画布。`,
+        `骨骼树（outliner）、每块的 from/to/rotation、贴图引用与 UV、动画 bones 关键帧全部在内，与画布所见一致。直接解析此文件生成模型/贴图，不要再派子代理读画布。`,
       ].join('\n'))
     },
   },
@@ -587,11 +616,12 @@ const tools: ToolDef[] = [
 ]
 
 /** modeling 子代理的提示词归画布插件：关掉 canvas 开关后画布工具与角色一起消失 */
-const MODELING_PROMPT = '你是建模子代理（modeling）：执行主代理派发的建模/动画任务。你拥有本次建模的**独立画布**（本会话的活跃画布），不与主代理或其它子代理共用，你的每次修改都会实时显示给用户。'
+const MODELING_PROMPT = '你是建模子代理（modeling）：执行方案代理派发的建模/动画任务。你拥有本次建模的**独立画布**（本会话的活跃画布），不与方案代理或其它子代理共用，你的每次修改都会实时显示给用户。'
   + '通常画布是空的，直接 create_model 建工程，从**原点**开始搭建；不要为了避让他人做 X/Y/Z 偏移。'
-  + '若画布已有内容（用户预置或上一步留下的），先 list_outline 核对，用 place_cubes 的 group 参数增量追加：已有同名骨骼（如 head、body）就直接往里加，确实需要新骨骼时才 add_group；只有任务要求重做时才 create_model（会清空**当前活跃画布**）。'
-  + '收尾一次简短总结（你新增/修改了什么、部件数、画布现状），不与用户寒暄，不派发任务。'
-  + '总结最后一行固定写「验收点：……」——列出你最没把握、最需要用户亲自确认的部位/动画/比例，供主代理在向用户请求验收时转述；'
+  + '若画布已有内容（用户预置或上一步留下的，包括 resume_subagent 续作微调），先 list_outline 核对，用 modify_cube / place_cubes 的 group 参数增量修改或追加：已有同名骨骼（如 head、body）就直接往里加，确实需要新骨骼时才 add_group；只有任务要求重做时才 create_model（会清空**当前活跃画布**）。'
+  + '无论是首次建模还是续作修改，收尾前都必须调用一次 canvas_export 把最新画布导出到工作目录（如 canvas-export/<模型名>.json），确保磁盘上的导出文件与当前画布完全同步。'
+  + '收尾一次简短总结（你新增/修改了什么、部件数、导出文件路径、画布现状），不与用户寒暄，不派发任务。'
+  + '总结最后一行固定写「验收点：……」——列出你最没把握、最需要用户亲自确认的部位/动画/比例，供方案代理在向用户请求验收时转述；'
   + '自己拿不准的设计决定不要硬猜，在总结里写成待确认项。'
 
 const plugin: Plugin = {
@@ -599,7 +629,7 @@ const plugin: Plugin = {
   // 关闭 canvas 开关时整个插件不加载：画布/动画工具、modeling 子代理角色、建模技能一起消失
   features: [{ id: 'canvas', name: '画布与建模', description: 'Blockbench 风格画布、建模子代理与模型素材编辑。', default: true }],
   requires: ['canvas'],
-  skills: ['blockbench-modeling', 'blockbench-texturing', 'blockbench-use'],
+  skills: ['blockbench-modeling', 'blockbench-texturing', 'blockbench-use', 'blockbench-java-item-delivery'],
   apply(ctx) {
     ctx.profiles.register({
       id: 'modeling',
@@ -607,7 +637,7 @@ const plugin: Plugin = {
       description: '建模子代理：在独立画布上完成造型与动画，收尾导出 JSON 供父会话使用。',
       prompt: MODELING_PROMPT,
       // 子代理是无人值守的画布工作者：不给它终端/授权/提问/计划，避免等待一个不会有人回答的弹窗
-      toolExclude: ['spawn_modeling_subagent', 'list_subagents', ...WORKSPACE_TOOL_NAMES],
+      toolExclude: ['spawn_modeling_subagent', 'list_subagents', 'resume_subagent', ...WORKSPACE_TOOL_NAMES],
       skills: ['blockbench-modeling', 'blockbench-texturing', 'blockbench-use'],
       requires: ['canvas'],
       internal: true,

@@ -13,6 +13,8 @@ Before a new model or substantial geometry redesign, resolve the user's appearan
 
 Spend faces on silhouette, parallax, and deformation. Delete faces no required view or pose reveals, since real-time meshes need not be watertight. Let parts intersect instead of stitching edge loops around the joint, and float thin detail planes instead of cutting detail in. Keep geometry for recesses and openings whose depth must change as the camera moves. See [real-time asset planning](../blockbench-use/references/real-time-asset-planning.md) sections 4–6 for per-target budgets and face-removal rules.
 
+For Java items, run the delivery gates in [Java item delivery](../blockbench-java-item-delivery/SKILL.md) before shipping: structure audit against the target version profile, explicit cost budget, strict render comparison, outline/glow shells, and resource pack packaging.
+
 Use [format and delivery guidance](../blockbench-use/references/formats-and-delivery.md) when selecting a format or exporting. Block out the silhouette and proportions before UV layout and surface detail. Match polygon density to visible shape or deformation needs; automatic subdivision is not a quality step by itself.
 
 For articulated parts, create a hierarchy with pivots at joints and unique, consistent bone names. Group origins are pivots, not translations added to a cube's `from`/`to` coordinates. Place cube bounds in the model's rest coordinate space; the hierarchy applies rotations around those pivots. Mesh vertices are mesh-local, as described below. Check overlapping surfaces for z-fighting and preview moving parts for hidden gaps. See the official [modeling overview](https://blockbench.net/wiki/guides/blockbench-overview-tips/).

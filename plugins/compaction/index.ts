@@ -135,6 +135,7 @@ const plugin: Plugin = {
     const pruneToolResult = (item: SurfaceItemLike): SurfaceItemLike => {
       const limit = resultLimit()
       if (!limit || item.kind !== 'tool' || typeof item.content !== 'string') return item
+      if (/^---\r?\nname:/.test(item.content)) return item
       if (item.content.length <= limit) return item
       const head = Math.min(cfg.prunerHeadChars, Math.floor(limit * 0.6))
       const tail = Math.min(cfg.prunerTailChars, Math.max(0, limit - head - 32))
@@ -194,7 +195,12 @@ const plugin: Plugin = {
       return blocks
     }
 
-    async function compactIfNeeded(session: SessionRuntimeLike, reason: 'pressure' | 'overflow'): Promise<boolean> {
+    async function compactIfNeeded(
+      session: SessionRuntimeLike,
+      reason: 'pressure' | 'overflow',
+      signal?: AbortSignal,
+    ): Promise<boolean> {
+      if (signal?.aborted) return false
       const all = session.getSurfaceMessages()
       const live = all.filter(i => !i.shadowed)
       const contextTokens = session.estimateContextTokens()
@@ -262,12 +268,12 @@ const plugin: Plugin = {
           ]
           let res
           try {
-            res = await ctx.llm.complete({ messages, modelId: summaryModelId })
+            res = await ctx.llm.complete({ messages, modelId: summaryModelId, signal })
           } catch (err: any) {
-            if (summaryModelId === session.currentModelId) throw err
+            if (signal?.aborted || summaryModelId === session.currentModelId) throw err
             // 配置的摘要模型失效（被删除/改名）时回退当前模型，别让压缩卡死
             console.warn(`[compaction] 摘要模型 ${summaryModelId} 不可用（${err?.message ?? err}），回退当前模型`)
-            res = await ctx.llm.complete({ messages, modelId: session.currentModelId })
+            res = await ctx.llm.complete({ messages, modelId: session.currentModelId, signal })
             usedModelId = session.currentModelId
           }
           summaryText = res.text || '（摘要为空）'
@@ -293,17 +299,18 @@ const plugin: Plugin = {
       return true
     }
 
-    ctx.hooks.beforeStep(async ({ session }) => {
+    ctx.hooks.beforeStep(async ({ session, signal }) => {
       // 设置页可关闭主动压缩；请求真的超限时仍走 onOverflow 兜底，避免直接报错
       if (prefs().compactionEnabled === false) return
       // 一次压缩可能仍高于阈值（超大工具结果/稀疏可切分点），按 compactionRetries 连续压
       for (let attempt = 0; attempt <= cfg.compactionRetries; attempt++) {
-        const compacted = await compactIfNeeded(session, 'pressure')
+        if (signal?.aborted) return
+        const compacted = await compactIfNeeded(session, 'pressure', signal)
         if (!compacted) return
       }
     })
-    ctx.hooks.onOverflow(async ({ session }) => {
-      return compactIfNeeded(session, 'overflow')
+    ctx.hooks.onOverflow(async ({ session, signal }) => {
+      return compactIfNeeded(session, 'overflow', signal)
     })
   },
 }

@@ -427,20 +427,24 @@ if (hiddenSkills.size) {
     skillProviders[i] = new FilteredSkillProvider(skillProviders[i], hiddenSkills)
   }
 }
+// 插件角色全部注册完毕后，将持久化的技能覆盖同步进 profileRegistry.records（保证 buildSystemPrompt 与 effectiveSkills 同源）
+for (const [profileId, overrideSkills] of Object.entries(profileSkillsOverrides)) {
+  if (Array.isArray(overrideSkills)) profileRegistry.setSkills(profileId, overrideSkills)
+}
 
 // ---- lead → mcmod 任务移交 ----
 // 只在 mcmod 角色真正存在（mc 开关开启、插件已 apply）时注册；lead 的 toolFilter 也按同一开关加白名单。
-// lead 只负责 idea 与方案，判定实施阶段后直接调用（提示词里写明，不再征询用户），这里只做执行侧校验。
+// lead 只负责方案，判定进入实施阶段后直接调用（提示词里写明，不再征询用户），这里只做执行侧校验。
 if (bootFeatures.mc !== false && profileRegistry.has('mcmod')) {
   tools.push({
     name: 'handoff_to_mcmod',
-    description: '把当前会话移交给 mcmod（Minecraft 1.20.1 Forge 开发主代理）。lead 只负责 idea 与方案，实施（脚手架/构建/写 Java 与资源/加物品方块等）一律调用本工具，无需征询用户；'
-      + 'task 传本回合用户的原始需求全文，并在其后追加【已确认方案】段落（没有方案时只传原始需求）。'
+    description: '把当前会话移交给 mcmod（Minecraft 1.20.1 Forge 开发主代理）。lead 只制订方案、不做实施，实施（脚手架/构建/写 Java 与资源/加物品方块等）一律调用本工具，无需征询用户；'
+      + 'task 传本回合用户的原始需求全文，并在其后追加【方案要点】或【已确认方案】段落（至少包含范围、关键选择、验收点）。'
       + '移交后会话角色持久化为 mcmod，本轮结束后系统会自动用该需求续跑一轮，用户不需要重发。',
     parameters: {
       type: 'object',
       properties: {
-        task: { type: 'string', description: '本回合用户的原始需求全文（原样粘贴）；已与用户确认方案时，在末尾追加【已确认方案】要点' },
+        task: { type: 'string', description: '本回合用户的原始需求全文（原样粘贴），末尾追加【方案要点】或【已确认方案】（范围、关键选择、验收点）' },
       },
       required: ['task'],
     },
@@ -582,6 +586,11 @@ class SseWriter {
    */
   nextId(): number {
     return ++this.seq
+  }
+
+  /** 当前已发出的最大 SSE 帧序号（客户端初次打开进行中会话时据此对齐增量起点） */
+  currentSeq(): number {
+    return this.seq
   }
 
   /** 只补发"当前进行中回合"的帧，避免历史回合的增量被重复渲染 */
@@ -1169,7 +1178,7 @@ function formatSettlementPrompt(batch: SettledChild[], profile: string): string 
     '5) 汇报里写清：每个子代理做了什么、各自的画布页签、你没把握的点（有就直接在提问里一并问，不要自己猜）。',
   )
   if (profileHasTool(profile, 'canvas_export')) {
-    parts.push('落地（如 canvas_export 导出）留到用户验收通过后的下一轮再做，本回合不导出。')
+    parts.push('用户验收通过后的下一轮如需导出子代理画布，调用 canvas_export 并传 canvas="<子代理名>" 即可直接导出该子代理画布，本结算回合暂不导出。')
   }
   return parts.join('\n')
 }
@@ -1257,7 +1266,8 @@ async function resumeSubagent(
     childId: child.id, name: child.agentName, description: child.description, status: 'running',
   })
   parent.sse.send('session/waiting', { sessionId: parent.id, waiting: waitingRows(parent) })
-  void runSessionTurn(child, { text: input.prompt, profile: 'modeling', modelId: child.runtime.currentModelId })
+  const resumePrompt = `${input.prompt.trim()}\n\n[系统提醒：你在原画布上继续修改，完成后请调用 canvas_export 重新导出最新模型 JSON 到工作目录，以确保落盘文件同步更新。]`
+  void runSessionTurn(child, { text: resumePrompt, profile: 'modeling', modelId: child.runtime.currentModelId })
     .catch(e => {
       console.warn('[subagent] 续作运行异常:', e?.message ?? e)
       if (parent.waiting.has(child.id)) {
@@ -1621,6 +1631,7 @@ app.patch('/api/agents/:id/skills', async (req, reply) => {
   }
   const known = new Set(skillProviders.flatMap(p => p.list().map(m => m.name)))
   profileSkillsOverrides[id] = [...new Set(skills.map(String))].filter(s => known.has(s))
+  profileRegistry.setSkills(id, profileSkillsOverrides[id])
   saveSkillsOverrides()
   return { ok: true, skills: profileSkillsOverrides[id] }
 })
@@ -1688,6 +1699,7 @@ app.delete('/api/skills/:name', async (req, reply) => {
   for (const id of Object.keys(profileRegistry.records)) {
     if (profileSkillsOverrides[id]) {
       profileSkillsOverrides[id] = profileSkillsOverrides[id].filter(s => s !== name)
+      profileRegistry.setSkills(id, profileSkillsOverrides[id])
     }
   }
   saveSkillsOverrides()
@@ -2516,6 +2528,7 @@ app.post('/api/sessions/:id/interactions/:reqId', async (req, reply) => {
   const body = (req.body ?? {}) as InteractionReply
   const r = interactionHub.answer(s.id, String((req.params as any).reqId), body)
   if (!r.ok) return reply.code(404).send({ error: r.error })
+  bus.emit('session/interaction-answered', { sessionId: s.id })
   return { ok: true }
 })
 
@@ -2629,6 +2642,8 @@ app.get('/api/sessions/:id', async (req, reply) => {
       /** 首条消息派生的标题（主区页头显示；子代理通常为空，用 agentName） */
       title: sessionStore.list().find(r => r.id === s.id)?.title ?? '',
       events: s.log.all(),
+      /** 当前已发送的 SSE 帧序号：前端重连/打开运行中会话时可用它避免重放已包含在 events 里的历史帧 */
+      streamSeq: s.sse.currentSeq(),
       /** 上下文环的分子/分母 + 图形化面板的三段构成（与 stats 帧同源） */
       ...contextFigures(s),
       modelId: s.runtime.currentModelId,
@@ -2830,7 +2845,9 @@ app.post('/api/sessions/:id/chat', async (req, reply) => {
   const body = (req.body ?? {}) as {
     text?: string; modelId?: string; mode?: 'build' | 'refine'; attachments?: any[]; profile?: string; reasoningEffort?: string
   }
-  if (!body.text?.trim()) return reply.code(400).send({ error: 'text 不能为空' })
+  const hasAttachments = Array.isArray(body.attachments) && body.attachments.length > 0
+  if (!body.text?.trim() && !hasAttachments) return reply.code(400).send({ error: 'text 不能为空' })
+  const textInput = body.text?.trim() ? body.text : '（请看附图）'
   // 代理角色：未知 id 直接回落当前角色（不 400——老客户端不会带这个字段）
   const wantedProfile = typeof body.profile === 'string' && profileRegistry.has(body.profile) ? body.profile : undefined
   if (wantedProfile && wantedProfile !== s.profile) {
@@ -2861,7 +2878,7 @@ app.post('/api/sessions/:id/chat', async (req, reply) => {
 
   // 异步启动：事件全部走 GET /api/sessions/:id/stream（子代理也是这样后台跑）
   void runSessionTurn(s, {
-    text: body.text,
+    text: textInput,
     attachments: admitted,
     modelId: body.modelId,
     mode: body.mode,

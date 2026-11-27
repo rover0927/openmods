@@ -152,9 +152,12 @@ function replayEvents(events: any[]): TurnEntry[] {
       if (ev.text) cur.assistantText = cur.assistantText ? `${cur.assistantText}\n\n${ev.text}` : ev.text
       if (ev.reasoning) cur.reasoning = cur.reasoning ? `${cur.reasoning}\n\n${ev.reasoning}` : ev.reasoning
     } else if (ev.t === 'tool/call' && out.length && !out[out.length - 1].notice) {
-      out[out.length - 1].steps.push({
-        callId: ev.callId, name: ev.name, detail: toolDetail(ev.name, toolArgs(ev.args)), done: true,
-      })
+      const callCur = out[out.length - 1]
+      if (!ev.callId || !callCur.steps.some(s => s.callId === ev.callId)) {
+        callCur.steps.push({
+          callId: ev.callId, name: ev.name, detail: toolDetail(ev.name, toolArgs(ev.args)), done: true,
+        })
+      }
     } else if (ev.t === 'tool/result' && out.length && !out[out.length - 1].notice) {
       // 历史回放只补成功/失败状态，不把工具输出带进前端状态
       const cur = out[out.length - 1]
@@ -163,10 +166,15 @@ function replayEvents(events: any[]): TurnEntry[] {
         step.done = true
         step.isError = !!ev.isError
       }
+    } else if (ev.t === 'error' && out.length && !out[out.length - 1].notice) {
+      // 运行时异常已持久化到日志：重开会话也要看到这一轮为什么失败
+      const errCur = out[out.length - 1]
+      if (ev.message) errCur.error = ev.message
     } else if (ev.t === 'turn/end' && out.length && !out[out.length - 1].notice) {
-      // 重开会话也要能看到系统收尾（如「已达单轮步数上限」）：只在模型没有正文时补
+      // 重开会话也要能看到系统收尾（如「已达单轮步数上限」或异常信息）：只在模型没有正文时补
       const cur = out[out.length - 1]
       if (ev.text && !cur.assistantText) cur.assistantText = ev.text
+      if (ev.error && !cur.error) cur.error = ev.error
     } else if (ev.t === 'subagent/notice') {
       out.push({
         turnId: `notice-${ev.seq}`, userText: '', attachments: 0, steps: [], assistantText: '', streaming: false,
@@ -306,7 +314,7 @@ export default function App() {
   } | null>(null)
   /** MC 工程（mcdev）状态：dock 顶部的「测试 Mod」/ jar 下载按钮数据源 */
   const [mcProjects, setMcProjects] = useState<McProjectUiDto[]>([])
-  /** 代理角色（dsh agentPreset）：lead=主代理、mcmod=1.20.1 Forge 模组开发 */
+  /** 代理角色（dsh agentPreset）：lead=方案代理、mcmod=1.20.1 Forge 模组开发 */
   const [agentProfile, setAgentProfile] = useState<string>(() => localStorage.getItem('openmods.profile') ?? 'lead')
   const [profiles, setProfiles] = useState<AgentProfileDto[]>([])
   /** 功能开关（/api/features）：画布 / MC / 素材库入口按它隐藏；未加载时默认全开 */
@@ -349,12 +357,19 @@ export default function App() {
   const prefsRef = useRef<PrefsDto | null>(null)
   prefsRef.current = prefs
   const wakeRef = useRef<(reason: string) => void>(() => {})
+  /** 已通过静态 events 回放落地的 stepId 集合：防止 SSE replay(-1) 把已落盘步骤的 delta 再拼一遍 */
+  const replayedStepsRef = useRef<Set<string>>(new Set())
+  const toastTimerRef = useRef<number | undefined>(undefined)
 
   /** 提示条：可带一个操作按钮（dsh 的「会话已归档，可 撤销」同款） */
   const showToast = useCallback((msg: string, action?: { label: string; run: () => void }) => {
     playToastSound()
+    if (toastTimerRef.current !== undefined) window.clearTimeout(toastTimerRef.current)
     setToast({ text: msg, action })
-    setTimeout(() => setToast(null), action ? 8000 : 5000)
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = undefined
+      setToast(null)
+    }, action ? 8000 : 5000)
   }, [])
 
   // ---- MC 构建/启动的升级动画：进度条 1.75s → 成就弹窗 + levelup 音效 ----
@@ -510,7 +525,7 @@ export default function App() {
     setLibraryOpen(false)
   }, [features, featureOn])
 
-  // 当前角色被关掉（如关闭 MC 后 mcmod 不存在）：回落到主代理
+  // 当前角色被关掉（如关闭 MC 后 mcmod 不存在）：回落到方案代理
   useEffect(() => {
     if (!features || profiles.length === 0) return
     if (profiles.some(p => p.id === agentProfile)) return
@@ -603,21 +618,27 @@ export default function App() {
         }
         break
       case 'assistant/reasoning':
+        if (f.stepId && replayedStepsRef.current.has(String(f.stepId))) break
         // 思考过程单独计数：工具调用步骤只有 reasoning，没有正文，否则界面上一直是"已想 0 字"
         setStreamChars(c => c + (f.delta?.length ?? 0))
         setThinkTail(prev => (prev + (f.delta ?? '')).slice(-120))
         updateLastTurn(t => ({ ...t, reasoning: (t.reasoning ?? '') + f.delta }))
         break
       case 'assistant/delta':
+        if (f.stepId && replayedStepsRef.current.has(String(f.stepId))) break
         setStreamChars(c => c + f.delta.length)
         setThinkTail('')
         updateLastTurn(t => ({ ...t, assistantText: t.assistantText + f.delta }))
         break
       case 'tool/call':
-        updateLastTurn(t => ({
-          ...t,
-          steps: [...t.steps, { callId: f.callId, name: f.name, detail: toolDetail(f.name, f.args), done: false }],
-        }))
+        updateLastTurn(t => {
+          // SSE 重放可能补发已从日志回放过的调用：按 callId 去重
+          if (f.callId && t.steps.some(s => s.callId === f.callId)) return t
+          return {
+            ...t,
+            steps: [...t.steps, { callId: f.callId, name: f.name, detail: toolDetail(f.name, f.args), done: false }],
+          }
+        })
         break
       case 'tool/result':
         updateLastTurn(t => ({
@@ -829,7 +850,11 @@ export default function App() {
     }
   }, [sendToBridge, updateLastTurn, showToast, refreshModels, refreshSubagents, rootSessionId, refreshCanvases, sessionId, celebrate])
 
+  const handleEventRef = useRef(handleEvent)
+  handleEventRef.current = handleEvent
+
   // 统一事件流：当前打开的会话（主会话或子代理）都订阅同一条 SSE
+  // 注意：不把 handleEvent 放进依赖，避免 rootSessionId 等状态更新时关闭并重连 EventSource 导致流式帧被重复回放
   useEffect(() => {
     if (!sessionId) return
     const es = new EventSource(api.streamUrl(sessionId, streamSince))
@@ -851,10 +876,10 @@ export default function App() {
         if (frame.canvasId) setActiveSessionCanvasId(String(frame.canvasId))
         return
       }
-      handleEvent(frame)
+      handleEventRef.current(frame)
     }
     return () => es.close()
-  }, [sessionId, streamSince, handleEvent])
+  }, [sessionId, streamSince])
 
   // 子代理目录轮询：面板与状态点保持新鲜（运行中会自己变完成）
   useEffect(() => {
@@ -1172,6 +1197,11 @@ export default function App() {
       const root = res.parentId ?? res.id
       setSessionInfo(res)
       setRootSessionId(root)
+      replayedStepsRef.current = new Set(
+        (res.events ?? [])
+          .filter((e: any) => e.t === 'assistant/message' && e.stepId)
+          .map((e: any) => String(e.stepId)),
+      )
       setStreamSince(res.events.length === 0 ? 0 : -1)
       setSessionId(id)
       localStorage.setItem('openmods.sid', id)
@@ -1183,7 +1213,10 @@ export default function App() {
       setModelWindow(typeof res.modelWindow === 'number' ? res.modelWindow : null)
       setCtxBreakdown(res.contextBreakdown ?? null)
       // 子代理会话（如 modeling）不占用全局角色选择：它只代表那个子代理，不应把用户选好的角色顶掉
-      if (!res.parentId && res.profile) setAgentProfile(res.profile)
+      if (!res.parentId && res.profile) {
+        setAgentProfile(res.profile)
+        localStorage.setItem('openmods.profile', res.profile)
+      }
       setBusy(!!res.busy)
       setWaiting(res.waiting ?? [])
       // 会话级协作状态：计划模式 / 待办 / 授权 / 未答问题（刷新后也要恢复）
@@ -1432,8 +1465,8 @@ export default function App() {
   }, [sessionId, waiting.length, rootSessionId, refreshSubagents])
 
   // ---- 计划模式 / 授权策略 / 人机交互 ----
-  const togglePlan = useCallback(async () => {
-    const next = !planMode
+  const togglePlan = useCallback(async (forced?: boolean) => {
+    const next = typeof forced === 'boolean' ? forced : !planMode
     setPlanMode(next) // 乐观更新；失败回滚
     // 草稿会话还没落盘：只改本地，发送首条消息创建会话时再同步（见 send）
     if (!sessionId) return
@@ -1601,7 +1634,12 @@ export default function App() {
     setPlayingAnim(null)
     setBusy(false)
     setWaiting([])
-    // 新会话默认进入计划模式（与服务端 createSession 的 root 默认一致；MOCK 演示除外）
+    replayedStepsRef.current.clear()
+    // 新会话默认回到方案代理（lead）+ 计划模式（与服务端 createSession 的 root 默认一致；MOCK 演示除外）
+    if (profiles.length === 0 || profiles.some(p => p.id === 'lead')) {
+      setAgentProfile('lead')
+      localStorage.setItem('openmods.profile', 'lead')
+    }
     setPlanMode(!health?.mock)
     setTodos(null)
     setPermission('ask')

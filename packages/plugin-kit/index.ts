@@ -37,7 +37,7 @@ export interface ToolDef {
    * 计划模式拦截时给模型的具体原因（如 bash 指出第一个不允许的命令/分段）。
    * 仅在 planSafe 判定不可行时调用；缺省用运行时的通用提示。
    */
-  planDeniedReason?: (args: any, exec: ToolExecContext) => string | undefined
+  planDeniedReason?: (args: any, exec: ToolExecContext) => string | null | undefined
   /**
    * 是否需要用户授权（复刻 dsh `approval/request` 的最小面）：
    * - `true`：每次调用都要（会话内可以「总是允许」把该工具加入白名单）
@@ -207,6 +207,8 @@ export interface SkillProvider {
 /** 压缩等插件在每步模型调用前插入逻辑 */
 export interface StepHookContext {
   session: SessionRuntimeLike
+  /** 当前回合的中止信号：耗时钩子（如 compaction 摘要请求）应透传以支持用户随时停止 */
+  signal?: AbortSignal
   /** 中止本次 turn（如压缩失败不可恢复） */
   abort(reason: string): void
 }
@@ -223,11 +225,14 @@ export interface SurfaceTransform {
 }
 
 export interface SurfaceItemLike {
+  seq: number
   kind: 'user' | 'assistant' | 'tool' | 'summary'
   /** 文本内容；assistant 带工具调用时可为空 */
   content: string | null
   toolCalls?: { id: string; name: string; args: string }[]
   toolCallId?: string
+  /** 是否已被压缩摘要影子化 */
+  shadowed?: boolean
   /** 供压缩统计用 */
   _estimateTokens?: number
 }
@@ -349,7 +354,7 @@ export interface PluginContext {
     beforeStep(cb: (s: StepHookContext) => Promise<void>): void
     onOverflow(cb: (s: OverflowHookContext) => Promise<boolean>): void
     /** 注册 surface 变换（发往模型前生效，如裁剪） */
-    registerSurfaceTransform(t: SurfaceTransform): void
+    registerSurfaceTransform(t: SurfaceTransform | ((items: SurfaceItemLike[]) => SurfaceItemLike[])): void
     /** 注册系统提示附加段（如材质表）；每步按当前会话现算 */
     registerSystemSection(cb: (ctx: SystemSectionContext) => string): void
   }

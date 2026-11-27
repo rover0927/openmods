@@ -113,6 +113,12 @@ export function createProfileRegistry() {
       records[decl.id] = { ...profile, skills: profile.skills ?? [] }
       meta.set(decl.id, { requires, internal })
     },
+    /** 动态更新角色的生效技能列表（设置 → 代理与技能 修改后同步到 records，使 buildSystemPrompt 立即生效） */
+    setSkills(id: string, skills: string[]) {
+      if (records[id]) {
+        records[id] = { ...records[id], skills: [...skills] }
+      }
+    },
     get(id: string | undefined): RegisteredProfile | undefined {
       const profile = id ? records[id] : undefined
       if (!profile) return undefined

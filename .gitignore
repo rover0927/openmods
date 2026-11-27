@@ -14,6 +14,7 @@ plugins/mcdev/vendor/
 # ---- 临时 / 日志 ----
 .tmp*
 *.log
+__pycache__/
 
 # ---- WorkBuddy 本地工作区（会话记忆等，仅本机）----
 .workbuddy/

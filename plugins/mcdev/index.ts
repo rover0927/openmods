@@ -587,7 +587,7 @@ async function scaffold(opts: {
   const exists = await stat(projectDir).catch(() => null)
   if (exists) {
     const entries = await readdir(projectDir)
-    if (entries.length) {
+    if (entries.filter(e => !['docs', 'canvas-export', '.plans', '.git', '.gitignore', 'README.md'].includes(e)).length) {
       // name="." 最常见：模型在已有文件的会话目录里建工程，会把目标解析成非空目录
       if (rawName === '.' || rawName === './' || rawName === '.\\') {
         throw new Error(
@@ -711,7 +711,7 @@ async function runGradle(opts: {
   onResult?: (r: { task: string; ok: boolean; code: number; jarPath?: string; buildLogId?: string; errorSummary?: string }) => void
 }): Promise<ToolResult & { errorSummary?: string }> {
   const { projectDir, task } = opts
-  if (!/^[a-zA-Z][\w:.-]*$/.test(task)) return fail(`任务名不合法：${task}`)
+  if (task !== '--stop' && !/^[a-zA-Z][\w:.-]*$/.test(task)) return fail(`任务名不合法：${task}`)
   // 启动前先校验 Java 17：缺失或版本不对直接返回可操作中文错误，不再把原始报错丢给模型
   const java = resolveJava17()
   if ('error' in java) return fail(java.error)
@@ -1248,6 +1248,10 @@ const plugin: Plugin = {
     }
     const throttle = new Map<string, BuildThrottle>()
     ctx.events.on('session/turn', (data: any) => {
+      const sid = String(data?.sessionId ?? '')
+      if (sid) throttle.delete(sid)
+    })
+    ctx.events.on('session/interaction-answered', (data: any) => {
       const sid = String(data?.sessionId ?? '')
       if (sid) throttle.delete(sid)
     })

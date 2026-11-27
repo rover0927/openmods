@@ -37,9 +37,9 @@
 | <img src="apps/web/public/mc/block/grass_block_top.png" width="16" alt=""> **MC 像素界面** | 5 套方块主题（草方块 / 樱花 / 深海 / 下界 / 末地）；结构墙随主题换材质，品牌方块固定草方块；物品图标、像素斜面、主题色主操作 |
 | <img src="apps/web/public/mc/item/diamond_pickaxe.png" width="16" alt=""> **多画布建模** | 主会话与每个建模子代理各有一块独立画布；右侧多页签查看/切换，活跃画布 durable，支持新建空白画布 |
 | <img src="apps/web/public/mc/item/book.png" width="16" alt=""> **素材库** | 模型 / Jar 构建 / 图片 / 文件四类分开；上传、拖拽、工作目录导入、从画布截取；Jar 页多选后统一启动独立 Forge 测试客户端 |
-| <img src="apps/web/public/mc/item/totem_of_undying.png" width="16" alt=""> **主代理全能力** | 权限审批、计划模式、询问用户、终端、文件读写、并发子代理——对标 dsh 主 agent |
+| <img src="apps/web/public/mc/item/totem_of_undying.png" width="16" alt=""> **方案代理工作台** | 只读检索、权限审批、计划模式、询问用户、待办与并发子代理；不写文件、不跑命令，实施交给 mcmod / 建模子代理 / coding |
 | <img src="apps/web/public/mc/item/clock.png" width="16" alt=""> **首次环境检测** | 首次打开检测 JDK 17 / Gradle 离线缓存 / Git；向导选择 JDK 与缓存路径，设置 → 环境可随时重检、整理错位 vendor |
-| <img src="apps/web/public/mc/item/redstone.png" width="16" alt=""> **角色协作** | MC 工程目录默认 mcmod；lead 出创意与方案、mcmod 负责实施，移交后自动续跑；mcmod 的造型需求先派建模子代理 |
+| <img src="apps/web/public/mc/item/redstone.png" width="16" alt=""> **角色协作** | MC 工程目录默认 mcmod；lead 只制订方案、不做实施，mcmod 负责落地，移交后自动续跑；mcmod 的造型需求先派建模子代理 |
 | <img src="apps/web/public/mc/item/lava_bucket.png" width="16" alt=""> **MC 开发闭环** | `mc_scaffold` 建工程 → 建模子代理出模型并在独立画布导出 JSON → `mc_gradle build` → 标题栏「▶ 测试 Mod」→「jar ⤓」导出（Forge 1.20.1 / 国内镜像 / 离线构建包） |
 | <img src="apps/web/public/mc/item/enchanted_book.png" width="16" alt=""> **代理与技能** | 三个角色（lead / mcmod / modeling）的工具与技能分配可视化；技能自注入、内置技能只读 |
 | <img src="apps/web/public/mc/item/ender_eye.png" width="16" alt=""> **上下文面板** | 底部状态条与右侧面板跟随当前画布页的 owner 会话；分段占用、工具用量、耗时分布、token 环形图、每轮明细 |
@@ -271,12 +271,13 @@ openmods/
 - **会话持久化**：`data/sessions/` 是唯一事实来源——`<id>.jsonl`（事件）、`<id>.meta.json`（标题/模型/画布/协作状态）、`<canvasId>.bbdoc.json`（画布快照）。`GET /api/sessions` 每次扫描目录重建列表；所有 JSON 落盘走 tmp+rename 原子写；标题按完整行扫描日志，首条消息带 base64 附图也能正确提取。
 - **画布归属**：`<id>.meta.json` 里的 `canvasIds` 是会话拥有的画布集合，`canvasId` 是**活跃画布**（durable）。主会话默认拥有自己的画布；**建模子代理使用自己的 id 作为独立画布**，不再继承父画布。老数据没有字段时沿父链回溯（只兼容，不回填）。
 - **runTurn**：图片链路（§5）→ 逐 step：压缩钩子 → build surface → `llm.chat` 流式 → tool_calls 逐个执行并落日志 → 无 tool_calls 收尾。`MAX_STEPS=12`，`AbortController` 支持停止。每个工具调用前过两道内核闸：① 计划模式下 `def.mutates` 一律拦截；② `guardApproval()` 处理 `def.requiresApproval`。
-- **profile**：`profiles.ts` 定义 `lead`（创意与方案主代理）、`mcmod`（MC 模组开发主代理）、`modeling`（建模子代理，排除工作台与 spawn/list）。MC 工程目录的新会话默认 `mcmod`，其他目录默认 `lead`；`lead` 负责创意与方案（idea、需求拆解、玩法/数值/美术设计、设计文档），实施一律移交：方案确认或用户直接要求实现时调用 `handoff_to_mcmod`（task 附【已确认方案】）切换角色并自动续跑。`toolFilter` 白名单 / `toolExclude` 排除双机制，`WORKSPACE_TOOLS` 统一列出工作台工具。
+- **profile**：`profiles.ts` 定义 `lead`（方案代理）、`mcmod`（MC 模组开发主代理）、`modeling`（建模子代理，排除工作台与 spawn/list）。MC 工程目录的新会话默认 `mcmod`，其他目录默认 `lead`；`lead` 只负责制订方案（需求澄清、方向取舍、内容清单、数值与平衡、风险与验收标准），工具面限于只读检索、提问、待办、计划与交办，不写文件、不执行命令、不建模、不操作画布。实施一律移交：MC 方案确认后调用 `handoff_to_mcmod`（task 附【已确认方案】）切换角色并自动续跑；造型交 `spawn_modeling_subagent`；非 MC 实现由用户切换到 `coding`。`toolFilter` 白名单 / `toolExclude` 排除双机制，`WORKSPACE_TOOLS` 统一列出工作台工具。
 
-### 3.2 主代理工作台
+### 3.2 角色工作台
 
-主代理 `lead` / `mcmod` 拥有完整工作台；建模子代理被排除（无人值守，不能等待弹窗）。
+`mcmod` / `coding` 拥有完整工作台；`lead` 只有只读检索与规划工具，不写文件、不跑命令；建模子代理被排除（无人值守，不能等待弹窗）。
 
+- **lead 的工具面**：`read` / `list_dir` / `glob` / `grep`、`ask_user_question`、`todo_write`、`exit_plan_mode`、`load_skill`，以及交办工具 `spawn_modeling_subagent` / `list_subagents` / `handoff_to_mcmod`；没有 `write` / `edit` / `bash` / 终端 / 画布操作。
 - **文件读写（plugins/fs-tools）**：`read` / `write` / `edit` / `list_dir` / `glob` / `grep`。路径相对会话工作目录 `SessionMeta.cwd`（左栏可改，子代理继承）；越界时请求授权。
 - **命令与终端（plugins/shell-tools + terminals.ts）**：`bash`（前台 120s / `run_in_background`）、`terminal_open|list|read|send|kill`。终端用 `child_process` 管道实现（环形缓冲、状态、退出码、stdin、进程树终止）。右侧「终端」标签实时显示输出并支持接管输入；终端事件走 SSE，打开会话时恢复列表与最近输出。
 - **人机交互（plugins/interaction-tools + interaction.ts）**：`ask_user_question`、`todo_write`、`exit_plan_mode`。工具在服务端 `await` 用户答复；未答问题 durable 存 meta，刷新后补弹窗。
@@ -287,7 +288,7 @@ openmods/
 
 **一句话**：子代理是当前会话里临时启用的并行 agent——有独立对话、独立上下文，**也有自己的独立画布**；并发运行。派发后主会话进入等待态，全部子代理结算后自动开一轮汇总回合。
 
-- **派发**：主代理工具 `spawn_modeling_subagent({description, prompt, name?})` 立即返回，服务端 `createSession({parentId, canvasId: 自己的 id, agentName})` 并后台 `runSessionTurn(child, {profile:'modeling'})`。
+- **派发**：lead 的交办工具 `spawn_modeling_subagent({description, prompt, name?})` 立即返回，服务端 `createSession({parentId, canvasId: 自己的 id, agentName})` 并后台 `runSessionTurn(child, {profile:'modeling'})`。
 - **独立画布**：每个子代理的 `meta.canvasIds = [自己 id]`，`canvasId = 自己 id`。`CanvasService.idOf(sessionId)` 解析活跃画布，`listOf()` 返回会话拥有的画布，`listTree(root)` 返回根会话 + 直属子代理的画布并集（根活跃画布排第一，旧共享画布只出现一次并归属根）。
 - **等待 → 自动汇总**：
   - `SessionEntry.waiting` 是「这次派发还没回来」的唯一事实源。lead 回合结束后若有等待子代理，会话进入 `waiting`：不是 idle，但 `/chat` 返回 `409 session-waiting`，前端锁输入、顶部显示 `⏳ 等待 N 个子代理完成`、按钮变「取消等待」。
@@ -343,11 +344,11 @@ composer 的模型 chip 左侧有代理角色下拉（`GET /api/profiles`，选�
 
 | 角色 | 定位 |
 |---|---|
-| `lead`（普通目录默认） | 创意与方案主代理：给 idea、拆需求、做玩法/数值/美术设计、写文档；MC 实施交给 mcmod，非 MC 代码自己实现 |
+| `lead`（普通目录默认） | 方案制订者：澄清需求、只读调研、比较方向，输出可执行方案与验收标准；不写代码、不改文件、不执行命令、不建模。MC 实施交 mcmod，造型交建模子代理，非 MC 实现由用户切换到 coding |
 | `mcmod`（MC 工程默认） | 只做 Java + MC 1.20.1 + Forge 47.x 的模组开发主代理 |
 | `modeling` | 建模子代理（内部角色，不能派发子代理） |
 
-`lead` 在方案确认（或用户已明确要求实现）后调用 `handoff_to_mcmod`，`task` 带原始需求与【已确认方案】：会话角色持久化为 `mcmod`，当前回合结束后自动用原需求续跑一轮，不需要用户重发。MC 工程目录（`gradle.properties` 含 `minecraft_version`，或 `build.gradle` 含 ForgeGradle）新建会话默认直接用 `mcmod`。
+`lead` 在方案确认后调用 `handoff_to_mcmod`，`task` 带原始需求与【已确认方案】：会话角色持久化为 `mcmod`，当前回合结束后自动用原需求续跑一轮，不需要用户重发。用户已明确要求实现时，lead 仍先给 3-5 行方案要点再移交。MC 工程目录（`gradle.properties` 含 `minecraft_version`，或 `build.gradle` 含 ForgeGradle）新建会话默认直接用 `mcmod`。
 
 `mcmod` 的工具面来自 `plugins/mcdev`：
 

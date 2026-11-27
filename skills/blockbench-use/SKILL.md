@@ -20,6 +20,7 @@ Load this skill before creating, modifying, or exporting Blockbench content. For
 | Cubes, meshes, groups, silhouette, topology | [Modeling](../blockbench-modeling/SKILL.md) |
 | Bedrock poles, cylinders, tubes, rings, and faceted round shapes | [Modeling](../blockbench-modeling/SKILL.md), then [Bedrock primitives](../blockbench-modeling/references/bedrock-primitives.md) |
 | UVs, pixel density, painting, layers | [Texturing](../blockbench-texturing/SKILL.md) |
+| Java item delivery: cost audit, outline/glow shells, strict render diff, resource pack packaging, version profiles | [Java item delivery](../blockbench-java-item-delivery/SKILL.md) |
 | Vanilla/default Minecraft textures, or a named Minecraft block or material (bricks, oak logs, stone bricks) | [Vanilla textures](../blockbench-vanilla-textures/SKILL.md), then [Texturing](../blockbench-texturing/SKILL.md) for UVs |
 | Animated textures, sprite sheets, vertical flipbooks | [Flipbook textures](../blockbench-flipbook-textures/SKILL.md), which requires [GPT Image textures](../blockbench-gpt-image-textures/SKILL.md) for generated artwork |
 | Pivots, keyframes, timing, animation export | [Animation](../blockbench-animation/SKILL.md) |
@@ -28,6 +29,8 @@ Load this skill before creating, modifying, or exporting Blockbench content. For
 | Normal, height or MER maps derived from an existing color texture | [Albedo to normal](../blockbench-albedo-to-normal/SKILL.md), then [PBR materials](../blockbench-pbr-materials/SKILL.md) to assign them |
 | Hytale formats, attachments, stretch, visibility | [Hytale](../blockbench-hytale/SKILL.md), then applicable shared domains |
 | Armature deformation, display slots, Bedrock material instances | [MCP overview](../blockbench-mcp-overview/SKILL.md) and live schemas |
+
+Some routed skills (animation, particles, PBR materials, vanilla/flipbook textures, Hytale, MCP overview, development) may not be installed in this workspace. Check the available skill list first; when one is missing, continue with this skill, the closest installed sibling, and the live MCP schemas instead of assuming its tools or paths exist.
 
 ## Work at the Scale of the Request
 
