@@ -328,10 +328,10 @@ input, textarea, select { font-family: inherit; }
 /* 消息列：dsh 的 748px 内容轴，居中 */
 .chat-scroll {
   flex: 1; overflow-y: auto;
-  padding: 20px 24px 0;
-  display: flex; flex-direction: column; gap: 20px;
+  padding: 24px 28px 12px;
+  display: flex; flex-direction: column; gap: 22px;
 }
-.chat-column { width: 100%; max-width: var(--content-w); margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+.chat-column { width: 100%; max-width: var(--content-w); margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
 
 /* 运行/等待条：贴在消息列顶部，不再是通栏绿条 */
 .run-banner {
@@ -389,8 +389,8 @@ input, textarea, select { font-family: inherit; }
 .assistant-bubble { background: transparent; border: 0; padding: 0; max-width: 100%; }
 
 /* 助手正文的 Markdown（dsh 也是渲染 Markdown，不是原样显示星号） */
-.md { font-size: inherit; line-height: 1.75; color: var(--label-primary); }
-.md-p { margin: 0 0 10px; white-space: pre-wrap; word-break: break-word; }
+.md { font-size: inherit; line-height: 1.78; color: var(--label-primary); letter-spacing: 0.01em; }
+.md-p { margin: 0 0 12px; white-space: pre-wrap; word-break: break-word; }
 .md-p:last-child { margin-bottom: 0; }
 .md-h { margin: 14px 0 8px; font-weight: 700; line-height: 1.5; color: var(--label-primary); text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.65); }
 .md-h:first-child { margin-top: 0; }
