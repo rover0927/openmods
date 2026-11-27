@@ -1,6 +1,6 @@
 // 自更新：检查 GitHub 上的 openmods main，由用户手动确认后 git pull + 重建前端。
-// 不自动改动工作区；有未提交的跟踪文件时拒绝更新。
-import { spawnSync } from 'node:child_process'
+// 不自动改动工作区；有未提交的跟踪文件时支持自动 git stash 暂存后更新。
+import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
@@ -25,7 +25,7 @@ export interface UpdateStatus {
   state: UpdateState
   aheadBy: number
   behindBy: number
-  /** 落后时列出的新提交（最多 10 条） */
+  /** 落后时列出的新提交（最多 10 条，最新在前） */
   commits: UpdateCommit[]
   dirty: boolean
   dirtyFiles: string[]
@@ -38,6 +38,7 @@ export interface UpdateApplyResult {
   before?: string
   after?: string
   changed?: string[]
+  stashed?: boolean
   build?: 'ok' | 'failed' | 'skipped'
   output?: string
   needsRestart?: boolean
@@ -81,17 +82,64 @@ function gitOut(args: string[], timeout = 60_000): string {
   return r.status === 0 ? String(r.stdout ?? '').trim() : ''
 }
 
-function gitError(r: ReturnType<typeof spawnSync>): string {
-  // spawnSync 找不到可执行文件时不抛异常，只在 error 上带 ENOENT
+function gitError(r: { status: number | null; stdout?: string; stderr?: string; error?: Error }): string {
+  // spawn 找不到可执行文件时不抛异常，只在 error 上带 ENOENT
   if ((r.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return GIT_MISSING
   return String(r.stderr ?? '').trim() || String(r.stdout ?? '').trim() || `git 退出码 ${r.status ?? -1}`
 }
 
-function localCommit(): UpdateCommit | undefined {
-  const raw = gitOut(['show', '-s', '--format=%H%x09%s%x09%aI%x09%an', 'HEAD'])
+/** 异步执行进程（用于 fetch / merge / npm install / npm run build，避免阻塞 Fastify 事件循环） */
+function spawnAsync(
+  cmd: string,
+  args: string[],
+  opts: { timeout: number; shell?: boolean },
+): Promise<{ status: number | null; stdout: string; stderr: string; error?: Error }> {
+  return new Promise(resolve => {
+    const child = spawn(cmd, args, {
+      cwd: ROOT,
+      windowsHide: true,
+      shell: opts.shell ?? false,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      try { child.kill() } catch { /* ignore */ }
+      resolve({ status: -1, stdout, stderr: `${stderr}\n执行超时（${Math.round(opts.timeout / 1000)}s）`.trim() })
+    }, opts.timeout)
+    child.stdout?.on('data', d => { stdout += String(d) })
+    child.stderr?.on('data', d => { stderr += String(d) })
+    child.on('error', err => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ status: -1, stdout, stderr, error: err })
+    })
+    child.on('close', code => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ status: code, stdout, stderr })
+    })
+  })
+}
+
+function gitAsync(args: string[], timeout = 60_000) {
+  return spawnAsync(gitBinary(), args, { timeout })
+}
+
+function commitOfRef(ref: string): UpdateCommit | undefined {
+  const raw = gitOut(['show', '-s', '--format=%H%x09%s%x09%aI%x09%an', ref])
   if (!raw) return undefined
   const [sha, subject, date, author] = raw.split('\t')
   return { sha, short: sha.slice(0, 7), subject: subject ?? '', date: date ?? '', author: author ?? '' }
+}
+
+function localCommit(): UpdateCommit | undefined {
+  return commitOfRef('HEAD')
 }
 
 function dirtyFiles(): string[] {
@@ -173,26 +221,56 @@ export async function getUpdateStatus(): Promise<UpdateStatus> {
           : localOnly > 0
             ? 'ahead'
             : 'identical'
-      base.commits = Array.isArray(cmp.commits) ? cmp.commits.slice(-10).map(mapCommit) : []
+      base.commits = Array.isArray(cmp.commits) ? cmp.commits.slice(-10).map(mapCommit).reverse() : []
     }
-  } catch (e: any) {
-    base.error = `检查远端失败：${e?.message ?? e}`
+  } catch (apiErr: any) {
+    // GitHub REST API 限流（403）或不可达时，自动回退到 git fetch origin main + 本地对比
+    const fetched = await gitAsync(['fetch', 'origin', BRANCH], 45_000)
+    const remote = commitOfRef(`origin/${BRANCH}`)
+    if (fetched.status === 0 && remote) {
+      base.remote = remote
+      if (base.local.sha === remote.sha) {
+        base.state = 'identical'
+      } else {
+        const counts = gitOut(['rev-list', '--left-right', '--count', `HEAD...origin/${BRANCH}`])
+        const [localOnlyStr, remoteOnlyStr] = counts.split(/\s+/)
+        const localOnly = Number(localOnlyStr) || 0
+        const remoteOnly = Number(remoteOnlyStr) || 0
+        base.aheadBy = localOnly
+        base.behindBy = remoteOnly
+        base.state = remoteOnly > 0 && localOnly > 0
+          ? 'diverged'
+          : remoteOnly > 0
+            ? 'behind'
+            : localOnly > 0
+              ? 'ahead'
+              : 'identical'
+        if (remoteOnly > 0) {
+          const logRaw = gitOut(['log', '-n', '10', '--format=%H%x09%s%x09%aI%x09%an', `HEAD..origin/${BRANCH}`])
+          base.commits = logRaw
+            ? logRaw.split(/\r?\n/).filter(Boolean).map(line => {
+                const [sha, subject, date, author] = line.split('\t')
+                return { sha, short: sha.slice(0, 7), subject: subject ?? '', date: date ?? '', author: author ?? '' }
+              })
+            : []
+        }
+      }
+    } else {
+      base.error = `检查远端失败：${apiErr?.message ?? apiErr}`
+    }
   }
   return base
 }
 
-function runNpm(args: string[], timeout: number) {
-  return spawnSync('npm', args, {
-    cwd: ROOT,
-    encoding: 'utf8',
-    windowsHide: true,
+function runNpmAsync(args: string[], timeout: number) {
+  return spawnAsync('npm', args, {
     timeout,
     shell: process.platform === 'win32',
   })
 }
 
 /** 拉取最新代码并重建前端；完成后需要用户重启服务 */
-export async function applyUpdate(): Promise<UpdateApplyResult> {
+export async function applyUpdate(opts?: { autoStash?: boolean }): Promise<UpdateApplyResult> {
   if (applying) return { ok: false, error: '已有更新正在进行，请稍候' }
   applying = true
   try {
@@ -206,19 +284,27 @@ export async function applyUpdate(): Promise<UpdateApplyResult> {
       return { ok: false, error: `当前在 ${branch} 分支，请先切回 ${BRANCH}` }
     }
     const dirty = dirtyFiles()
+    let stashed = false
     if (dirty.length) {
-      return { ok: false, error: `有 ${dirty.length} 个未提交改动，请先提交或暂存：${dirty.slice(0, 5).join('、')}` }
+      if (!opts?.autoStash) {
+        return { ok: false, error: `有 ${dirty.length} 个未提交改动，请先提交或勾选自动暂存：${dirty.slice(0, 5).join('、')}` }
+      }
+      const stashRes = await gitAsync(['stash', 'push', '-m', `openmods-auto-update-${new Date().toISOString()}`], 30_000)
+      if (stashRes.status !== 0) {
+        return { ok: false, error: `自动暂存本地改动失败：${gitError(stashRes)}` }
+      }
+      stashed = true
     }
     const before = gitOut(['rev-parse', 'HEAD'])
     if (!before) return { ok: false, error: '读不到本地提交' }
 
-    const fetched = git(['fetch', 'origin', BRANCH], 180_000)
+    const fetched = await gitAsync(['fetch', 'origin', BRANCH], 180_000)
     if (fetched.status !== 0) {
-      return { ok: false, error: `git fetch 失败：${gitError(fetched)}` }
+      return { ok: false, error: `git fetch 失败：${gitError(fetched)}`, stashed }
     }
-    const merged = git(['merge', '--ff-only', `origin/${BRANCH}`], 120_000)
+    const merged = await gitAsync(['merge', '--ff-only', `origin/${BRANCH}`], 120_000)
     if (merged.status !== 0) {
-      return { ok: false, error: `git merge 失败：${gitError(merged)}` }
+      return { ok: false, error: `git merge 失败：${gitError(merged)}`, stashed }
     }
     const after = gitOut(['rev-parse', 'HEAD'])
     const changed = gitOut(['diff', '--name-only', before, after])
@@ -231,17 +317,17 @@ export async function applyUpdate(): Promise<UpdateApplyResult> {
     if (before !== after) {
       const packageChanged = changed.some(p => p === 'package.json' || p === 'package-lock.json')
       if (packageChanged) {
-        const install = runNpm(['install'], 10 * 60_000)
+        const install = await runNpmAsync(['install'], 10 * 60_000)
         output += `\n[npm install]\n${install.stdout ?? ''}${install.stderr ?? ''}`
         if (install.status !== 0) {
           return {
-            ok: true, before, after, changed, build: 'failed', needsRestart: true,
+            ok: true, before, after, changed, stashed, build: 'failed', needsRestart: true,
             output: output.trim().slice(-4000),
             error: '代码已更新，但 npm install 失败，请手动处理',
           }
         }
       }
-      const built = runNpm(['run', 'build'], 5 * 60_000)
+      const built = await runNpmAsync(['run', 'build'], 5 * 60_000)
       output += `\n[npm run build]\n${built.stdout ?? ''}${built.stderr ?? ''}`
       build = built.status === 0 ? 'ok' : 'failed'
     }
@@ -250,6 +336,7 @@ export async function applyUpdate(): Promise<UpdateApplyResult> {
       before,
       after,
       changed,
+      stashed,
       build,
       needsRestart: before !== after,
       output: output.trim().slice(-4000),

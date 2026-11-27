@@ -328,12 +328,12 @@ export const api = {
     }),
   /** 自更新：检查 openmods main 与本地差异 */
   updateStatus: () => jfetch<UpdateStatusDto>('/api/update/status'),
-  /** 自更新：手动确认后 git pull + 重建前端 */
-  updateApply: () =>
+  /** 自更新：手动确认后 git pull + 重建前端（autoStash=true 时先暂存未提交改动） */
+  updateApply: (opts?: { autoStash?: boolean }) =>
     jfetch<UpdateApplyDto>('/api/update/apply', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: '{}',
+      body: JSON.stringify(opts ?? {}),
     }),
 
   // ---- 环境检测（首次运行向导 / 设置 → 环境） ----

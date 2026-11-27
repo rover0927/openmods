@@ -226,6 +226,7 @@ export function SettingsPage(props: {
 
   useEffect(() => {
     if (props.section === 'features') void loadFeatures()
+    if (props.section === 'update' && !updateInfo && !updateBusy) void checkUpdate()
   }, [props.section]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 上下文页：摘要模型候选（空 = 跟随当前会话模型） */
@@ -408,15 +409,20 @@ export function SettingsPage(props: {
     }
   }
 
-  /** 手动确认后拉取 + 重建前端 */
+  /** 手动确认后拉取 + 重建前端（工作区有未提交改动时自动 git stash 暂存后再拉取） */
   const doUpdate = async () => {
-    if (!window.confirm('将执行 git pull --ff-only 并重新构建前端，完成后需要重启服务。继续？')) return
+    const needStash = !!updateInfo?.dirty
+    const confirmMsg = needStash
+      ? `检测到本地有 ${updateInfo?.dirtyFiles.length ?? 0} 个未提交改动，将先执行 git stash 自动暂存这些改动，再拉取最新代码并构建前端（暂存内容可随时用 git stash pop 恢复）。继续？`
+      : '将执行 git pull --ff-only 并重新构建前端，完成后需要重启服务。继续？'
+    if (!window.confirm(confirmMsg)) return
     setUpdateBusy(true)
     try {
-      const r = await api.updateApply()
-      if (!r.ok) props.onToast(`更新失败：${r.error ?? '未知错误'}`)
-      else if (r.build === 'failed') props.onToast(`代码已更新，但前端构建失败：${r.error ?? '请手动 npm run build'}`)
-      else if (r.needsRestart) props.onToast('更新完成，请重启服务生效')
+      const r = await api.updateApply({ autoStash: needStash })
+      const stashNote = r.stashed ? '（本地改动已暂存至 git stash）' : ''
+      if (!r.ok) props.onToast(`更新失败：${r.error ?? '未知错误'}${stashNote}`)
+      else if (r.build === 'failed') props.onToast(`代码已更新${stashNote}，但前端构建失败：${r.error ?? '请手动 npm run build'}`)
+      else if (r.needsRestart) props.onToast(`更新完成${stashNote}，请重启服务生效`)
       else props.onToast('已是最新代码')
       setUpdateInfo(await api.updateStatus())
     } catch (e: any) {
@@ -917,7 +923,12 @@ export function SettingsPage(props: {
           <Row label="本地提交" hint={st?.local?.subject || '点击下方检查更新'}>
             {st?.local ? `${st.local.short} · ${fmtDate(st.local.date)}` : '—'}
           </Row>
-          <Row label="分支" hint={st?.dirty ? '有未提交的跟踪文件，更新前请先提交或暂存' : '工作区干净，可安全更新'}>
+          <Row
+            label="分支"
+            hint={st?.dirty
+              ? `有未提交的跟踪文件（${st.dirtyFiles.slice(0, 4).join('、')}${st.dirtyFiles.length > 4 ? ' 等' : ''}），点击更新将自动 git stash 暂存`
+              : '工作区干净，可安全更新'}
+          >
             {st?.branch || '—'}{st?.dirty ? ` · ${st.dirtyFiles.length} 个改动` : ''}
           </Row>
           <Row label="远端 main" hint={st?.remote?.subject || '检查后显示 GitHub 最新提交'}>
@@ -935,12 +946,17 @@ export function SettingsPage(props: {
           {st?.error && <div className="lib-launcher-error">{st.error}</div>}
           {st?.state === 'behind' && (
             <>
-              <Row label={`发现 ${st.behindBy} 个新提交`} hint="更新会执行 git pull --ff-only 并 npm run build，完成后需要重启服务">
+              <Row
+                label={`发现 ${st.behindBy} 个新提交`}
+                hint={st.dirty
+                  ? '将先自动 git stash 暂存本地改动，再执行 git pull --ff-only 并 npm run build'
+                  : '更新会执行 git pull --ff-only 并 npm run build，完成后需要重启服务'}
+              >
                 <button
                   className="dialog-btn primary"
-                  disabled={updateBusy || st.dirty}
+                  disabled={updateBusy}
                   onClick={() => void doUpdate()}
-                >更新到最新</button>
+                >{st.dirty ? '暂存改动并更新' : '更新到最新'}</button>
               </Row>
               {!!st.commits.length && (
                 <div className="update-commits">

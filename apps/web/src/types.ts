@@ -778,6 +778,7 @@ export interface UpdateApplyDto {
   before?: string
   after?: string
   changed?: string[]
+  stashed?: boolean
   build?: 'ok' | 'failed' | 'skipped'
   output?: string
   needsRestart?: boolean

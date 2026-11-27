@@ -1533,11 +1533,12 @@ app.post('/api/procs/java/kill-all', async (req) => {
   return killJavaProcesses({ includeClient: !!body.includeClient })
 })
 
-// 自更新：只检查 GitHub main；apply 由用户手动触发（git pull + 前端重建）
+// 自更新：只检查 GitHub main；apply 由用户手动触发（git pull + 前端重建，支持 autoStash 暂存本地改动）
 app.get('/api/update/status', async () => getUpdateStatus())
-app.post('/api/update/apply', async (_req, reply) => {
+app.post('/api/update/apply', async (req, reply) => {
   try {
-    return await applyUpdate()
+    const body = (req.body ?? {}) as { autoStash?: boolean }
+    return await applyUpdate({ autoStash: !!body.autoStash })
   } catch (e: any) {
     return reply.code(500).send({ ok: false, error: e?.message ?? String(e) })
   }
